@@ -6,12 +6,27 @@ import itertools
 
 class SurfaceObservations(object):
     
-    def __init__(self, variable, **kwds):
-        self.variable = variable
-        self.storagedir = "/nobackup/users/straaten/E-OBS/"
-        self.filepath = ''.join([self.storagedir, variable, ".nc"])
+    def __init__(self, alias, **kwds):
+        """
+        Sets the base E-OBS variable alias. And sets the base storage directory. 
+        Additionally you can supply 'timemethod', 'spacemethod', 'tmin' and 
+        'tmax' if you want to load a pre-existing adapted file.
+        """
+        self.basevar = alias
+        self.basedir = "/nobackup/users/straaten/E-OBS/"
         for key in kwds.keys():
             setattr(self, key, kwds[key])
+    
+    def construct_name(self):
+        """
+        Name and filepath are based on the base variable and the relevant attributes (if present)
+        Uses the timemethod and spacemethod attributes
+        """
+        keys = ['tmin','tmax','timemethod','spacemethod']
+        attrs = [ getattr(self,x) if hasattr(self, x) else '' for x in keys]
+        attrs.insert(0,self.basevar) # Prepend with alias
+        self.name = ''.join(attrs)
+        self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
     def downloadraw(self):
         """
@@ -51,35 +66,50 @@ class SurfaceObservations(object):
         os.system("gunzip -k " + zippath) # Results in file written at filepath
 
         
-    def load(self, lazy = True, tmin = None, tmax = None, llcrnr = (None, None), rucrnr = (None,None)):
+    def load(self, lazychunk = None, tmin = None, tmax = None, llcrnr = (None, None), rucrnr = (None,None)):
         """
         Loads the netcdf (possibly delimited by maxtime and corners). Corners need to be given as tuples (lat,lon)
         Creates new attributes: the array with the data, units, and coordinates, and possibly a timemethod.
+        If a lazychunk is given (e.g. dictionary: {'time': 3650}) a dask array will be loaded
         """
         
+        self.construct_name()
+        
+        # Check file existence. Download if base variable
         if not os.path.isfile(self.filepath):
-            self.downloadraw()
-        if lazy:
-            full = xr.open_dataarray(self.filepath, chunks={'time': 3650}) # ten year chunks
-        else:
+            if (self.name == self.basevar):
+                self.downloadraw()
+            else:
+                raise FileNotFoundError("File for non-basevariable not found")
+        
+        if lazychunk is None:
             full = xr.open_dataarray(self.filepath)
-            
+        else:
+            full = xr.open_dataarray(self.filepath,  chunks= lazychunk)
+        
+        # Full range if no timelimits were given
         if tmin is None:
-            tmin = np.min(full.coords['time'].values)
+            tmin = pd.Series(full.coords['time'].values).min()
         if tmax is None:
-            tmax = np.max(full.coords['time'].values)
+            tmax = pd.Series(full.coords['time'].values).max()
         
         freq = pd.infer_freq(full.coords['time'].values)
         self.array = full.sel(time = pd.date_range(tmin, tmax, freq = freq), longitude = slice(llcrnr[1], rucrnr[1]), latitude = slice(llcrnr[0], rucrnr[0])) # slice gives an inexact lookup, everything within the range
-        if not hasattr(self.array, 'timemethod'):
-            self.array.attrs['timemethod'] = freq # Useful for saving method later on, so original data of full temporal range is not overwritten.
+        
+        self.tmin = tmin[0:10] if isinstance(tmin, str) else tmin.strftime('%Y-%m-%d')
+        self.tmax = tmax[0:10] if isinstance(tmax, str) else tmax.strftime('%Y-%m-%d')
 
     def aggregatespace(self, step, method = 'mean', by_degree = False):
         """
         Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
         In the case of degree grouping the groups might not contain an equal number of cells.
-        Completely lazy when loading was lazy
+        Completely lazy when loading is set to lazy
         """
+        
+        # Check if already loaded.
+        if not hasattr(self, 'array'):
+            self.load(lazychunk = {'latitude': 50, 'longitude': 50})
+        
         if by_degree:
             binlon = pd.cut(self.array.longitude, bins = np.arange(self.array.longitude.min(), self.array.longitude.max(), step), include_lowest = True) # Lowest is included because otherwise NA's arise at begin and end, making a single group
             binlat = pd.cut(self.array.latitude, bins = np.arange(self.array.latitude.min(), self.array.latitude.max(), step), include_lowest = True)
@@ -108,35 +138,35 @@ class SurfaceObservations(object):
         grouped['latlongroup'] = newlatlon        
         self.array = grouped.unstack('latlongroup')
         #self.array = xr.DataArray(grouped, coords = [grouped.time, newlatlon], dims = ['time','latlon']).unstack('latlon')
-        self.array.attrs['spacemethod'] = '_'.join([str(step), 'cells', method]) if not by_degree else '_'.join([str(step), 'degrees', method])
+        self.spacemethod = '_'.join([str(step), 'cells', method]) if not by_degree else '_'.join([str(step), 'degrees', method])
         
     
     def aggregatetime(self, freq = 'w' , method = 'mean'):
         """
         Uses the pandas frequency indicators. Method can be mean, min, max, std
-        Completely lazy when loading was lazy
+        Completely lazy when loading is lazy
         """
-        tempattr = self.array.attrs
+        if not hasattr(self, 'array'):
+            self.load(lazychunk = {'time': 365})
+        
         f = getattr(self.array.resample(time = freq), method) # timestamp can be set with label = 'right'
-        self.array = f('time') # Removes the attributes.
-        tempattr['timemethod'] = '_'.join([freq,method])
-        self.array.attrs = tempattr
+        self.array = f('time', keep_attrs=True) 
+        self.timemethod = '_'.join([freq,method])
+
         # To access days of week: self.array.time.dt.timeofday
         # Also possible is self.array.time.dt.floor('D')
     
     def savechanges(self):
         """
-        Uses the timemethod and spaceaverage attributes (when created) to create a new variable name. 
-        Then writes the dask array to this file. Clears the internal array. Can give a awrning of all NaN slices encountered during writing.
-        Possibly: add option for experiment name?
+        Calls new name creation. Then writes the dask array to this file. 
+        Can give a awrning of all NaN slices encountered during writing.
+        Possibly: add option for experiment name?. Clear internal array?
         """
-        timemethod = getattr(self.array, 'timemethod') if hasattr(self.array, 'timemethod') else ''
-        spacemethod = getattr(self.array, 'spacemethod') if hasattr(self.array, 'spacemethod') else ''
-        self.variable = self.variable + timemethod + spacemethod
-        self.filepath = ''.join([self.storagedir, self.variable, ".nc"])
+        self.construct_name()
         # invoke the computation (if loading was lazy) and writing
         self.array.to_netcdf(self.filepath)
-        delattr(self, 'array')
+        #delattr(self, 'array')
+    
     # Define a detrend method? Look at the Toy weather data documentation of xarray.
         
 # I want to keep the real advanced operations seperate, like PCA, clustering,
@@ -145,18 +175,25 @@ class SurfaceObservations(object):
 
 # Later on I want to make an experiment class. Combining surface observations on a certain aggregation, with 
     
-self = SurfaceObservations(variable = 'rr')
-self.load(tmax = "1960-03-02", lazy = True)
-self.aggregatetime(freq = 'w', method = 'mean')
-self.savechanges()
-self.load(lazy = False)
-self.aggregatespace(step = 5, method = 'max', by_degree=False)
+#test1 = SurfaceObservations(alias = 'rr')
+#test1.load(lazychunk = {'latitude': 50, 'longitude': 50}, tmax = '1960-01-01')
+#test1.aggregatetime() # 1.32 sec
 
-self.savechanges()
-#self.load()
+test2 = SurfaceObservations(alias = 'rr')
+#test2.load(lazychunk = {'time':3650}, tmax = '1990-01-01')
+test2.aggregatetime(freq = 'M') # Small chuncks seem to work pretty well. For .sum() the nan are not correctly processed (become 0)
+test2.savechanges()
+
+#del test2
+
+#recover = SurfaceObservations(alias = 'rr', **{'tmin' : '1950-01-01', 'tmax' : '1960-01-01', 'timemethod' : 'w_mean'})
+#recover.load()
+
 
 class HeatEvent(object):
     
     def __init__(self, observations):
         self.obs = observations
+    
+    
         
