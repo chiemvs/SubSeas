@@ -181,8 +181,8 @@ class SurfaceObservations(object):
 
 test2 = SurfaceObservations(alias = 'rr')
 #test2.load(lazychunk = {'time':3650}, tmax = '1990-01-01')
-test2.aggregatetime(freq = 'M') # Small chuncks seem to work pretty well. For .sum() the nan are not correctly processed (become 0)
-test2.savechanges()
+#test2.aggregatetime(freq = 'M') # Small chuncks seem to work pretty well. For .sum() the nan are not correctly processed (become 0)
+#test2.savechanges()
 
 #del test2
 
