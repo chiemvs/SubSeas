@@ -30,7 +30,7 @@ class SurfaceObservations(object):
     
     def downloadraw(self):
         """
-        Downloads daily highres observations on regular 0.25 degree lat-lon grid
+        Downloads daily highres observations on regular 0.25 degree lat-lon grid.
         """
         import urllib3
         
@@ -45,7 +45,7 @@ class SurfaceObservations(object):
         if not os.path.isfile(zippath):
             f = open(zippath, 'wb')
             http = urllib3.PoolManager()
-            u = http.request('GET', urls[self.variable], preload_content = False)
+            u = http.request('GET', urls[self.basevar], preload_content = False)
             filesize = int(u.info().getheaders("Content-Length")[0])
             print("saving", filesize, "to", f.name)
             
@@ -73,7 +73,7 @@ class SurfaceObservations(object):
         If a lazychunk is given (e.g. dictionary: {'time': 3650}) a dask array will be loaded
         """
         
-        self.construct_name()
+        self.construct_name() # To take account of attributes given at initialization.
         
         # Check file existence. Download if base variable
         if not os.path.isfile(self.filepath):
@@ -95,9 +95,6 @@ class SurfaceObservations(object):
         
         freq = pd.infer_freq(full.coords['time'].values)
         self.array = full.sel(time = pd.date_range(tmin, tmax, freq = freq), longitude = slice(llcrnr[1], rucrnr[1]), latitude = slice(llcrnr[0], rucrnr[0])) # slice gives an inexact lookup, everything within the range
-        
-        self.tmin = tmin[0:10] if isinstance(tmin, str) else tmin.strftime('%Y-%m-%d')
-        self.tmax = tmax[0:10] if isinstance(tmax, str) else tmax.strftime('%Y-%m-%d')
 
     def aggregatespace(self, step, method = 'mean', by_degree = False):
         """
@@ -158,10 +155,12 @@ class SurfaceObservations(object):
     
     def savechanges(self):
         """
-        Calls new name creation. Then writes the dask array to this file. 
-        Can give a awrning of all NaN slices encountered during writing.
+        Calls new name creation after writing tmin and tmax as attributes. Then writes the dask array to this file. 
+        Can give a warning of all NaN slices encountered during writing.
         Possibly: add option for experiment name?. Clear internal array?
         """
+        self.tmin = pd.Series(self.array.time).min().strftime('%Y-%m-%d')
+        self.tmax = pd.Series(self.array.time).max().strftime('%Y-%m-%d')
         self.construct_name()
         # invoke the computation (if loading was lazy) and writing
         self.array.to_netcdf(self.filepath)
@@ -179,7 +178,6 @@ class SurfaceObservations(object):
 #test1.load(lazychunk = {'latitude': 50, 'longitude': 50}, tmax = '1960-01-01')
 #test1.aggregatetime() # 1.32 sec
 
-test2 = SurfaceObservations(alias = 'rr')
 #test2.load(lazychunk = {'time':3650}, tmax = '1990-01-01')
 #test2.aggregatetime(freq = 'M') # Small chuncks seem to work pretty well. For .sum() the nan are not correctly processed (become 0)
 #test2.savechanges()
