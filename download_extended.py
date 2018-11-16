@@ -9,7 +9,7 @@ import os
 import pandas as pd
 
 # Extended range has 50 perturbed members. and 1 control forecast. Steps: "0/to/1104/by/6"
-# Reforecasts have 11 members (stream = "enfh", number "1/to/10")
+# Reforecasts have 11 members (stream = "enfh", number "1/to/10"). Probably some duplicates will arise.
 # Params: 228.128 : total precipitation (or 228172). 167.128 : T2m
 # Interpolated resolution 0.4 or 0.5 degree. Native grid O320 (but subsetting is not available for native)
 
@@ -36,8 +36,8 @@ def download_forecast(indate):
     """
     Separate download of perturbed (50 members) and control members. Then both are joined into one final file. Saves under indate.
     """
-    pfname = 'for'+indate+'_ens.nc'
-    cfname = 'for'+indate+'_contr.nc'
+    pfname = 'for_'+indate+'_ens.nc'
+    cfname = 'for_'+indate+'_contr.nc'
     
     # perturbed.
     if os.path.isfile(basedir+pfname):
@@ -64,8 +64,8 @@ def download_hindcast(indate):
     hdates.sort()
     marshdate = '/'.join(hdates)
     
-    pfname = 'hind'+indate+'_ens.nc'
-    cfname = 'hind'+indate+'_contr.nc'
+    pfname = 'hin_'+indate+'_ens.nc'
+    cfname = 'hin_'+indate+'_contr.nc'
     
     # perturbed.
     if os.path.isfile(basedir+pfname):
@@ -116,5 +116,5 @@ def join_members(pfname, cfname):
 # np.r_[cum[0], np.diff(cum)]
 # xr.diff()
     
-start_batch()
-
+#start_batch(tmin = "2015-05-15", tmax = '2015-05-24')
+start_batch(tmin = '2015-05-24', tmax = '2015-05-29')
