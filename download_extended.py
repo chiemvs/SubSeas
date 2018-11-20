@@ -54,14 +54,18 @@ def download_forecast(indate):
     else:
         server.execute(mars_dict(indate, contr = True), basedir+cfname)
     
+    svname = 'for_' + indate + '_comb.nc'
+    if os.path.isfile(basedir+svname):
+        print('forecasts already joined')
+    else:
+        join_members(pfname = pfname, cfname = cfname, savename = svname)
+    
 def download_hindcast(indate):
     """
     Constructs hdates belonging to indate. For retrieval efficiency all Hdates are
     initially downloaded together, which is only possible in a GRIB file. 
     The single file is saved under indate but recognizable by 'hin'. 
     Separate download of perturbed (11 members) and control. 
-    Then the hdates within a file are extracted and perturbed and control are joined.
-    The final files are saved per hdate as netcdf.
     """
 
     end = pd.to_datetime(indate, format='%Y-%m-%d')
@@ -72,8 +76,7 @@ def download_hindcast(indate):
     
     pfname = 'hin_'+indate+'_ens.grib'
     cfname = 'hin_'+indate+'_contr.grib'
-    #combname = 'hin_'+hadate+'_comb.nc' # needs to be defined within the loop
-    
+
     # perturbed.
     if os.path.isfile(basedir+pfname):
         print('perturbed hindcast already downloaded..')
@@ -84,43 +87,75 @@ def download_hindcast(indate):
         print('control hindcast already downloaded..')
     else:
         server.execute(mars_dict(indate, hdate = marshdate, contr = True), basedir+cfname)
-        
-    # here loop to pull hdates in one file out of each other. Conversion to netcdf with 3 parameters.
-    # Within grib file: first per variable, than per member
+ 
+def crunch_gribfiles(pfname, cfname, hdates):
+    """
+    hdates within a file are extracted and perturbed and control are joined.
+    The final files are saved per hdate as netcdf with three variables.
+    """
     pf = pygrib.open(basedir + pfname)
     cf = pygrib.open(basedir + cfname)
-    params = list(set([x.cfVarName for x in cf.select()])) # unique parameter values ["167.128","121.128","228.128"] # Hardcoded for marsParam
-    steprange = np.arange(0,1110,6) # Hardcoded
+    params = list(set([x.cfVarName for x in cf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] # Hardcoded for marsParam
+
+    steprange = np.arange(0,1110,6) # Hardcoded as this is too slow: steps = list(set([x.stepRange for x in cf.select()]))
+    beginning = steprange[1:-1].tolist()
+    beginning[0:0] = [0,0]
+    tmaxrange = [ str(b) + '-' + str(e) for b,e in zip(beginning, steprange)] # special hardcoded range for the tmax, whose stepRanges are stored differently
+    
     for hd in hdates:
-        collectparams = list()
+        collectparams = dict()
         for param in params:
             collectsteps = list()
-            for step in steprange: 
-                # Get control values and lats, lons, units and longname of control
-                control = cf.select(cfVarName = param, validDate = pd.to_datetime(hd), stepRange = str(step))[0] # for hours use .stepRange I think.
-                controlval = control.values
-                lats,lons = control.latlons()
-                # get members values
-                members = pf.select(cfVarName = param, validDate = pd.to_datetime(hd), stepRange = str(step)) #
-                membersnum = [member.perturbationNumber for member in members] # 1 to 10, membernumers
-                membersval = [member.values for member in members]
-                # join both along the 'number' dimension by prepending the membernumbers (control = 0) and members values. Make xarray
+            # search the grib files, special search for tmax
+            if param == 'mx2t6':
+                steps = tmaxrange # The 0-0 stepRange is missing, replace field with _FillValue?
+            else:
+                steps = [str(step) for step in steprange]
+            
+            control = cf.select(validDate = pd.to_datetime(hd), stepRange = steps, cfVarName = param)
+            members = pf.select(validDate = pd.to_datetime(hd), stepRange = steps, cfVarName = param)
+
+            lats,lons = control[0].latlons()
+            units = control[0].units
+            missval = control[0].missingValue
+        
+            for i in range(0,len(steps)): # use of index because later on the original steprange is needed for timestamps
+                cthisstep = [c for c in control if c.stepRange == steps[i]]
+                mthisstep = [m for m in members if m.stepRange == steps[i]]
+                # If empty lists (tmax analysis) the field in nonexisting and we want fillvalues
+                if not cthisstep:
+                    print('missing field')
+                    controlval = np.full(shape = lats.shape, fill_value = missval)
+                    membersnum = [m.perturbationNumber for m in members if m.stepRange == steps[i+1]]
+                    membersval = [controlval] * len(membersnum)
+                else:
+                    controlval = cthisstep[0].values
+                    membersnum = [m.perturbationNumber for m in mthisstep] # 1 to 10, membernumers
+                    membersval = [m.values for m in mthisstep]
+                
+                # join both members and control along the 'number' dimension by prepending the membernumbers (control = 0) and members values. 
+                # Then add timestamp as extra dimension and make xarray
                 membersnum.insert(0,0)
                 membersval.insert(0, controlval)
-                result = xr.DataArray(data = np.stack(membersval), 
-                                      coords=[membersnum, lats[:,0], lons[0,:]], 
-                                      dims=['number', 'latitude', 'longitude'])
+                timestamp = [pd.to_datetime(hd) + pd.DateOffset(hours = int(steprange[i]))]
+                data = np.expand_dims(np.stack(membersval), 0)
+                result = xr.DataArray(data = data, 
+                                      coords=[timestamp, membersnum, lats[:,0], lons[0,:]], 
+                                      dims=['time', 'number', 'latitude', 'longitude'])
                 collectsteps.append(result)
             
-            # Combine along a time dimension, give parameter name 'test.cfVarName' and longname. Give units.
-            oneparam = xr.concat(collectsteps, 'time') 
-            collectparams.append(oneparam)
-
-        xr.Dataset(collectparams)
-        # Save the dataset to netcdf
+            # Combine along the time dimension, give parameter name. Give longname, units and missval from control.
+            oneparam = xr.concat(collectsteps, 'time')
+            oneparam.name = param
+            oneparam.attrs.update({'longname':control[0].name, 'units':units, '_FillValue':missval})
+            collectparams.update({param : oneparam})
+        # Save the dataset to netcdf under hdate.
+        onehdate = xr.Dataset(collectparams)
+        svname = 'hin_' + hd + '_comb.nc'
+        onehdate.to_netcdf(path = basedir + svname)
     pf.close()
     cf.close()
-        
+
 
 def mars_dict(date, hdate = None, contr = False):
     """
@@ -128,7 +163,7 @@ def mars_dict(date, hdate = None, contr = False):
     """
     req = {
     'stream'    : "enfo" if hdate is None else "enfh",
-    'number'    : "0" if contr else "1/to/50" if hdate is None else "1/to/11",
+    'number'    : "0" if contr else "1/to/50" if hdate is None else "1/to/10",
     'class'     : "od",
     'expver'    : "0001",
     'date'      : date,
@@ -148,19 +183,21 @@ def mars_dict(date, hdate = None, contr = False):
     return(req)
         
 
-def join_members(pfname, cfname):
+def join_members(pfname, cfname, savename):
     """
-    Also seperate variables?
+    Join members save the dataset. Control member gets the number 0
     """
     pf = xr.open_dataset(basedir + pfname)
     cf = xr.open_dataset(basedir + cfname)
-    cf.expand_dims('number')
-    return()
+    cf.coords['number'] = np.array(0, dtype='int32')
+    cf = cf.expand_dims('number')
+    xr.concat([cf,pf], dim = 'number').to_netcdf(path = basedir + savename)
 
 # TODO: Function for combining control and perturbed? De-accumulation of precipitation?
 # De-accumulation 
 # np.r_[cum[0], np.diff(cum)]
 # xr.diff()
     
-#start_batch(tmin = "2015-05-15", tmax = '2015-05-24')
+#start_batch(tmin = "2015-05-16", tmax = '2015-05-22')
 #start_batch(tmin = '2015-05-24', tmax = '2015-05-29')
+#download_hindcast(indate = '2015-05-18')
