@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 import ecmwfapi 
-#from ecmwfapi import ECMWFDataServer
-#from datetime import date,timedelta
 import os
 #import gzip
 import numpy as np
@@ -18,9 +16,15 @@ import pygrib
 # Interpolated resolution 0.4 or 0.5 degree. Native grid O320 (but subsetting is not available for native)
 
 # Global variables
-server = ecmwfapi.ECMWFService("mars") # Find a way to let requests run in parallel?
+server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)
 basedir = '/nobackup/users/straaten/EXT/'
-
+netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
+                   'mx2t6': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
+                   'tp': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
+                   'time': {'dtype': 'int64'},
+                   'latitude': {'dtype': 'float32'},
+                   'longitude': {'dtype': 'float32'},
+                   'number': {'dtype': 'int16'}}
 
 def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
     """
@@ -58,7 +62,7 @@ def download_forecast(indate):
     if os.path.isfile(basedir+svname):
         print('forecasts already joined')
     else:
-        join_members(pfname = pfname, cfname = cfname, savename = svname)
+        join_members(pfname = pfname, cfname = cfname, svname = svname)
     
 def download_hindcast(indate):
     """
@@ -87,75 +91,13 @@ def download_hindcast(indate):
         print('control hindcast already downloaded..')
     else:
         server.execute(mars_dict(indate, hdate = marshdate, contr = True), basedir+cfname)
- 
-def crunch_gribfiles(pfname, cfname, hdates):
-    """
-    hdates within a file are extracted and perturbed and control are joined.
-    The final files are saved per hdate as netcdf with three variables.
-    """
-    pf = pygrib.open(basedir + pfname)
-    cf = pygrib.open(basedir + cfname)
-    params = list(set([x.cfVarName for x in cf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] # Hardcoded for marsParam
-
-    steprange = np.arange(0,1110,6) # Hardcoded as this is too slow: steps = list(set([x.stepRange for x in cf.select()]))
-    beginning = steprange[1:-1].tolist()
-    beginning[0:0] = [0,0]
-    tmaxrange = [ str(b) + '-' + str(e) for b,e in zip(beginning, steprange)] # special hardcoded range for the tmax, whose stepRanges are stored differently
     
-    for hd in hdates:
-        collectparams = dict()
-        for param in params:
-            collectsteps = list()
-            # search the grib files, special search for tmax
-            if param == 'mx2t6':
-                steps = tmaxrange # The 0-0 stepRange is missing, replace field with _FillValue?
-            else:
-                steps = [str(step) for step in steprange]
-            
-            control = cf.select(validDate = pd.to_datetime(hd), stepRange = steps, cfVarName = param)
-            members = pf.select(validDate = pd.to_datetime(hd), stepRange = steps, cfVarName = param)
-
-            lats,lons = control[0].latlons()
-            units = control[0].units
-            missval = control[0].missingValue
-        
-            for i in range(0,len(steps)): # use of index because later on the original steprange is needed for timestamps
-                cthisstep = [c for c in control if c.stepRange == steps[i]]
-                mthisstep = [m for m in members if m.stepRange == steps[i]]
-                # If empty lists (tmax analysis) the field in nonexisting and we want fillvalues
-                if not cthisstep:
-                    print('missing field')
-                    controlval = np.full(shape = lats.shape, fill_value = missval)
-                    membersnum = [m.perturbationNumber for m in members if m.stepRange == steps[i+1]]
-                    membersval = [controlval] * len(membersnum)
-                else:
-                    controlval = cthisstep[0].values
-                    membersnum = [m.perturbationNumber for m in mthisstep] # 1 to 10, membernumers
-                    membersval = [m.values for m in mthisstep]
-                
-                # join both members and control along the 'number' dimension by prepending the membernumbers (control = 0) and members values. 
-                # Then add timestamp as extra dimension and make xarray
-                membersnum.insert(0,0)
-                membersval.insert(0, controlval)
-                timestamp = [pd.to_datetime(hd) + pd.DateOffset(hours = int(steprange[i]))]
-                data = np.expand_dims(np.stack(membersval), 0)
-                result = xr.DataArray(data = data, 
-                                      coords=[timestamp, membersnum, lats[:,0], lons[0,:]], 
-                                      dims=['time', 'number', 'latitude', 'longitude'])
-                collectsteps.append(result)
-            
-            # Combine along the time dimension, give parameter name. Give longname, units and missval from control.
-            oneparam = xr.concat(collectsteps, 'time')
-            oneparam.name = param
-            oneparam.attrs.update({'longname':control[0].name, 'units':units, '_FillValue':missval})
-            collectparams.update({param : oneparam})
-        # Save the dataset to netcdf under hdate.
-        onehdate = xr.Dataset(collectparams)
-        svname = 'hin_' + hd + '_comb.nc'
-        onehdate.to_netcdf(path = basedir + svname)
-    pf.close()
-    cf.close()
-
+    # Do seperate hdate files exist? If not: start grib file extraction
+    svnames = ['hin_' + hd + '_comb.nc' for hd in hdates]
+    if all([os.path.isfile(basedir + svname) for svname in svnames]):
+        print('hdate files already exist')
+    else:
+        crunch_gribfiles(pfname = pfname, cfname = cfname, hdates = hdates, svnames = svnames)
 
 def mars_dict(date, hdate = None, contr = False):
     """
@@ -182,22 +124,98 @@ def mars_dict(date, hdate = None, contr = False):
         req['format'] = "netcdf"
     return(req)
         
+def crunch_gribfiles(pfname, cfname, hdates, svnames):
+    """
+    hdates within a file are extracted and perturbed and control are joined.
+    The final files are saved per hdate as netcdf with three variables.
+    svnames should be supplied in a list and have the same length as hdates.
+    """
+    pf = pygrib.open(basedir + pfname)
+    cf = pygrib.open(basedir + cfname)
+    params = list(set([x.cfVarName for x in cf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] # Hardcoded for marsParam
 
-def join_members(pfname, cfname, savename):
+    steprange = np.arange(0,1110,6) # Hardcoded as this is too slow: steps = list(set([x.stepRange for x in cf.select()]))
+    beginning = steprange[1:-1].tolist()
+    beginning[0:0] = [0,0]
+    tmaxrange = [ str(b) + '-' + str(e) for b,e in zip(beginning, steprange)] # special hardcoded range for the tmax, whose stepRanges are stored differently
+    
+    for hd in hdates:
+        collectparams = dict()
+        for param in params:
+            collectsteps = list()
+            # search the grib files, special search for tmax
+            if param == 'mx2t6':
+                steps = tmaxrange # The 0-0 stepRange is missing, replace field with _FillValue?
+            else:
+                steps = [str(step) for step in steprange]
+            
+            control = cf.select(validDate = pd.to_datetime(hd), stepRange = steps, cfVarName = param)
+            members = pf.select(validDate = pd.to_datetime(hd), stepRange = steps, cfVarName = param) #1.5 min more or less
+
+            lats,lons = control[0].latlons()
+            units = control[0].units
+            gribmissval = control[0].missingValue
+        
+            for i in range(0,len(steps)): # use of index because later on the original steprange is needed for timestamps
+                cthisstep = [c for c in control if c.stepRange == steps[i]]
+                mthisstep = [m for m in members if m.stepRange == steps[i]]
+                # If empty lists (tmax analysis) the field in nonexisting and we want fillvalues
+                if not cthisstep:
+                    print('missing field')
+                    controlval = np.full(shape = lats.shape, fill_value = float(gribmissval))
+                    membersnum = [m.perturbationNumber for m in members if m.stepRange == steps[i+1]]
+                    membersval = [controlval] * len(membersnum)
+                else:
+                    controlval = cthisstep[0].values
+                    membersnum = [m.perturbationNumber for m in mthisstep] # 1 to 10, membernumers
+                    membersval = [m.values for m in mthisstep]
+                
+                # join both members and control along the 'number' dimension by prepending the membernumbers (control = 0) and members values. 
+                # Then add timestamp as extra dimension and make xarray
+                membersnum.insert(0,0)
+                membersval.insert(0, controlval)
+                timestamp = [pd.to_datetime(hd) + pd.DateOffset(hours = int(steprange[i]))]
+                data = np.expand_dims(np.stack(membersval, axis = -1), axis = 0)
+                data[data == float(gribmissval)] = np.nan # Replace grib missing value with numpy missing value
+                result = xr.DataArray(data = data, 
+                                      coords=[timestamp, lats[:,0], lons[0,:], membersnum], 
+                                      dims=['time', 'latitude', 'longitude', 'number'])
+                collectsteps.append(result)
+            
+            # Combine along the time dimension, give parameter name. Give longname and units from control.
+            oneparam = xr.concat(collectsteps, 'time')
+            oneparam.name = param
+            oneparam.attrs.update({'long_name':control[0].name, 'units':units})
+            oneparam.longitude.attrs.update({'long_name':'longitude', 'units':'degrees_east'})
+            oneparam.latitude.attrs.update({'long_name':'latitude', 'units':'degrees_north'})
+            #oneparam.where()
+            collectparams.update({param : oneparam})
+        # Save the dataset to netcdf under hdate.
+        onehdate = xr.Dataset(collectparams)
+        svname = svnames[hdates.index(hd)]
+        particular_encoding = {key : netcdf_encoding[key] for key in onehdate.keys()} # get only encoding of present variables
+        onehdate.to_netcdf(path = basedir + svname, encoding= particular_encoding)
+    pf.close()
+    cf.close()
+
+
+def join_members(pfname, cfname, svname):
     """
     Join members save the dataset. Control member gets the number 0
     """
     pf = xr.open_dataset(basedir + pfname)
     cf = xr.open_dataset(basedir + cfname)
-    cf.coords['number'] = np.array(0, dtype='int32')
-    cf = cf.expand_dims('number')
-    xr.concat([cf,pf], dim = 'number').to_netcdf(path = basedir + savename)
+    cf.coords['number'] = np.array(0, dtype='int16')
+    cf = cf.expand_dims('number',-1)
+    particular_encoding = {key : netcdf_encoding[key] for key in cf.keys()} 
+    xr.concat([cf,pf], dim = 'number').to_netcdf(path = basedir + svname, encoding= particular_encoding)
 
-# TODO: Function for combining control and perturbed? De-accumulation of precipitation?
+# TODO: De-accumulation of precipitation? Or only when extracting 24hr values, because E-OBS has 24hr accumulations.
 # De-accumulation 
 # np.r_[cum[0], np.diff(cum)]
 # xr.diff()
     
 #start_batch(tmin = "2015-05-16", tmax = '2015-05-22')
-#start_batch(tmin = '2015-05-24', tmax = '2015-05-29')
-#download_hindcast(indate = '2015-05-18')
+start_batch(tmin = '2015-05-14', tmax = '2015-06-02')
+#start_batch(tmin = '2015-05-29', tmax = '2015-06-05')
+#download_hindcast(indate = '2015-05-14')
