@@ -174,18 +174,25 @@ class SurfaceObservations(object):
 
 # Later on I want to make an experiment class. Combining surface observations on a certain aggregation, with 
     
-#test1 = SurfaceObservations(alias = 'rr')
-#test1.load(lazychunk = {'latitude': 50, 'longitude': 50}, tmax = '1960-01-01')
-#test1.aggregatetime() # 1.32 sec
+test1 = SurfaceObservations(alias = 'rr')
+test1.basedir = "/home/chiem/Documents/Promotie/scripts/"
+test1.load(tmax = '1950-05-05')
 
-#test2.load(lazychunk = {'time':3650}, tmax = '1990-01-01')
-#test2.aggregatetime(freq = 'M') # Small chuncks seem to work pretty well. For .sum() the nan are not correctly processed (become 0)
-#test2.savechanges()
+# To matrix with (observations, locations), where NaN is filtered
+dsflat = xr.Dataset({'rr' :test1.array.stack(latlon = ['latitude', 'longitude'])})
+nona = dsflat.dropna(dim = 'latlon')
+obsmat = nona.rr.values
 
-#del test2
+U, s, Vt = np.linalg.svd(obsmat, full_matrices=False)
+# s are the singular values. Square them for the eigenvalues of np.dot(obsmat.T, obsmat). Already ordered.
+# eigenvectors are the columns in V = Vt.T (just like regular eigenvector matrix) or in the rows of Vt
 
-#recover = SurfaceObservations(alias = 'rr', **{'tmin' : '1950-01-01', 'tmax' : '1960-01-01', 'timemethod' : 'w_mean'})
-#recover.load()
+# plot the first eigenvector
+pc1 = xr.DataArray(Vt[0,:], coords = [nona.latlon], dims = ['latlon'])
+import matplotlib.pyplot as plt
+axes = plt.axes()
+pc1.unstack('latlon').plot(ax = axes)
+plt.savefig('test')
 
 
 class HeatEvent(object):
@@ -193,5 +200,9 @@ class HeatEvent(object):
     def __init__(self, observations):
         self.obs = observations
     
+    def localclim(self, days, quantile):
+        """
+        Construct local climatological distribution within a rolling window. And extract mean (for anomaly computation) or for instance a quantile. Returns fields of this for all supplied time and space.
+        """
     
         
