@@ -215,7 +215,7 @@ def join_members(pfname, cfname, svname):
 # np.r_[cum[0], np.diff(cum)]
 # xr.diff()
     
-#start_batch(tmin = "2015-05-16", tmax = '2015-05-22')
-start_batch(tmin = '2015-05-14', tmax = '2015-06-02')
-#start_batch(tmin = '2015-05-29', tmax = '2015-06-05')
-#download_hindcast(indate = '2015-05-14')
+
+#start_batch(tmin = "2015-06-02", tmax = '2015-06-23')
+start_batch(tmin = '2015-06-23', tmax = '2015-07-05')
+#download_forecast(indate = '2015-06-11')

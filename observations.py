@@ -175,8 +175,7 @@ class SurfaceObservations(object):
 # Later on I want to make an experiment class. Combining surface observations on a certain aggregation, with 
     
 test1 = SurfaceObservations(alias = 'rr')
-test1.basedir = "/home/chiem/Documents/Promotie/scripts/"
-test1.load(tmax = '1950-05-05')
+test1.load(tmax = '1952-05-05')
 
 # To matrix with (observations, locations), where NaN is filtered
 dsflat = xr.Dataset({'rr' :test1.array.stack(latlon = ['latitude', 'longitude'])})
@@ -195,14 +194,34 @@ pc1.unstack('latlon').plot(ax = axes)
 plt.savefig('test')
 
 
-class HeatEvent(object):
+class EventClassification(object):
     
     def __init__(self, observations):
+        """
+        Supply the observations xarray
+        """
         self.obs = observations
     
-    def localclim(self, days, quantile):
+    def localclim(self, daysbefore = 0, daysafter = 0, mean = True, quantile = None):
         """
-        Construct local climatological distribution within a rolling window. And extract mean (for anomaly computation) or for instance a quantile. Returns fields of this for all supplied time and space.
-        """
-    
+        Construct local climatological distribution within a rolling window, but with pooled years. And extract mean (for anomaly computation) or for instance a quantile. Returns fields of this for all supplied time and space.
+        Daysbefore and daysafter are inclusive. 
+        """ 
+        doygroups = self.obs.groupby('time.dayofyear')
+        maxday = 366
+        results = []
+        for doy, group in doygroups:        
+            
+            windowindices = [doy - daysbefore <= x and x <= doy + daysafter for x,i in doygroups]
+            # small corrections for overshooting into previous or next year.
+            if doy + daysafter > maxday:
+                extraindices = [ x <= doy + daysafter - maxday for x,i in doygroups]
+                windowindices = [a or b for a, b in zip(windowindices, extraindices)]
+            if doy - daysbefore < 1:
+                extraindices = [ x >= maxday + (doy - daysbefore) for x,i in doygroups]
+                windowindices = [a or b for a, b in zip(windowindices, extraindices)]
+            
+            list(doygroups)
+            print(doy)
+        self.clim
         
