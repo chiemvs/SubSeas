@@ -216,6 +216,6 @@ def join_members(pfname, cfname, svname):
 # xr.diff()
     
 
-#start_batch(tmin = "2015-06-02", tmax = '2015-06-23')
-start_batch(tmin = '2015-06-23', tmax = '2015-07-05')
+start_batch(tmin = "2015-06-02", tmax = '2015-06-23')
+#start_batch(tmin = '2015-06-23', tmax = '2015-07-05')
 #download_forecast(indate = '2015-06-11')

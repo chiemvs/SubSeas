@@ -173,25 +173,25 @@ class SurfaceObservations(object):
 # I want to make a class for heatevent. within the definitionmethods I want to have an option to convert the array to a flat dataframe. remove NA'. Then based on previously clustering I can also aggregate by spatial grouping?
 
 # Later on I want to make an experiment class. Combining surface observations on a certain aggregation, with 
-    
+
 test1 = SurfaceObservations(alias = 'rr')
-test1.load(tmax = '1952-05-05')
-
+test1.load(tmax = '1960-05-05')
+    
 # To matrix with (observations, locations), where NaN is filtered
-dsflat = xr.Dataset({'rr' :test1.array.stack(latlon = ['latitude', 'longitude'])})
-nona = dsflat.dropna(dim = 'latlon')
-obsmat = nona.rr.values
+#dsflat = xr.Dataset({'rr' :test1.array.stack(latlon = ['latitude', 'longitude'])})
+#nona = dsflat.dropna(dim = 'latlon')
+#obsmat = nona.rr.values
 
-U, s, Vt = np.linalg.svd(obsmat, full_matrices=False)
+#U, s, Vt = np.linalg.svd(obsmat, full_matrices=False)
 # s are the singular values. Square them for the eigenvalues of np.dot(obsmat.T, obsmat). Already ordered.
 # eigenvectors are the columns in V = Vt.T (just like regular eigenvector matrix) or in the rows of Vt
 
 # plot the first eigenvector
-pc1 = xr.DataArray(Vt[0,:], coords = [nona.latlon], dims = ['latlon'])
-import matplotlib.pyplot as plt
-axes = plt.axes()
-pc1.unstack('latlon').plot(ax = axes)
-plt.savefig('test')
+#pc1 = xr.DataArray(Vt[0,:], coords = [nona.latlon], dims = ['latlon'])
+#import matplotlib.pyplot as plt
+#axes = plt.axes()
+#pc1.unstack('latlon').plot(ax = axes)
+#plt.savefig('test')
 
 
 class EventClassification(object):
@@ -202,26 +202,46 @@ class EventClassification(object):
         """
         self.obs = observations
     
-    def localclim(self, daysbefore = 0, daysafter = 0, mean = True, quantile = None):
+    def localclim(self, daysbefore = 0, daysafter = 0, mean = True, quant = None):
         """
-        Construct local climatological distribution within a rolling window, but with pooled years. And extract mean (for anomaly computation) or for instance a quantile. Returns fields of this for all supplied time and space.
+        Construct local climatological distribution within a rolling window, but with pooled years. 
+        Extracts mean (for anomaly computation) or for instance a quantile. Returns fields of this for all supplied time and space.
         Daysbefore and daysafter are inclusive. 
         """ 
+        if quant is not None:
+            from helper_functions import nanquantile
         doygroups = self.obs.groupby('time.dayofyear')
+        doygroups = {str(key):value for key,value in doygroups} # Change to string
         maxday = 366
         results = []
-        for doy, group in doygroups:        
-            
-            windowindices = [doy - daysbefore <= x and x <= doy + daysafter for x,i in doygroups]
+        for doy in doygroups.keys():        
+            doy = int(doy)
+            window = np.arange(doy - daysbefore, doy + daysafter + 1, dtype = 'int64')
             # small corrections for overshooting into previous or next year.
-            if doy + daysafter > maxday:
-                extraindices = [ x <= doy + daysafter - maxday for x,i in doygroups]
-                windowindices = [a or b for a, b in zip(windowindices, extraindices)]
-            if doy - daysbefore < 1:
-                extraindices = [ x >= maxday + (doy - daysbefore) for x,i in doygroups]
-                windowindices = [a or b for a, b in zip(windowindices, extraindices)]
+            window[ window < 1 ] += maxday
+            window[ window > maxday ] -= maxday
             
-            list(doygroups)
-            print(doy)
-        self.clim
+            complete = xr.concat([doygroups[str(key)] for key in window if str(key) in doygroups.keys()], dim = 'time')
+            if mean:
+                reduced = complete.mean('time')
+            elif quant is not None:
+                # nanquantile method based on sorting. So not compatible with xarray. Therefore feed values and restore coordinates.
+                reduced = xr.DataArray(data = nanquantile(array = complete.values, q = quant),
+                                        coords = [complete.coords['latitude'], complete.coords['longitude']],
+                                        dims = ['latitude','longitude'])
+                reduced.attrs['quantile'] = quant
+                #reduced = complete.quantile(q = quant, dim = 'time') #, #interpolation = 'lower') # Numpy native method is not so fast.
+                #reduced.coords['doy'] = doy
+                #results.append(reduced)
+            else:
+                raise ValueError('Provide a quantile if mean is set to False')
+            
+            reduced.coords['doy'] = doy
+            results.append(reduced)
         
+        self.clim = xr.concat(results, dim = 'doy')
+
+    
+test = EventClassification(test1.array)
+#self = test
+#test.localclim(daysbefore = 0, daysafter = 0, mean = False, quant=0.5)
