@@ -10,6 +10,7 @@ import numpy as np
 def nanquantile(array, q):
     """
     Get quantile along the first axis of the array. Faster than numpy, because it has only a quantile function ignoring nan's along one dimension.
+    Quality checked against numpy native method.
     """
     # amount of valid (non NaN) observations along the first axis. Plus repeated version
     valid_obs = np.sum(np.isfinite(array), axis=0)

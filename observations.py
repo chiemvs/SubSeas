@@ -175,7 +175,9 @@ class SurfaceObservations(object):
 # Later on I want to make an experiment class. Combining surface observations on a certain aggregation, with 
 
 test1 = SurfaceObservations(alias = 'rr')
-test1.load(tmax = '1960-05-05')
+test1.load(tmax = '1950-01-03')
+test2 = SurfaceObservations(alias = 'rr')
+test2.load(tmax = '1950-01-03', lazychunk = {'time':300})
     
 # To matrix with (observations, locations), where NaN is filtered
 #dsflat = xr.Dataset({'rr' :test1.array.stack(latlon = ['latitude', 'longitude'])})
@@ -196,11 +198,15 @@ test1.load(tmax = '1960-05-05')
 
 class EventClassification(object):
     
-    def __init__(self, observations):
+    def __init__(self, obs_array, obs_daskarray = None):
         """
-        Supply the observations xarray
+        Supply the observations xarray: Normal array for (memory efficient) grouping and fast explicit climatology computation
+        If the dataset is potentially large to load completely then also supply a
+        dask array for the anomaly computation which probably will not fit into memory.
         """
-        self.obs = observations
+        self.obs = obs_array
+        if obs_daskarray is not None:
+            self.obsd = obs_daskarray
     
     def localclim(self, daysbefore = 0, daysafter = 0, mean = True, quant = None):
         """
@@ -222,6 +228,7 @@ class EventClassification(object):
             window[ window > maxday ] -= maxday
             
             complete = xr.concat([doygroups[str(key)] for key in window if str(key) in doygroups.keys()], dim = 'time')
+
             if mean:
                 reduced = complete.mean('time')
             elif quant is not None:
@@ -230,18 +237,30 @@ class EventClassification(object):
                                         coords = [complete.coords['latitude'], complete.coords['longitude']],
                                         dims = ['latitude','longitude'])
                 reduced.attrs['quantile'] = quant
-                #reduced = complete.quantile(q = quant, dim = 'time') #, #interpolation = 'lower') # Numpy native method is not so fast.
-                #reduced.coords['doy'] = doy
-                #results.append(reduced)
             else:
                 raise ValueError('Provide a quantile if mean is set to False')
             
+            print('computed clim of', doy)
             reduced.coords['doy'] = doy
             results.append(reduced)
         
         self.clim = xr.concat(results, dim = 'doy')
-
     
-test = EventClassification(test1.array)
-#self = test
-#test.localclim(daysbefore = 0, daysafter = 0, mean = False, quant=0.5)
+    def climexceedance(self):
+        """
+        Substracts the climatological value for the associated day of year from the observations.
+        This leads to anomalies when the climatological mean was taken. Exceedances become sorted by doy.
+        """
+        if hasattr(self, 'obsd'):
+            doygroups = self.obsd.groupby('time.dayofyear')
+        else:
+            doygroups = self.obs.groupby('time.dayofyear')
+        results = []
+        for doy, fields in doygroups:
+            results.append(fields - self.clim.sel(doy = doy))
+            print('computed exceedance of', doy)
+        self.exceedance = xr.concat(results, dim = 'time')
+    
+#self = EventClassification(obs_array=test1.array, obs_daskarray=test2.array)
+#self.localclim(daysbefore=2, daysafter=2, mean = False, quant = 0.95)
+
