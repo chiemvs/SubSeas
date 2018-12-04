@@ -173,25 +173,94 @@ class SurfaceObservations(object):
 # I want to make a class for heatevent. within the definitionmethods I want to have an option to convert the array to a flat dataframe. remove NA'. Then based on previously clustering I can also aggregate by spatial grouping?
 
 # Later on I want to make an experiment class. Combining surface observations on a certain aggregation, with 
+
+test1 = SurfaceObservations(alias = 'rr')
+test1.load(tmax = '1950-01-03')
+test2 = SurfaceObservations(alias = 'rr')
+test2.load(tmax = '1950-01-03', lazychunk = {'time':300})
     
-#test1 = SurfaceObservations(alias = 'rr')
-#test1.load(lazychunk = {'latitude': 50, 'longitude': 50}, tmax = '1960-01-01')
-#test1.aggregatetime() # 1.32 sec
+# To matrix with (observations, locations), where NaN is filtered
+#dsflat = xr.Dataset({'rr' :test1.array.stack(latlon = ['latitude', 'longitude'])})
+#nona = dsflat.dropna(dim = 'latlon')
+#obsmat = nona.rr.values
 
-#test2.load(lazychunk = {'time':3650}, tmax = '1990-01-01')
-#test2.aggregatetime(freq = 'M') # Small chuncks seem to work pretty well. For .sum() the nan are not correctly processed (become 0)
-#test2.savechanges()
+#U, s, Vt = np.linalg.svd(obsmat, full_matrices=False)
+# s are the singular values. Square them for the eigenvalues of np.dot(obsmat.T, obsmat). Already ordered.
+# eigenvectors are the columns in V = Vt.T (just like regular eigenvector matrix) or in the rows of Vt
 
-#del test2
+# plot the first eigenvector
+#pc1 = xr.DataArray(Vt[0,:], coords = [nona.latlon], dims = ['latlon'])
+#import matplotlib.pyplot as plt
+#axes = plt.axes()
+#pc1.unstack('latlon').plot(ax = axes)
+#plt.savefig('test')
 
-#recover = SurfaceObservations(alias = 'rr', **{'tmin' : '1950-01-01', 'tmax' : '1960-01-01', 'timemethod' : 'w_mean'})
-#recover.load()
 
-
-class HeatEvent(object):
+class EventClassification(object):
     
-    def __init__(self, observations):
-        self.obs = observations
+    def __init__(self, obs_array, obs_daskarray = None):
+        """
+        Supply the observations xarray: Normal array for (memory efficient) grouping and fast explicit climatology computation
+        If the dataset is potentially large to load completely then also supply a
+        dask array for the anomaly computation which probably will not fit into memory.
+        """
+        self.obs = obs_array
+        if obs_daskarray is not None:
+            self.obsd = obs_daskarray
     
-    
+    def localclim(self, daysbefore = 0, daysafter = 0, mean = True, quant = None):
+        """
+        Construct local climatological distribution within a rolling window, but with pooled years. 
+        Extracts mean (for anomaly computation) or for instance a quantile. Returns fields of this for all supplied time and space.
+        Daysbefore and daysafter are inclusive. 
+        """ 
+        if quant is not None:
+            from helper_functions import nanquantile
+        doygroups = self.obs.groupby('time.dayofyear')
+        doygroups = {str(key):value for key,value in doygroups} # Change to string
+        maxday = 366
+        results = []
+        for doy in doygroups.keys():        
+            doy = int(doy)
+            window = np.arange(doy - daysbefore, doy + daysafter + 1, dtype = 'int64')
+            # small corrections for overshooting into previous or next year.
+            window[ window < 1 ] += maxday
+            window[ window > maxday ] -= maxday
+            
+            complete = xr.concat([doygroups[str(key)] for key in window if str(key) in doygroups.keys()], dim = 'time')
+
+            if mean:
+                reduced = complete.mean('time')
+            elif quant is not None:
+                # nanquantile method based on sorting. So not compatible with xarray. Therefore feed values and restore coordinates.
+                reduced = xr.DataArray(data = nanquantile(array = complete.values, q = quant),
+                                        coords = [complete.coords['latitude'], complete.coords['longitude']],
+                                        dims = ['latitude','longitude'])
+                reduced.attrs['quantile'] = quant
+            else:
+                raise ValueError('Provide a quantile if mean is set to False')
+            
+            print('computed clim of', doy)
+            reduced.coords['doy'] = doy
+            results.append(reduced)
         
+        self.clim = xr.concat(results, dim = 'doy')
+    
+    def climexceedance(self):
+        """
+        Substracts the climatological value for the associated day of year from the observations.
+        This leads to anomalies when the climatological mean was taken. Exceedances become sorted by doy.
+        """
+        if hasattr(self, 'obsd'):
+            doygroups = self.obsd.groupby('time.dayofyear')
+        else:
+            doygroups = self.obs.groupby('time.dayofyear')
+        results = []
+        for doy, fields in doygroups:
+            results.append(fields - self.clim.sel(doy = doy))
+            print('computed exceedance of', doy)
+        self.exceedance = xr.concat(results, dim = 'time')
+    
+#self = EventClassification(obs_array=test1.array, obs_daskarray=test2.array)
+#self.localclim(daysbefore=2, daysafter=2, mean = False, quant = 0.95)
+
