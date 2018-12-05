@@ -63,15 +63,17 @@ def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
     dr = mondays.append(thursdays).sort_values()
     
     for indate in dr:
-        download_forecast(indate = indate.strftime('%Y-%m-%d'))
-        download_hindcast(indate = indate.strftime('%Y-%m-%d'))
+        forecast = Forecast(indate.strftime('%Y-%m-%d'), prefix = 'for_')
+        forecast.create_processed()
+        hindcast = Hindcast(indate.strftime('%Y-%m-%d'), prefix = 'hin_')
+        hindcast.invoke_processed_creation()
 
 class CascadeError(Exception):
     pass
                        
 class Forecast(object):
 
-    def __init__(self, indate, prefix):
+    def __init__(self, indate = '2015-05-14', prefix = 'for_'):
         self.prefix = prefix
         self.indate = indate
         self.processedfile = self.prefix + self.indate + '_processed.nc'
@@ -80,42 +82,48 @@ class Forecast(object):
         self.cffile = self.prefix + self.indate + '_contr.nc'
     
     def create_processed(self, prevent_cascade = False):
+        """
+        Joining of members for the combined file is not needed for forecasts 
+        that are extracted form hindcast Grib-files, therefore CascadeError is raised before function call.
+        """
         if os.path.isfile(basedir+self.processedfile):
             print('Processed forecast already exits. Do nothing')
         else:
             try:
                 comb = xr.open_dataset(basedir + self.interfile)
                 print('Combined file successfully loaded')
-            except:
+            except OSError:
                 print('Combined file needs creation')
                 if prevent_cascade:
                     raise CascadeError
                 self.join_members() # creates the interfile
                 comb = xr.open_dataset(basedir + self.interfile)
+                comb.close()
             # TODO: expand this method with the desired extra processing steps.
             #prec = xr.diff(comb['rr'])
             #time resampling of tmax.
             #result.to_netcdf(path = basedir + self.processedfile)
             
 
-    def join_members():
+    def join_members(self):
         """
-        Join members save the dataset. Control member gets the number 0
+        Join members save the dataset. Control member gets the number 0.
+        Only for non-hindcast forecasts.
         """
         try:
             pf = xr.open_dataset(basedir + self.pffile)
             print('Ensemble file successfully loaded')
-        except:
+        except OSError:
             print('Ensemble file need to be downloaded')
-            server.execute(mars_dict(indate, contr = False), basedir+self.pffile)
+            server.execute(mars_dict(self.indate, contr = False), basedir+self.pffile)
             pf = xr.open_dataset(basedir + self.pffile)
         
         try:
             cf = xr.open_dataset(basedir + self.cffile)
             print('Control file successfully loaded')
-        except"
+        except OSError:
             print('Control file need to be downloaded')
-            server.execute(mars_dict(indate, contr = True), basedir+self.cffile)
+            server.execute(mars_dict(self.indate, contr = True), basedir+self.cffile)
             cf = xr.open_dataset(basedir + self.cffile)
         
         cf.coords['number'] = np.array(0, dtype='int16')
@@ -123,7 +131,7 @@ class Forecast(object):
         particular_encoding = {key : netcdf_encoding[key] for key in cf.keys()} 
         xr.concat([cf,pf], dim = 'number').to_netcdf(path = basedir + self.interfile, encoding= particular_encoding)
     
-    def cleanup()
+    def cleanup(self):
         """
         Remove all files except the processed one.
         """
@@ -137,7 +145,7 @@ class Hindcast(object):
     """
     More difficult class because 20 reforecasts are contained in one file and need to be split to 20 separate processed files
     """
-    def __init__(self, hdate, prefix):
+    def __init__(self, hdate = '2015-05-14', prefix = 'hin_'):
         self.prefix = prefix
         self.hdate = hdate
         self.pffile = self.prefix + self.hdate + '_ens.grib'
@@ -151,7 +159,7 @@ class Hindcast(object):
         self.hindcasts = [Forecast(indate, self.prefix) for indate in self.hdates]
     
     def invoke_processed_creation(self):
-        if all([os.path.isfile(basedir + hindcast.processedfile for hindcast in self.hindcasts)]):
+        if all([os.path.isfile(basedir + hindcast.processedfile) for hindcast in self.hindcasts]):
             print('Processed hindcasts already exits. Do nothing')
         else:
             try:
@@ -163,26 +171,26 @@ class Hindcast(object):
                 for hindcast in self.hindcasts:
                     hindcast.create_processed(prevent_cascade = True)
         
-    def crunch_gribfiles():
+    def crunch_gribfiles(self):
         """
         hdates within a file are extracted and perturbed and control are joined.
-        The final files are saved per hdate as netcdf with three variables.
-        svnames should be supplied in a list and have the same length as hdates.
+        The final files are saved per hdate as netcdf with three variables, 
+        getting the name "_comb.nc" which can afterwards be read by the Forecast class
         """
         try:
             pf = pygrib.open(basedir + self.pffile)
             print('Ensemble file successfully loaded')
         except:
-            print('Ensemble file need to be downloaded')
-            server.execute(mars_dict(indate, hdate = self.marshdates, contr = False), basedir+self.pffile)
+            print('Ensemble file needs to be downloaded')
+            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = False), basedir+self.pffile)
             pf = pygrib.open(basedir + self.pffile)
         
         try:
             cf = pygrib.open(basedir + self.cffile)
             print('Control file successfully loaded')
-        except"
-            print('Control file need to be downloaded')
-            server.execute(mars_dict(indate, hdate = self.marshdate, contr = True), basedir+self.cffile)
+        except:
+            print('Control file needs to be downloaded')
+            server.execute(mars_dict(self.hdate, hdate = self.marshdate, contr = True), basedir+self.cffile)
             cf = pygrib.open(basedir + self.cffile)
         
         params = list(set([x.cfVarName for x in cf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] # Hardcoded for marsParam
@@ -251,41 +259,5 @@ class Hindcast(object):
         pf.close()
         cf.close()       
 
-# TODO: Remove code below. Copy useful documentation. Test the above
-def download_hindcast(indate):
-    """
-    Constructs hdates belonging to indate. For retrieval efficiency all Hdates are
-    initially downloaded together, which is only possible in a GRIB file. 
-    The single file is saved under indate but recognizable by 'hin'. 
-    Separate download of perturbed (11 members) and control. 
-    """
-
-    end = pd.to_datetime(indate, format='%Y-%m-%d')
-
-    
-    pfname = 'hin_'+indate+'_ens.grib'
-    cfname = 'hin_'+indate+'_contr.grib'
-    svnames = ['hin_' + hd + '_comb.nc' for hd in hdates]
-
-    # perturbed.
-    if os.path.isfile(basedir+pfname):
-        print('perturbed hindcast already downloaded..')
-    else:
-        server.execute(mars_dict(indate, hdate = marshdate, contr = False), basedir+pfname)
-    # control
-    if os.path.isfile(basedir + cfname):
-        print('control hindcast already downloaded..')
-    else:
-        server.execute(mars_dict(indate, hdate = marshdate, contr = True), basedir+cfname)
-    
-    # Do seperate hdate files exist? If not: start grib file extraction
-    
-    if all([os.path.isfile(basedir + svname) for svname in svnames]):
-        print('hdate files already exist')
-    else:
-        crunch_gribfiles(pfname = pfname, cfname = cfname, hdates = hdates, svnames = svnames)
-  
-
-#start_batch(tmin = "2015-06-02", tmax = '2015-06-23')
+start_batch(tmin = "2015-06-02", tmax = '2015-06-23')
 #start_batch(tmin = '2015-06-23', tmax = '2015-07-05')
-#download_forecast(indate = '2015-06-11')
