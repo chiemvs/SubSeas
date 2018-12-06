@@ -21,10 +21,14 @@ basedir = '/nobackup/users/straaten/EXT/'
 netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'mx2t6': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'tp': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
+                   'rr': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
+                   'tx': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
+                   'tg': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'time': {'dtype': 'int64'},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
-                   'number': {'dtype': 'int16'}}
+                   'number': {'dtype': 'int16'},
+                   'leadtime': {'dtype': 'int16'}}
 
 def mars_dict(date, hdate = None, contr = False):
     """
@@ -42,7 +46,7 @@ def mars_dict(date, hdate = None, contr = False):
     'param'     : "167.128/121.128/228.128", # T2M (Kelvin), Tmax in last 6 hrs. and Tot prec. Tot prec needs de-accumulation
     'step'      : "0/to/1104/by/6",
     'area'      : "75/-30/25/75", #E-OBS 75.375/-40.375/25.375/75.375/ Limits 75/-40.5/25/75.5
-    'grid'      : ".5/.5", # Octahedral grid does not support sub-areas
+    'grid'      : ".38/.38", # Octahedral grid does not support sub-areas
     'expect'    : "any",
     }
     if hdate is not None:
@@ -85,6 +89,10 @@ class Forecast(object):
         """
         Joining of members for the combined file is not needed for forecasts 
         that are extracted form hindcast Grib-files, therefore CascadeError is raised before function call.
+        The actual processing does a daily temporal resampling, and left-labels timestamps to match E-OBS variables:
+        - tg: Mean of 6h temperatures in the 24 hrs belonging to yyyy-mm-dd (including 00UTC, excluding 00 UTC of next day)
+        - tx: Maximum temperature in the 24 hrs belonging to yyyy-mm-dd
+        - rr: Precipitation that will accumulate in the 24 hrs belonging to yyyy-mm-dd
         """
         if os.path.isfile(basedir+self.processedfile):
             print('Processed forecast already exits. Do nothing')
@@ -98,11 +106,28 @@ class Forecast(object):
                     raise CascadeError
                 self.join_members() # creates the interfile
                 comb = xr.open_dataset(basedir + self.interfile)
-                comb.close()
-            # TODO: expand this method with the desired extra processing steps.
-            #prec = xr.diff(comb['rr'])
-            #time resampling of tmax.
-            #result.to_netcdf(path = basedir + self.processedfile)
+            
+            comb.load()
+            
+            # Precipitation. First resample: right limit is included because rain within a day accumulated till that 00UTC timestamp. Then de-accumulate
+            tp = comb.tp.resample(time = 'D', closed = 'right').last()
+            rr = tp.diff(dim = 'time', label = 'upper') # This cutoffs the first timestep.
+            rr.attrs.update({'long_name':'precipitation', 'units':comb.tp.units})
+            # Mean temperature. Resample. Cutoff last timestep because this is no average (only instantaneous 00UTC value)
+            tg = comb.t2m.resample(time = 'D').mean('time').isel(time = slice(0,-1))
+            tg.attrs.update({'long_name':'mean temperature', 'units':comb.t2m.units})
+            # Maximum temperature. Right limit is included because forecast value is the maximum in previous six hours. Therefore also cutoff the first timestep
+            tx = comb.mx2t6.resample(time = 'D', closed = 'right').max('time').isel(time = slice(1,None))
+            tx.attrs.update({'long_name':'maximum temperature', 'units':comb.mx2t6.units})
+            
+            # Join and add leadtime dimension (days) for clarity
+            result = xr.Dataset({'rr':rr,'tg':tg,'tx':tx})
+            result['leadtime'] = ('time', np.arange(1, len(result.coords['time'])+1, dtype = 'int16'))
+            result.leadtime.attrs.update({'long_name':'leadtime', 'units':'days'})
+            result.set_coords('leadtime', inplace=True) # selection by leadtime requires a quick swap: result.swap_dims({'time':'leadtime'})
+            
+            result.to_netcdf(path = basedir + self.processedfile)
+            comb.close()
             
 
     def join_members(self):
@@ -259,5 +284,5 @@ class Hindcast(object):
         pf.close()
         cf.close()       
 
-start_batch(tmin = "2015-06-02", tmax = '2015-06-23')
+#start_batch(tmin = "2015-06-02", tmax = '2015-06-23')
 #start_batch(tmin = '2015-06-23', tmax = '2015-07-05')
