@@ -45,6 +45,7 @@ def mars_dict(date, hdate = None, contr = False):
     'levtype'   : "sfc",
     'param'     : "167.128/121.128/228.128", # T2M (Kelvin), Tmax in last 6 hrs. and Tot prec. Tot prec needs de-accumulation
     'step'      : "0/to/1104/by/6",
+    'ppengine'  : "mir",
     'area'      : "75/-30/25/75", #E-OBS 75.375/-40.375/25.375/75.375/ Limits 75/-40.5/25/75.5
     'grid'      : ".38/.38", # Octahedral grid does not support sub-areas
     'expect'    : "any",
@@ -69,8 +70,10 @@ def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
     for indate in dr:
         forecast = Forecast(indate.strftime('%Y-%m-%d'), prefix = 'for_')
         forecast.create_processed()
+        forecast.cleanup()
         hindcast = Hindcast(indate.strftime('%Y-%m-%d'), prefix = 'hin_')
         hindcast.invoke_processed_creation()
+        hindcast.cleanup()
 
 class CascadeError(Exception):
     pass
@@ -126,8 +129,10 @@ class Forecast(object):
             result.leadtime.attrs.update({'long_name':'leadtime', 'units':'days'})
             result.set_coords('leadtime', inplace=True) # selection by leadtime requires a quick swap: result.swap_dims({'time':'leadtime'})
             
-            result.to_netcdf(path = basedir + self.processedfile)
+            particular_encoding = {key : netcdf_encoding[key] for key in result.keys()} 
+            result.to_netcdf(path = basedir + self.processedfile, encoding = particular_encoding)
             comb.close()
+            print('Processed forecast successfully created')
             
 
     def join_members(self):
@@ -162,7 +167,7 @@ class Forecast(object):
         """
         for filename in [self.interfile, self.pffile, self.cffile]:
             try:
-                os.remove(filename)
+                os.remove(basedir + filename)
             except OSError:
                 pass
 
@@ -282,7 +287,14 @@ class Hindcast(object):
             particular_encoding = {key : netcdf_encoding[key] for key in onehdate.keys()} # get only encoding of present variables
             onehdate.to_netcdf(path = basedir + svname, encoding= particular_encoding)
         pf.close()
-        cf.close()       
+        cf.close()
+        
+    def cleanup(self):
+        """
+        Remove all files except the processed one. GRIB files are currently kept.
+        """
+        for hindcast in self.hindcasts:
+            hindcast.cleanup()
 
-#start_batch(tmin = "2015-06-02", tmax = '2015-06-23')
+start_batch(tmin = "2015-05-14", tmax = '2015-07-21')
 #start_batch(tmin = '2015-06-23', tmax = '2015-07-05')
