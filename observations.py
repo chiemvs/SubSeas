@@ -146,7 +146,7 @@ class SurfaceObservations(object):
         if not hasattr(self, 'array'):
             self.load(lazychunk = {'time': 365})
         
-        f = getattr(self.array.resample(time = freq), method) # timestamp can be set with label = 'right'
+        f = getattr(self.array.resample(time = freq), method) # timestamp is left and can be changed with label = 'right'
         self.array = f('time', keep_attrs=True) 
         self.timemethod = '_'.join([freq,method])
 
@@ -174,10 +174,10 @@ class SurfaceObservations(object):
 
 # Later on I want to make an experiment class. Combining surface observations on a certain aggregation, with 
 
-test1 = SurfaceObservations(alias = 'rr')
-test1.load(tmax = '1950-01-03')
-test2 = SurfaceObservations(alias = 'rr')
-test2.load(tmax = '1950-01-03', lazychunk = {'time':300})
+#test1 = SurfaceObservations(alias = 'rr')
+#test1.load(tmax = '1950-01-03')
+#test2 = SurfaceObservations(alias = 'rr')
+#test2.load(tmax = '1950-01-03', lazychunk = {'time':300})
     
 # To matrix with (observations, locations), where NaN is filtered
 #dsflat = xr.Dataset({'rr' :test1.array.stack(latlon = ['latitude', 'longitude'])})

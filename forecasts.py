@@ -17,7 +17,6 @@ import pygrib
 
 # Global variables
 server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)
-basedir = '/nobackup/users/straaten/EXT/'
 netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'mx2t6': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'tp': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
@@ -70,10 +69,10 @@ def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
     for indate in dr:
         forecast = Forecast(indate.strftime('%Y-%m-%d'), prefix = 'for_')
         forecast.create_processed()
-        forecast.cleanup()
+        #forecast.cleanup()
         hindcast = Hindcast(indate.strftime('%Y-%m-%d'), prefix = 'hin_')
         hindcast.invoke_processed_creation()
-        hindcast.cleanup()
+        #hindcast.cleanup()
 
 class CascadeError(Exception):
     pass
@@ -81,6 +80,7 @@ class CascadeError(Exception):
 class Forecast(object):
 
     def __init__(self, indate = '2015-05-14', prefix = 'for_'):
+        self.basedir = '/nobackup/users/straaten/EXT/'
         self.prefix = prefix
         self.indate = indate
         self.processedfile = self.prefix + self.indate + '_processed.nc'
@@ -97,18 +97,18 @@ class Forecast(object):
         - tx: Maximum temperature in the 24 hrs belonging to yyyy-mm-dd
         - rr: Precipitation that will accumulate in the 24 hrs belonging to yyyy-mm-dd
         """
-        if os.path.isfile(basedir+self.processedfile):
+        if os.path.isfile(self.basedir+self.processedfile):
             print('Processed forecast already exits. Do nothing')
         else:
             try:
-                comb = xr.open_dataset(basedir + self.interfile)
+                comb = xr.open_dataset(self.basedir + self.interfile)
                 print('Combined file successfully loaded')
             except OSError:
                 print('Combined file needs creation')
                 if prevent_cascade:
                     raise CascadeError
                 self.join_members() # creates the interfile
-                comb = xr.open_dataset(basedir + self.interfile)
+                comb = xr.open_dataset(self.basedir + self.interfile)
             
             comb.load()
             
@@ -130,7 +130,7 @@ class Forecast(object):
             result.set_coords('leadtime', inplace=True) # selection by leadtime requires a quick swap: result.swap_dims({'time':'leadtime'})
             
             particular_encoding = {key : netcdf_encoding[key] for key in result.keys()} 
-            result.to_netcdf(path = basedir + self.processedfile, encoding = particular_encoding)
+            result.to_netcdf(path = self.basedir + self.processedfile, encoding = particular_encoding)
             comb.close()
             print('Processed forecast successfully created')
             
@@ -141,25 +141,25 @@ class Forecast(object):
         Only for non-hindcast forecasts.
         """
         try:
-            pf = xr.open_dataset(basedir + self.pffile)
+            pf = xr.open_dataset(self.basedir + self.pffile)
             print('Ensemble file successfully loaded')
         except OSError:
             print('Ensemble file need to be downloaded')
-            server.execute(mars_dict(self.indate, contr = False), basedir+self.pffile)
-            pf = xr.open_dataset(basedir + self.pffile)
+            server.execute(mars_dict(self.indate, contr = False), self.basedir+self.pffile)
+            pf = xr.open_dataset(self.basedir + self.pffile)
         
         try:
-            cf = xr.open_dataset(basedir + self.cffile)
+            cf = xr.open_dataset(self.basedir + self.cffile)
             print('Control file successfully loaded')
         except OSError:
             print('Control file need to be downloaded')
-            server.execute(mars_dict(self.indate, contr = True), basedir+self.cffile)
-            cf = xr.open_dataset(basedir + self.cffile)
+            server.execute(mars_dict(self.indate, contr = True), self.basedir+self.cffile)
+            cf = xr.open_dataset(self.basedir + self.cffile)
         
         cf.coords['number'] = np.array(0, dtype='int16')
         cf = cf.expand_dims('number',-1)
         particular_encoding = {key : netcdf_encoding[key] for key in cf.keys()} 
-        xr.concat([cf,pf], dim = 'number').to_netcdf(path = basedir + self.interfile, encoding= particular_encoding)
+        xr.concat([cf,pf], dim = 'number').to_netcdf(path = self.basedir + self.interfile, encoding= particular_encoding)
     
     def cleanup(self):
         """
@@ -167,7 +167,7 @@ class Forecast(object):
         """
         for filename in [self.interfile, self.pffile, self.cffile]:
             try:
-                os.remove(basedir + filename)
+                os.remove(self.basedir + filename)
             except OSError:
                 pass
 
@@ -176,6 +176,7 @@ class Hindcast(object):
     More difficult class because 20 reforecasts are contained in one file and need to be split to 20 separate processed files
     """
     def __init__(self, hdate = '2015-05-14', prefix = 'hin_'):
+        self.basedir = '/nobackup/users/straaten/EXT/'
         self.prefix = prefix
         self.hdate = hdate
         self.pffile = self.prefix + self.hdate + '_ens.grib'
@@ -189,7 +190,7 @@ class Hindcast(object):
         self.hindcasts = [Forecast(indate, self.prefix) for indate in self.hdates]
     
     def invoke_processed_creation(self):
-        if all([os.path.isfile(basedir + hindcast.processedfile) for hindcast in self.hindcasts]):
+        if all([os.path.isfile(self.basedir + hindcast.processedfile) for hindcast in self.hindcasts]):
             print('Processed hindcasts already exits. Do nothing')
         else:
             try:
@@ -208,20 +209,20 @@ class Hindcast(object):
         getting the name "_comb.nc" which can afterwards be read by the Forecast class
         """
         try:
-            pf = pygrib.open(basedir + self.pffile)
+            pf = pygrib.open(self.basedir + self.pffile)
             print('Ensemble file successfully loaded')
         except:
             print('Ensemble file needs to be downloaded')
-            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = False), basedir+self.pffile)
-            pf = pygrib.open(basedir + self.pffile)
+            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = False), self.basedir+self.pffile)
+            pf = pygrib.open(self.basedir + self.pffile)
         
         try:
-            cf = pygrib.open(basedir + self.cffile)
+            cf = pygrib.open(self.basedir + self.cffile)
             print('Control file successfully loaded')
         except:
             print('Control file needs to be downloaded')
-            server.execute(mars_dict(self.hdate, hdate = self.marshdate, contr = True), basedir+self.cffile)
-            cf = pygrib.open(basedir + self.cffile)
+            server.execute(mars_dict(self.hdate, hdate = self.marshdate, contr = True), self.basedir+self.cffile)
+            cf = pygrib.open(self.basedir + self.cffile)
         
         params = list(set([x.cfVarName for x in cf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] # Hardcoded for marsParam
 
@@ -285,7 +286,7 @@ class Hindcast(object):
             onehdate = xr.Dataset(collectparams)
             svname = self.prefix + hd + '_comb.nc'
             particular_encoding = {key : netcdf_encoding[key] for key in onehdate.keys()} # get only encoding of present variables
-            onehdate.to_netcdf(path = basedir + svname, encoding= particular_encoding)
+            onehdate.to_netcdf(path = self.basedir + svname, encoding= particular_encoding)
         pf.close()
         cf.close()
         
@@ -296,5 +297,5 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
-start_batch(tmin = "2015-05-14", tmax = '2015-07-21')
+#start_batch(tmin = "2015-05-14", tmax = '2015-05-25')
 #start_batch(tmin = '2015-06-23', tmax = '2015-07-05')
