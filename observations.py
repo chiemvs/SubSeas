@@ -100,55 +100,30 @@ class SurfaceObservations(object):
         """
         Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
         In the case of degree grouping the groups might not contain an equal number of cells.
-        Completely lazy when loading is set to lazy
+        Completely lazy when supplied array is lazy.
         """
+        from helper_functions import agg_space
         
         # Check if already loaded.
         if not hasattr(self, 'array'):
             self.load(lazychunk = {'latitude': 50, 'longitude': 50})
         
-        if by_degree:
-            binlon = pd.cut(self.array.longitude, bins = np.arange(self.array.longitude.min(), self.array.longitude.max(), step), include_lowest = True) # Lowest is included because otherwise NA's arise at begin and end, making a single group
-            binlat = pd.cut(self.array.latitude, bins = np.arange(self.array.latitude.min(), self.array.latitude.max(), step), include_lowest = True)
-        else:
-            lon_n, lon_rem = divmod(self.array.longitude.size, step)
-            binlon = np.repeat(np.arange(0, lon_n), repeats = step)
-            binlon = np.append(binlon, np.repeat(np.NaN, lon_rem))
-            lat_n, lat_rem = divmod(self.array.latitude.size, step)
-            binlat = np.repeat(np.arange(0, lat_n), repeats = step)
-            binlat = np.append(binlat, np.repeat(np.NaN, lat_rem))
-        
-        # Concatenate as strings to a group variable
-        combined = np.char.array(binlat)[:, None] + np.char.array(binlon)[None, :] # Numpy broadcasting behaviour. Kind of an outer product
-        combined = xr.DataArray(combined, [self.array.coords['latitude'], self.array.coords['longitude']], name = 'latlongroup')
-        
-        # Compute grouped values. This stacks the dimensions to one spatial and one temporal
-        f = getattr(self.array.groupby(combined), method)
-        grouped = f('stacked_latitude_longitude', keep_attrs=True)        
-        
-        # Compute new coordinates, and construct a spatial multiindex with lats and lons for each group
-        newlat = self.array.latitude.to_pandas().groupby(np.char.array(binlat)).mean()
-        newlon = self.array.longitude.to_pandas().groupby(np.char.array(binlon)).mean()
-        newlatlon = pd.MultiIndex.from_tuples(list(itertools.product(newlat, newlon)), names=('latitude', 'longitude'))
-        
-        # Prepare the coordinates of stack dimension and replace the internal array
-        grouped['latlongroup'] = newlatlon        
-        self.array = grouped.unstack('latlongroup')
-        #self.array = xr.DataArray(grouped, coords = [grouped.time, newlatlon], dims = ['time','latlon']).unstack('latlon')
-        self.spacemethod = '_'.join([str(step), 'cells', method]) if not by_degree else '_'.join([str(step), 'degrees', method])
-        
+        self.array, self.spacemethod = agg_space(array = self.array, 
+                                                 orlats = self.array.latitude.load(),
+                                                 orlons = self.array.longitude.load(),
+                                                 step = step, method = method, by_degree = by_degree)
     
     def aggregatetime(self, freq = 'w' , method = 'mean'):
         """
         Uses the pandas frequency indicators. Method can be mean, min, max, std
-        Completely lazy when loading is lazy
+        Completely lazy when loading is lazy.
         """
+        from helper_functions import agg_time
+        
         if not hasattr(self, 'array'):
             self.load(lazychunk = {'time': 365})
         
-        f = getattr(self.array.resample(time = freq), method) # timestamp is left and can be changed with label = 'right'
-        self.array = f('time', keep_attrs=True) 
-        self.timemethod = '_'.join([freq,method])
+        self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
 
         # To access days of week: self.array.time.dt.timeofday
         # Also possible is self.array.time.dt.floor('D')
@@ -174,8 +149,9 @@ class SurfaceObservations(object):
 
 # Later on I want to make an experiment class. Combining surface observations on a certain aggregation, with 
 
-#test1 = SurfaceObservations(alias = 'rr')
-#test1.load(tmax = '1950-01-03')
+test1 = SurfaceObservations(alias = 'rr')
+test1.load(tmax = '1980-02-03') #lazychunk = {'latitude': 50, 'longitude': 50}  
+#test1.aggregatespace(step = 5)
 #test2 = SurfaceObservations(alias = 'rr')
 #test2.load(tmax = '1950-01-03', lazychunk = {'time':300})
     
