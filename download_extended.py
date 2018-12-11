@@ -220,7 +220,7 @@ class Hindcast(object):
             print('Control file successfully loaded')
         except:
             print('Control file needs to be downloaded')
-            server.execute(mars_dict(self.hdate, hdate = self.marshdate, contr = True), basedir+self.cffile)
+            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = True), basedir+self.cffile)
             cf = pygrib.open(basedir + self.cffile)
         
         params = list(set([x.cfVarName for x in cf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] # Hardcoded for marsParam
