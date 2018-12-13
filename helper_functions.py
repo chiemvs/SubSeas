@@ -72,7 +72,7 @@ def agg_time(array, freq = 'w' , method = 'mean'):
     Uses the pandas frequency indicators. Method can be mean, min, max, std
     Completely lazy when loading is lazy. Returns an adapted array and a timemethod string for documentation.
     """
-    f = getattr(array.resample(time = freq, label = 'left'), method) # timestamp is left and can be changed with label = 'right'
+    f = getattr(array.resample(time = freq, closed = 'left', label = 'left'), method) # timestamp is left and can be changed with label = 'right'
     array = f('time', keep_attrs=True) 
     timemethod = '_'.join([freq,method])
     return (array, timemethod)

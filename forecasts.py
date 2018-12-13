@@ -170,6 +170,30 @@ class Forecast(object):
                 os.remove(self.basedir + filename)
             except OSError:
                 pass
+    
+    def load(self, variable = None, tmin = None, tmax = None, n_members = None):
+        """
+        Loading of processedfile. Similar behaviour to observation class
+        If n_members is set to one it selects only the control member.
+        """
+        
+        full = xr.open_dataset(self.basedir + self.processedfile)[variable]
+        
+        # Full range if no timelimits were given
+        if tmin is None:
+            tmin = pd.Series(full.coords['time'].values).min()
+        if tmax is None:
+            tmax = pd.Series(full.coords['time'].values).max()
+            
+        # control + random  members when n_members is given. Otherwise all members are loaded.
+        numbers = full.coords['number'].values
+        if n_members is not None:
+            numbers = np.concatenate((numbers[[0]], 
+                                      np.random.choice(numbers[1:], size = n_members - 1, replace = False)))
+            numbers.sort()
+        
+        self.array = full.sel(time = pd.date_range(tmin, tmax, freq = 'D'), number = numbers)
+        
 
 class Hindcast(object):
     """

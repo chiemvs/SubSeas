@@ -36,6 +36,7 @@ class ForecastToObsAlignment(object):
         Here the forecasts corresponding to the observations are determined, by testing their existence.
         Hindcasts and forecasts might be mixed. But they are in the same class.
         Leadtimes may differ.
+        TODO: Include seasonal subsetting in this method.
         """
         self.forecasts = {}
         for date in self.dates.tolist():
@@ -48,27 +49,47 @@ class ForecastToObsAlignment(object):
             # select from potential forecasts only those that exist.
             forecasts = [f for f in forecasts if os.path.isfile(f.basedir + f.processedfile)]
             hindcasts = [h for h in hindcasts if os.path.isfile(h.basedir + h.processedfile)]
-            self.forecasts.update({date : forecasts.append(hindcasts)})   
+            self.forecasts.update({date : forecasts + hindcasts})   
         
+    def load_forecasts(self, n_members):
+        """
+        Gets the daily processed forecasts into memory. Delimited by the left timestamp and the aggregation time.
+        This is done by using the load method of each Forecast class in the dictionary. They are stored in a list.
+        """
+        for date, listofforecasts in self.forecasts.items():
+            
+            if listofforecasts: # empty lists are skipped
+                tmin = date
+                tmax = date + pd.Timedelta(str(self.time_agg - 1) + 'D') # -1 because date itself also counts for one day in the aggregation.
+                
+                for forecast in listofforecasts:
+                    forecast.load(variable = self.obs.basevar, tmin = tmin, tmax = tmax, n_members = n_members)
+    
     def force_resolution(self):
         """
         Check if the same resolution and force spatial/temporal aggregation if that is not the case.
+        Makes use of the methods of each Forecast class
         """
         
-    def load_and_match(self, n_members):
+    def match(self):
         """
         Neirest neighbouring to match pairs.
         Creates the dataset. Possibly writes to disk too.
         """
+        for date, listofforecasts in self.forecasts.items():
+            pass
         #pointer = xr.open_mfdataset()
 
 obs = SurfaceObservations(alias = 'rr')
-obs.load(tmax = '1950-05-03')
+obs.load(tmin = '1995-05-14', tmax = '2015-07-02')
+obs.aggregatetime(freq = 'w', method = 'mean') 
 
 test = ForecastToObsAlignment(season = 'JJA', observations=obs)
+test.find_forecasts()
+test.load_forecasts(n_members=1)
 
-test2 = SurfaceObservations(alias = 'rr', tmin = '1950-01-01', tmax = '1990-01-01', timemethod = 'M_mean')
-test2.load()
+#test2 = SurfaceObservations(alias = 'rr', tmin = '1950-01-01', tmax = '1990-01-01', timemethod = 'M_mean')
+#test2.load()
         
 class Comparison(object):
     
