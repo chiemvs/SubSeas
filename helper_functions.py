@@ -77,6 +77,24 @@ def agg_time(array, freq = 'w' , method = 'mean'):
     timemethod = '_'.join([freq,method])
     return (array, timemethod)
 
+def unitconversionfactors(xunit, yunit):
+    """
+    Provides the correct factors to linearly convert the units of x to the unit of y: y = ax + b, thus returning a and b.
+    The desired outcome should be the units supplied at y.
+    """
+    library = {
+            'KtoC':(1,-273.15),
+            'CtoK':(1,273.15),
+            'mtomm':(1000,0),
+            'mmtom':(0.001,0)}
+    try:
+        return(library[xunit + 'to' + yunit])
+    except KeyError:
+        if yunit == xunit:
+            return((1,0))
+        else:
+            print('Check supplied units, they are not equal and conversion could not be found in library')
+        
     
 def nanquantile(array, q):
     """

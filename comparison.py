@@ -73,20 +73,37 @@ class ForecastToObsAlignment(object):
         
     def match(self):
         """
-        Neirest neighbouring to match pairs.
-        Creates the dataset. Possibly writes to disk too.
+        Neirest neighbouring to match pairs. Also converts forecast units to observed units.
+        Creates the dataset. Possibly writes to disk too if intermediate results press too much on memory?.
         """
+        from helper_functions import unitconversionfactors
+        
+        self.aligned = {}
+        
         for date, listofforecasts in self.forecasts.items():
-            pass
+            
+            if listofforecasts:
+                fieldobs = self.obs.array.sel(time = date).expand_dims('time')
+                
+                allleadtimes = xr.concat(objs = [f.array.swap_dims({'time':'leadtime'}) for f in listofforecasts], dim = 'leadtime') # concatenates over leadtime dimension.
+                a,b = unitconversionfactors(xunit = allleadtimes.units, yunit = fieldobs.units)
+                exp = allleadtimes.reindex_like(fieldobs, method='nearest') * a + b
+                
+                temp = exp.drop('time').to_dataframe().unstack(['number'])
+                # exp to pandas dataframe with number variable as columns. Ideally also masking.
+                # obs as another corresponding column.
+                dat = fieldobs.to_dataframe()
+                #Do some join operation such that time dimension is kept.
+                #temp = temp.assign(obs = dat)
         #pointer = xr.open_mfdataset()
 
 obs = SurfaceObservations(alias = 'rr')
-obs.load(tmin = '1995-05-14', tmax = '2015-07-02')
-obs.aggregatetime(freq = 'w', method = 'mean') 
+obs.load(tmin = '1995-05-14', tmax = '1995-06-02')
+#obs.aggregatetime(freq = 'w', method = 'mean') 
 
 test = ForecastToObsAlignment(season = 'JJA', observations=obs)
 test.find_forecasts()
-test.load_forecasts(n_members=1)
+test.load_forecasts(n_members=11)
 
 #test2 = SurfaceObservations(alias = 'rr', tmin = '1950-01-01', tmax = '1990-01-01', timemethod = 'M_mean')
 #test2.load()
