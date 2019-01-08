@@ -17,7 +17,6 @@ import pygrib
 
 # Global variables
 server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)
-basedir = '/nobackup/users/straaten/EXT/'
 netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'mx2t6': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'tp': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
@@ -81,6 +80,7 @@ class CascadeError(Exception):
 class Forecast(object):
 
     def __init__(self, indate = '2015-05-14', prefix = 'for_'):
+        self.basedir = '/nobackup/users/straaten/EXT/'
         self.prefix = prefix
         self.indate = indate
         self.processedfile = self.prefix + self.indate + '_processed.nc'
@@ -97,18 +97,18 @@ class Forecast(object):
         - tx: Maximum temperature in the 24 hrs belonging to yyyy-mm-dd
         - rr: Precipitation that will accumulate in the 24 hrs belonging to yyyy-mm-dd
         """
-        if os.path.isfile(basedir+self.processedfile):
+        if os.path.isfile(self.basedir+self.processedfile):
             print('Processed forecast already exits. Do nothing')
         else:
             try:
-                comb = xr.open_dataset(basedir + self.interfile)
+                comb = xr.open_dataset(self.basedir + self.interfile)
                 print('Combined file successfully loaded')
             except OSError:
                 print('Combined file needs creation')
                 if prevent_cascade:
                     raise CascadeError
                 self.join_members() # creates the interfile
-                comb = xr.open_dataset(basedir + self.interfile)
+                comb = xr.open_dataset(self.basedir + self.interfile)
             
             comb.load()
             
@@ -130,7 +130,7 @@ class Forecast(object):
             result.set_coords('leadtime', inplace=True) # selection by leadtime requires a quick swap: result.swap_dims({'time':'leadtime'})
             
             particular_encoding = {key : netcdf_encoding[key] for key in result.keys()} 
-            result.to_netcdf(path = basedir + self.processedfile, encoding = particular_encoding)
+            result.to_netcdf(path = self.basedir + self.processedfile, encoding = particular_encoding)
             comb.close()
             print('Processed forecast successfully created')
             
@@ -141,25 +141,25 @@ class Forecast(object):
         Only for non-hindcast forecasts.
         """
         try:
-            pf = xr.open_dataset(basedir + self.pffile)
+            pf = xr.open_dataset(self.basedir + self.pffile)
             print('Ensemble file successfully loaded')
         except OSError:
             print('Ensemble file need to be downloaded')
-            server.execute(mars_dict(self.indate, contr = False), basedir+self.pffile)
-            pf = xr.open_dataset(basedir + self.pffile)
+            server.execute(mars_dict(self.indate, contr = False), self.basedir+self.pffile)
+            pf = xr.open_dataset(self.basedir + self.pffile)
         
         try:
-            cf = xr.open_dataset(basedir + self.cffile)
+            cf = xr.open_dataset(self.basedir + self.cffile)
             print('Control file successfully loaded')
         except OSError:
             print('Control file need to be downloaded')
-            server.execute(mars_dict(self.indate, contr = True), basedir+self.cffile)
-            cf = xr.open_dataset(basedir + self.cffile)
+            server.execute(mars_dict(self.indate, contr = True), self.basedir+self.cffile)
+            cf = xr.open_dataset(self.basedir + self.cffile)
         
         cf.coords['number'] = np.array(0, dtype='int16')
         cf = cf.expand_dims('number',-1)
         particular_encoding = {key : netcdf_encoding[key] for key in cf.keys()} 
-        xr.concat([cf,pf], dim = 'number').to_netcdf(path = basedir + self.interfile, encoding= particular_encoding)
+        xr.concat([cf,pf], dim = 'number').to_netcdf(path = self.basedir + self.interfile, encoding= particular_encoding)
     
     def cleanup(self):
         """
@@ -167,15 +167,63 @@ class Forecast(object):
         """
         for filename in [self.interfile, self.pffile, self.cffile]:
             try:
-                os.remove(basedir + filename)
+                os.remove(self.basedir + filename)
             except OSError:
                 pass
-
+    
+    def load(self, variable = None, tmin = None, tmax = None, n_members = None):
+        """
+        Loading of processedfile. Similar behaviour to observation class
+        If n_members is set to one it selects only the control member.
+        """
+        
+        full = xr.open_dataset(self.basedir + self.processedfile)[variable]
+        
+        # Full range if no timelimits were given
+        if tmin is None:
+            tmin = pd.Series(full.coords['time'].values).min()
+        if tmax is None:
+            tmax = pd.Series(full.coords['time'].values).max()
+            
+        # control + random  members when n_members is given. Otherwise all members are loaded.
+        numbers = full.coords['number'].values
+        if n_members is not None:
+            numbers = np.concatenate((numbers[[0]], 
+                                      np.random.choice(numbers[1:], size = n_members - 1, replace = False)))
+            numbers.sort()
+        
+        self.array = full.sel(time = pd.date_range(tmin, tmax, freq = 'D'), number = numbers)
+        
+    def aggregatetime(self, freq = 'w' , method = 'mean'):
+        """
+        Uses the pandas frequency indicators. Method can be mean, min, max, std
+        Completely lazy when loading is lazy. Array needs to be already loaded because of variable choice.
+        """
+        from helper_functions import agg_time
+        
+        self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
+    
+    def aggregatespace(self, step, method = 'mean', by_degree = False):
+        """
+        Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
+        In the case of degree grouping the groups might not contain an equal number of cells.
+        Completely lazy when supplied array is lazy.
+        NOTE: this actually changes the dimension order of the array.
+        """
+        from helper_functions import agg_space
+        
+        self.array, self.spacemethod = agg_space(array = self.array, 
+                                                 orlats = self.array.latitude.load(),
+                                                 orlons = self.array.longitude.load(),
+                                                 step = step, method = method, by_degree = by_degree)
+    
+        
 class Hindcast(object):
     """
     More difficult class because 20 reforecasts are contained in one file and need to be split to 20 separate processed files
     """
     def __init__(self, hdate = '2015-05-14', prefix = 'hin_'):
+        self.basedir = '/nobackup/users/straaten/EXT/'
         self.prefix = prefix
         self.hdate = hdate
         self.pffile = self.prefix + self.hdate + '_ens.grib'
@@ -189,7 +237,7 @@ class Hindcast(object):
         self.hindcasts = [Forecast(indate, self.prefix) for indate in self.hdates]
     
     def invoke_processed_creation(self):
-        if all([os.path.isfile(basedir + hindcast.processedfile) for hindcast in self.hindcasts]):
+        if all([os.path.isfile(self.basedir + hindcast.processedfile) for hindcast in self.hindcasts]):
             print('Processed hindcasts already exits. Do nothing')
         else:
             try:
@@ -208,20 +256,20 @@ class Hindcast(object):
         getting the name "_comb.nc" which can afterwards be read by the Forecast class
         """
         try:
-            pf = pygrib.open(basedir + self.pffile)
+            pf = pygrib.open(self.basedir + self.pffile)
             print('Ensemble file successfully loaded')
         except:
             print('Ensemble file needs to be downloaded')
-            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = False), basedir+self.pffile)
-            pf = pygrib.open(basedir + self.pffile)
+            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = False), self.basedir+self.pffile)
+            pf = pygrib.open(self.basedir + self.pffile)
         
         try:
-            cf = pygrib.open(basedir + self.cffile)
+            cf = pygrib.open(self.basedir + self.cffile)
             print('Control file successfully loaded')
         except:
             print('Control file needs to be downloaded')
-            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = True), basedir+self.cffile)
-            cf = pygrib.open(basedir + self.cffile)
+            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = True), self.basedir+self.cffile)
+            cf = pygrib.open(self.basedir + self.cffile)
         
         params = list(set([x.cfVarName for x in cf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] # Hardcoded for marsParam
 
@@ -285,7 +333,7 @@ class Hindcast(object):
             onehdate = xr.Dataset(collectparams)
             svname = self.prefix + hd + '_comb.nc'
             particular_encoding = {key : netcdf_encoding[key] for key in onehdate.keys()} # get only encoding of present variables
-            onehdate.to_netcdf(path = basedir + svname, encoding= particular_encoding)
+            onehdate.to_netcdf(path = self.basedir + svname, encoding= particular_encoding)
         pf.close()
         cf.close()
         
@@ -296,6 +344,9 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
+<<<<<<< HEAD:forecasts.py
+=======
 #start_batch(tmin = "2015-07-22", tmax = '2015-10-22')
 #start_batch(tmin = '2015-10-23', tmax = '2015-12-31')
 #start_batch(tmin = '2016-01-01', tmax = '2016-03-31')
+>>>>>>> master:download_extended.py
