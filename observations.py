@@ -141,7 +141,7 @@ class SurfaceObservations(object):
         self.array.to_netcdf(self.filepath)
         #delattr(self, 'array')
     
-    # Define a detrend method? Look at the Toy weather data documentation of xarray.
+    # Define a detrend method? Look at the Toy weather data documentation of xarray. Scipy has a detrend method.
         
 # I want to keep the real advanced operations seperate, like PCA, clustering,
 
@@ -149,8 +149,8 @@ class SurfaceObservations(object):
 
 # Later on I want to make an experiment class. Combining surface observations on a certain aggregation, with 
 
-test1 = SurfaceObservations(alias = 'rr')
-test1.load(tmin = '1995-05-14', tmax = '2015-07-02') #lazychunk = {'latitude': 50, 'longitude': 50}  
+#test1 = SurfaceObservations(alias = 'rr')
+#test1.load(tmin = '1995-05-14', tmax = '2015-07-02') #lazychunk = {'latitude': 50, 'longitude': 50}  
 #test1.aggregatespace(step = 5)
 #test2 = SurfaceObservations(alias = 'rr')
 #test2.load(tmax = '1950-01-03', lazychunk = {'time':300})

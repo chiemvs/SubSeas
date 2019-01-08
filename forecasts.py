@@ -69,10 +69,10 @@ def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
     for indate in dr:
         forecast = Forecast(indate.strftime('%Y-%m-%d'), prefix = 'for_')
         forecast.create_processed()
-        #forecast.cleanup()
+        forecast.cleanup()
         hindcast = Hindcast(indate.strftime('%Y-%m-%d'), prefix = 'hin_')
         hindcast.invoke_processed_creation()
-        #hindcast.cleanup()
+        hindcast.cleanup()
 
 class CascadeError(Exception):
     pass
@@ -194,7 +194,30 @@ class Forecast(object):
         
         self.array = full.sel(time = pd.date_range(tmin, tmax, freq = 'D'), number = numbers)
         
-
+    def aggregatetime(self, freq = 'w' , method = 'mean'):
+        """
+        Uses the pandas frequency indicators. Method can be mean, min, max, std
+        Completely lazy when loading is lazy. Array needs to be already loaded because of variable choice.
+        """
+        from helper_functions import agg_time
+        
+        self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
+    
+    def aggregatespace(self, step, method = 'mean', by_degree = False):
+        """
+        Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
+        In the case of degree grouping the groups might not contain an equal number of cells.
+        Completely lazy when supplied array is lazy.
+        NOTE: this actually changes the dimension order of the array.
+        """
+        from helper_functions import agg_space
+        
+        self.array, self.spacemethod = agg_space(array = self.array, 
+                                                 orlats = self.array.latitude.load(),
+                                                 orlons = self.array.longitude.load(),
+                                                 step = step, method = method, by_degree = by_degree)
+    
+        
 class Hindcast(object):
     """
     More difficult class because 20 reforecasts are contained in one file and need to be split to 20 separate processed files
@@ -245,7 +268,7 @@ class Hindcast(object):
             print('Control file successfully loaded')
         except:
             print('Control file needs to be downloaded')
-            server.execute(mars_dict(self.hdate, hdate = self.marshdate, contr = True), self.basedir+self.cffile)
+            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = True), self.basedir+self.cffile)
             cf = pygrib.open(self.basedir + self.cffile)
         
         params = list(set([x.cfVarName for x in cf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] # Hardcoded for marsParam
@@ -321,5 +344,3 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
-#start_batch(tmin = "2015-05-14", tmax = '2015-05-25')
-#start_batch(tmin = '2015-06-23', tmax = '2015-07-05')

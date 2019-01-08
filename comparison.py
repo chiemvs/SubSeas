@@ -70,6 +70,36 @@ class ForecastToObsAlignment(object):
         Check if the same resolution and force spatial/temporal aggregation if that is not the case.
         Makes use of the methods of each Forecast class
         """
+            
+        for date, listofforecasts in self.forecasts.items():
+        
+            for forecast in listofforecasts:
+                
+                # Check time aggregation
+                try:
+                    obstimemethod = getattr(self.obs, 'timemethod')
+                    try:
+                        fortimemethod = getattr(forecast, 'timemethod')
+                        if fortimemethod not is obstimemethod:
+                            raise AttributeError
+                    except AttributeError:
+                        freq, method = obstimemethod.split('_')
+                        forecast.aggregatetime(freq = freq, method = method)
+                except AttributeError:
+                    pass # obstimemethod has no aggregation
+
+                # Check space aggregation
+                try:
+                    obsspacemethod = getattr(self.obs, 'spacemethod')
+                    try:
+                        forspacemethod = getattr(forecast, 'spacemethod')
+                        if forspacemethod not is obsspacemethod:
+                            raise AttributeError
+                    except AttributeError:
+                        step, what, method = obsspacemethod.split('_')
+                        forecast.aggregatespace(step = step, method = method, by_degrees = (what is 'degrees'))
+                except AttributeError:
+                    pass # obsspacemethod has no aggregation                               
         
     def match(self):
         """
