@@ -80,12 +80,14 @@ class ForecastToObsAlignment(object):
                     obstimemethod = getattr(self.obs, 'timemethod')
                     try:
                         fortimemethod = getattr(forecast, 'timemethod')
-                        if fortimemethod is not obstimemethod:
+                        if not fortimemethod == obstimemethod:
                             raise AttributeError
                     except AttributeError:
+                        print('Aligning time aggregation')
                         freq, method = obstimemethod.split('_')
                         forecast.aggregatetime(freq = freq, method = method)
                 except AttributeError:
+                    print('no time aggregation in obs')
                     pass # obstimemethod has no aggregation
 
                 # Check space aggregation
@@ -93,13 +95,15 @@ class ForecastToObsAlignment(object):
                     obsspacemethod = getattr(self.obs, 'spacemethod')
                     try:
                         forspacemethod = getattr(forecast, 'spacemethod')
-                        if forspacemethod is not obsspacemethod:
+                        if not forspacemethod == obsspacemethod:
                             raise AttributeError
                     except AttributeError:
+                        print('Aligning space aggregation')
                         step, what, method = obsspacemethod.split('_')
-                        forecast.aggregatespace(step = step, method = method, by_degrees = (what is 'degrees'))
+                        forecast.aggregatespace(step = int(step), method = method, by_degree = (what is 'degrees'))
                 except AttributeError:
-                    pass # obsspacemethod has no aggregation                               
+                    print('no space aggregation in obs')
+                    pass # obsspacemethod has no aggregation                           
         
     def match(self):
         """
@@ -128,8 +132,9 @@ class ForecastToObsAlignment(object):
         #pointer = xr.open_mfdataset()
 
 obs = SurfaceObservations(alias = 'rr')
-obs.load(tmin = '1995-05-14', tmax = '1995-06-02')
-#obs.aggregatetime(freq = 'w', method = 'mean') 
+obs.load(tmin = '1995-05-14')
+#obs.aggregatetime(freq = 'w', method = 'mean')
+#obs.aggregatespace(step = 5, method = 'mean', by_degree = False)
 
 test = ForecastToObsAlignment(season = 'JJA', observations=obs)
 test.find_forecasts()
@@ -137,6 +142,18 @@ test.find_forecasts()
 
 #test2 = SurfaceObservations(alias = 'rr', tmin = '1950-01-01', tmax = '1990-01-01', timemethod = 'M_mean')
 #test2.load()
+
+# Make a counter plot:
+#obs = SurfaceObservations(alias = 'rr')
+#obs.load(tmin = '1995-05-14')
+#test = ForecastToObsAlignment(season = 'JJA', observations=obs)
+#test.find_forecasts()
+#counter = np.array([len(listofforecasts) for date, listofforecasts in test.forecasts.items()])
+#times = test.dates
+#import matplotlib.pyplot as plt
+#plt.bar(test.dates, counter)
+#plt.close()
+
         
 class Comparison(object):
     
