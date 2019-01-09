@@ -343,10 +343,3 @@ class Hindcast(object):
         """
         for hindcast in self.hindcasts:
             hindcast.cleanup()
-
-<<<<<<< HEAD:forecasts.py
-=======
-#start_batch(tmin = "2015-07-22", tmax = '2015-10-22')
-#start_batch(tmin = '2015-10-23', tmax = '2015-12-31')
-#start_batch(tmin = '2016-01-01', tmax = '2016-03-31')
->>>>>>> master:download_extended.py

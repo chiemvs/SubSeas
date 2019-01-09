@@ -80,7 +80,7 @@ class ForecastToObsAlignment(object):
                     obstimemethod = getattr(self.obs, 'timemethod')
                     try:
                         fortimemethod = getattr(forecast, 'timemethod')
-                        if fortimemethod not is obstimemethod:
+                        if fortimemethod is not obstimemethod:
                             raise AttributeError
                     except AttributeError:
                         freq, method = obstimemethod.split('_')
@@ -93,7 +93,7 @@ class ForecastToObsAlignment(object):
                     obsspacemethod = getattr(self.obs, 'spacemethod')
                     try:
                         forspacemethod = getattr(forecast, 'spacemethod')
-                        if forspacemethod not is obsspacemethod:
+                        if forspacemethod is not obsspacemethod:
                             raise AttributeError
                     except AttributeError:
                         step, what, method = obsspacemethod.split('_')
@@ -133,7 +133,7 @@ obs.load(tmin = '1995-05-14', tmax = '1995-06-02')
 
 test = ForecastToObsAlignment(season = 'JJA', observations=obs)
 test.find_forecasts()
-test.load_forecasts(n_members=11)
+#test.load_forecasts(n_members=11)
 
 #test2 = SurfaceObservations(alias = 'rr', tmin = '1950-01-01', tmax = '1990-01-01', timemethod = 'M_mean')
 #test2.load()
