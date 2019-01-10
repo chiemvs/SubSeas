@@ -94,7 +94,20 @@ def unitconversionfactors(xunit, yunit):
             return((1,0))
         else:
             print('Check supplied units, they are not equal and conversion could not be found in library')
-        
+
+def monthtoseasonlookup(months):
+    """
+    Character array output of integer array input
+    """
+    array = np.array([
+    None,
+    'DJF', 'DJF',
+    'MAM', 'MAM', 'MAM',
+    'JJA', 'JJA', 'JJA',
+    'SON', 'SON', 'SON',
+    'DJF'
+    ])
+    return(array[months])       
     
 def nanquantile(array, q):
     """

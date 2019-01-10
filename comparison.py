@@ -6,12 +6,14 @@ Created on Wed Nov 28 09:31:16 2018
 @author: straaten
 """
 import os
+import sys
 import numpy as np
 import xarray as xr
 import pandas as pd
 import itertools
 from observations import SurfaceObservations
 from forecasts import Forecast
+from helper_functions import monthtoseasonlookup, unitconversionfactors
 
 class ForecastToObsAlignment(object):
     """
@@ -24,9 +26,11 @@ class ForecastToObsAlignment(object):
         Temporal extend can be read from the attributes of the observation class. 
         Specify the season under inspection for subsetting.
         """
+        self.basedir = '/nobackup/users/straaten/match/'
         self.season = season
         self.obs = observations
         self.dates = self.obs.array.coords['time'].to_series() # Left stamped
+        self.dates = self.dates[monthtoseasonlookup(self.dates.month) == self.season]
         # infer dominant time aggregation in days
         self.time_agg = int(self.dates.diff().dt.days.mode())
         self.maxleadtime = 46
@@ -36,7 +40,6 @@ class ForecastToObsAlignment(object):
         Here the forecasts corresponding to the observations are determined, by testing their existence.
         Hindcasts and forecasts might be mixed. But they are in the same class.
         Leadtimes may differ.
-        TODO: Include seasonal subsetting in this method.
         """
         self.forecasts = {}
         for date in self.dates.tolist():
@@ -64,6 +67,8 @@ class ForecastToObsAlignment(object):
                 
                 for forecast in listofforecasts:
                     forecast.load(variable = self.obs.basevar, tmin = tmin, tmax = tmax, n_members = n_members)
+        
+        self.n_members = n_members
     
     def force_resolution(self):
         """
@@ -108,37 +113,54 @@ class ForecastToObsAlignment(object):
     def match(self):
         """
         Neirest neighbouring to match pairs. Also converts forecast units to observed units.
-        Creates the dataset. Possibly writes to disk too if intermediate results press too much on memory?.
+        Creates the dataset. Possibly emties basket and writes to disk too if intermediate results press too much on memory?.
         """
-        from helper_functions import unitconversionfactors
         
-        self.aligned = {}
+        aligned_basket = []
+        self.outfiles = []
         
         for date, listofforecasts in self.forecasts.items():
             
             if listofforecasts:
-                fieldobs = self.obs.array.sel(time = date).expand_dims('time')
+                fieldobs = self.obs.array.sel(time = date).drop('time')
                 
                 allleadtimes = xr.concat(objs = [f.array.swap_dims({'time':'leadtime'}) for f in listofforecasts], dim = 'leadtime') # concatenates over leadtime dimension.
                 a,b = unitconversionfactors(xunit = allleadtimes.units, yunit = fieldobs.units)
                 exp = allleadtimes.reindex_like(fieldobs, method='nearest') * a + b
                 
-                temp = exp.drop('time').to_dataframe().unstack(['number'])
-                # exp to pandas dataframe with number variable as columns. Ideally also masking.
-                # obs as another corresponding column.
-                dat = fieldobs.to_dataframe()
-                #Do some join operation such that time dimension is kept.
-                #temp = temp.assign(obs = dat)
-        #pointer = xr.open_mfdataset()
+                # Merging, exporting to pandas and masking by dropping on NA observations.
+                combined = xr.Dataset({'forecast':exp.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0, )
+                
+                # puts members in columns. observerations are duplicated so therefore selects up to n_members +1
+                temp = combined.unstack('number').iloc[:,:(self.n_members + 1)] 
+                
+                # prepend with the time index.
+                aligned_basket.append(pd.concat([temp], keys=[date], names=['time'])) # temp.swaplevel(1,2, axis = 0)
+                print(date, 'matched')
+                           
+                # If aligned takes too much system memory (> 3Gb). Write it out
+                # Make sure the first parts are recognizable as the time method and the space method.
+                if sys.getsizeof(aligned_basket) > 3*10**9:
+                    import uuid
+                    characteristics = [self.season]
+                    characteristics.append([getattr(self.obs, m) for m in ['timemethod','spacemethod'] if hasattr(self.obs, m)])
+                    filename = '_'.join(characteristics) + uuid.uuid4().hex + '.csv'
+                    self.outfiles.append(filename)
+                    pd.concat(aligned_basket).to_csv(self.maindir + filename)
+                    aligned_basket = []
+         
+        self.complete = pd.concat(aligned_basket)
+        self.final_units = self.obs.array.units
+        
 
 obs = SurfaceObservations(alias = 'rr')
-obs.load(tmin = '1995-05-14')
+obs.load(tmin = '1995-06-14', tmax = '1995-06-25')
 #obs.aggregatetime(freq = 'w', method = 'mean')
 #obs.aggregatespace(step = 5, method = 'mean', by_degree = False)
 
 test = ForecastToObsAlignment(season = 'JJA', observations=obs)
 test.find_forecasts()
-#test.load_forecasts(n_members=11)
+test.load_forecasts(n_members=11)
 
 #test2 = SurfaceObservations(alias = 'rr', tmin = '1950-01-01', tmax = '1990-01-01', timemethod = 'M_mean')
 #test2.load()
@@ -149,13 +171,15 @@ test.find_forecasts()
 #test = ForecastToObsAlignment(season = 'JJA', observations=obs)
 #test.find_forecasts()
 #counter = np.array([len(listofforecasts) for date, listofforecasts in test.forecasts.items()])
-#times = test.dates
-#import matplotlib.pyplot as plt
-#plt.bar(test.dates, counter)
+#counter = pd.Series(data = counter, index = test.dates.index)
+#counter['19950514':'19960514'].plot()
 #plt.close()
 
         
 class Comparison(object):
+    """
+    All based on the dataframe format. No arrays anymore.
+    """
     
     def __init__(self, alignedobject):
         """

@@ -343,3 +343,5 @@ class Hindcast(object):
         """
         for hindcast in self.hindcasts:
             hindcast.cleanup()
+
+#start_batch(tmin = '2016-03-17', tmax = '2016-03-17')
