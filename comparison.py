@@ -11,6 +11,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import itertools
+import dask.dataframe as dd
 from observations import SurfaceObservations
 from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
@@ -30,7 +31,7 @@ class ForecastToObsAlignment(object):
         self.season = season
         self.obs = observations
         self.dates = self.obs.array.coords['time'].to_series() # Left stamped
-        self.dates = self.dates[monthtoseasonlookup(self.dates.month) == self.season]
+        self.dates = self.dates[monthtoseasonlookup(self.dates.index.month) == self.season]
         # infer dominant time aggregation in days
         self.time_agg = int(self.dates.diff().dt.days.mode())
         self.maxleadtime = 46
@@ -110,14 +111,32 @@ class ForecastToObsAlignment(object):
                     print('no space aggregation in obs')
                     pass # obsspacemethod has no aggregation                           
         
-    def match(self):
+    def match_and_write(self):
         """
         Neirest neighbouring to match pairs. Also converts forecast units to observed units.
-        Creates the dataset. Possibly emties basket and writes to disk too if intermediate results press too much on memory?.
+        Creates the dataset and writes it to disk. Possibly empties basket and writes to disk 
+        at intermediate steps if intermediate results press too much on memory.
         """
+        import uuid
         
         aligned_basket = []
         self.outfiles = []
+        
+        # Make sure the first parts are recognizable as the time method and the space method. Make last part unique
+        def write_outfile(basket, filetype = ['csv','h5']):
+            characteristics = [self.season]
+            for m in ['timemethod','spacemethod']:
+                if hasattr(self.obs, m):
+                    characteristics.append(getattr(self.obs, m))
+            filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.' + filetype
+            if filetype == 'h5':
+                pd.concat(basket).to_hdf(filepath, key = 'intermediate', mode = 'w') # format = 'table'
+            elif filetype == 'csv':
+                pd.concat(basket).to_csv(filepath)
+            else:
+                raise ValueError('give filetype as h5 or csv')
+            self.outfiles.append(filepath)
+            print('write out', filepath)
         
         for date, listofforecasts in self.forecasts.items():
             
@@ -134,25 +153,31 @@ class ForecastToObsAlignment(object):
                 # puts members in columns. observerations are duplicated so therefore selects up to n_members +1
                 temp = combined.unstack('number').iloc[:,:(self.n_members + 1)] 
                 
+                # Downcasting float precision Not possible as float32 is the lowest precision.
+                #converted = temp.select_dtypes(include = ['float']).apply(pd.to_numeric,downcast='float16')
+                #temp[converted.columns] = converted
+                
                 # prepend with the time index.
                 aligned_basket.append(pd.concat([temp], keys=[date], names=['time'])) # temp.swaplevel(1,2, axis = 0)
                 print(date, 'matched')
-                           
-                # If aligned takes too much system memory (> 3Gb). Write it out
-                # Make sure the first parts are recognizable as the time method and the space method.
-                if sys.getsizeof(aligned_basket) > 3*10**9:
-                    import uuid
-                    characteristics = [self.season]
-                    characteristics.append([getattr(self.obs, m) for m in ['timemethod','spacemethod'] if hasattr(self.obs, m)])
-                    filename = '_'.join(characteristics) + uuid.uuid4().hex + '.csv'
-                    self.outfiles.append(filename)
-                    pd.concat(aligned_basket).to_csv(self.maindir + filename)
+                
+                # If aligned takes too much system memory (> 3Gb) . Write it out
+                if sys.getsizeof(aligned_basket[0]) * len(aligned_basket) > 3*10**9:
+                    write_outfile(aligned_basket, filetype='h5')
                     aligned_basket = []
-         
-        self.complete = pd.concat(aligned_basket)
-        self.final_units = self.obs.array.units
         
-
+        # After last loop also write out 
+        if aligned_basket:
+            write_outfile(aligned_basket, filetype='h5')
+                 
+        self.final_units = self.obs.array.units
+    
+    def recollect(self):
+        """
+        Makes a dask dataframe object.
+        """
+        self.alignedobject = dd.read_csv(self.outfiles, 'intermediate')
+        
 obs = SurfaceObservations(alias = 'rr')
 obs.load(tmin = '1995-06-14', tmax = '1995-06-25')
 #obs.aggregatetime(freq = 'w', method = 'mean')
@@ -161,7 +186,9 @@ obs.load(tmin = '1995-06-14', tmax = '1995-06-25')
 test = ForecastToObsAlignment(season = 'JJA', observations=obs)
 test.find_forecasts()
 test.load_forecasts(n_members=11)
+test.match_and_write()
 
+temp = pd.read_hdf(test.outfiles[0])
 #test2 = SurfaceObservations(alias = 'rr', tmin = '1950-01-01', tmax = '1990-01-01', timemethod = 'M_mean')
 #test2.load()
 
