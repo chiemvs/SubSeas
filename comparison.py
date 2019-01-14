@@ -91,7 +91,7 @@ class ForecastToObsAlignment(object):
                     except AttributeError:
                         print('Aligning time aggregation')
                         freq, method = obstimemethod.split('_')
-                        forecast.aggregatetime(freq = freq, method = method)
+                        forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True)
                 except AttributeError:
                     print('no time aggregation in obs')
                     pass # obstimemethod has no aggregation
@@ -123,14 +123,15 @@ class ForecastToObsAlignment(object):
         self.outfiles = []
         
         # Make sure the first parts are recognizable as the time method and the space method. Make last part unique
+        # Possibly I can also append in h5 files.
         def write_outfile(basket, filetype = ['csv','h5']):
-            characteristics = [self.season]
+            characteristics = [self.obs.basevar, self.season]
             for m in ['timemethod','spacemethod']:
                 if hasattr(self.obs, m):
                     characteristics.append(getattr(self.obs, m))
             filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.' + filetype
             if filetype == 'h5':
-                pd.concat(basket).to_hdf(filepath, key = 'intermediate', mode = 'w') # format = 'table'
+                pd.concat(basket).to_hdf(filepath, key = 'intermediate', format = 'table') # format = 'table'
             elif filetype == 'csv':
                 pd.concat(basket).to_csv(filepath)
             else:
@@ -148,17 +149,24 @@ class ForecastToObsAlignment(object):
                 exp = allleadtimes.reindex_like(fieldobs, method='nearest') * a + b
                 
                 # Merging, exporting to pandas and masking by dropping on NA observations.
-                combined = xr.Dataset({'forecast':exp.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0, )
+                combined = xr.Dataset({'forecast':exp.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0)
                 
-                # puts members in columns. observerations are duplicated so therefore selects up to n_members +1
-                temp = combined.unstack('number').iloc[:,:(self.n_members + 1)] 
+                # Handle the multi-index
+                # first puts number dimension into columns. observerations are duplicated so therefore selects up to n_members +1
+                temp = combined.unstack('number').iloc[:,:(self.n_members + 1)]
+                temp.reset_index(inplace = True) # places latitude and all in 
+                labels = [l for l in temp.columns.labels[1]]
+                labels[-1] = self.n_members
+                temp.columns.set_labels(labels, level = 1, inplace = True)
                 
-                # Downcasting float precision Not possible as float32 is the lowest precision.
-                #converted = temp.select_dtypes(include = ['float']).apply(pd.to_numeric,downcast='float16')
-                #temp[converted.columns] = converted
+                # Downcasting latitude and longitude
+                temp[['latitude', 'longitude']] = temp[['latitude', 'longitude']].apply(pd.to_numeric, downcast = 'float')
+                # Downcasting the leadtime column
+                temp['leadtime'] = np.array(temp['leadtime'].values.astype('timedelta64[D]'), dtype = 'int8')
                 
                 # prepend with the time index.
-                aligned_basket.append(pd.concat([temp], keys=[date], names=['time'])) # temp.swaplevel(1,2, axis = 0)
+                temp.insert(0, 'time', date)
+                aligned_basket.append(temp) # temp.swaplevel(1,2, axis = 0)
                 print(date, 'matched')
                 
                 # If aligned takes too much system memory (> 3Gb) . Write it out
@@ -176,19 +184,20 @@ class ForecastToObsAlignment(object):
         """
         Makes a dask dataframe object.
         """
-        self.alignedobject = dd.read_csv(self.outfiles, 'intermediate')
+        self.alignedobject = dd.read_hdf(self.outfiles, key = 'intermediate')
         
 obs = SurfaceObservations(alias = 'rr')
 obs.load(tmin = '1995-06-14', tmax = '1995-06-25')
-#obs.aggregatetime(freq = 'w', method = 'mean')
+obs.aggregatetime(freq = 'w', method = 'mean')
 #obs.aggregatespace(step = 5, method = 'mean', by_degree = False)
 
 test = ForecastToObsAlignment(season = 'JJA', observations=obs)
 test.find_forecasts()
-test.load_forecasts(n_members=11)
+test.load_forecasts(n_members=9)
+test.force_resolution()
 test.match_and_write()
 
-temp = pd.read_hdf(test.outfiles[0])
+#temp = pd.read_hdf(test.outfiles[0])
 #test2 = SurfaceObservations(alias = 'rr', tmin = '1950-01-01', tmax = '1990-01-01', timemethod = 'M_mean')
 #test2.load()
 

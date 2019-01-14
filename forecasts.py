@@ -175,6 +175,8 @@ class Forecast(object):
         """
         Loading of processedfile. Similar behaviour to observation class
         If n_members is set to one it selects only the control member.
+        Then the numbers are set to a default range because they are not unique across initialization times
+        over which they are later pooled. Within one forecast instance they do of course resemble a physical pathway.
         """
         
         full = xr.open_dataset(self.basedir + self.processedfile)[variable]
@@ -190,18 +192,24 @@ class Forecast(object):
         if n_members is not None:
             numbers = np.concatenate((numbers[[0]], 
                                       np.random.choice(numbers[1:], size = n_members - 1, replace = False)))
-            numbers.sort()
         
         self.array = full.sel(time = pd.date_range(tmin, tmax, freq = 'D'), number = numbers)
+        # reset the index
+        self.array.coords['number'] = np.arange(0,n_members, dtype = 'int16')
         
-    def aggregatetime(self, freq = 'w' , method = 'mean'):
+    def aggregatetime(self, freq = 'w' , method = 'mean', keep_leadtime = False):
         """
         Uses the pandas frequency indicators. Method can be mean, min, max, std
         Completely lazy when loading is lazy. Array needs to be already loaded because of variable choice.
         """
         from helper_functions import agg_time
         
-        self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
+        if keep_leadtime:
+            lead0 = self.array.coords['leadtime'].isel(time = slice(0,1))
+            self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
+            self.array.coords.update({'leadtime':lead0})
+        else:
+            self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
     
     def aggregatespace(self, step, method = 'mean', by_degree = False):
         """
