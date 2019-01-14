@@ -113,7 +113,8 @@ class ForecastToObsAlignment(object):
         
     def match_and_write(self):
         """
-        Neirest neighbouring to match pairs. Also converts forecast units to observed units.
+        Neirest neighbouring to match pairs. Be careful when domain of observations is larger.
+        Also converts forecast units to observed units.
         Creates the dataset and writes it to disk. Possibly empties basket and writes to disk 
         at intermediate steps if intermediate results press too much on memory.
         """
@@ -179,6 +180,9 @@ class ForecastToObsAlignment(object):
             write_outfile(aligned_basket, filetype='h5')
                  
         self.final_units = self.obs.array.units
+        # output a filelist for checking.
+        from datetime import datetime
+        pd.Series(self.outfiles).to_csv(self.basedir + datetime.now().strftime('%Y-%m-%d_%H:%M:%S'), index = False, header = False)
     
     def recollect(self):
         """
@@ -187,19 +191,16 @@ class ForecastToObsAlignment(object):
         self.alignedobject = dd.read_hdf(self.outfiles, key = 'intermediate')
         
 obs = SurfaceObservations(alias = 'rr')
-obs.load(tmin = '1995-06-14', tmax = '1995-06-25')
-obs.aggregatetime(freq = 'w', method = 'mean')
+obs.load(tmin = '1995-05-14', tmax = '2016-05-14', llcrnr = (25,-30), rucrnr = (75,75)) # "75/-30/25/75"
+#obs.aggregatetime(freq = 'w', method = 'mean')
 #obs.aggregatespace(step = 5, method = 'mean', by_degree = False)
 
 test = ForecastToObsAlignment(season = 'JJA', observations=obs)
 test.find_forecasts()
-test.load_forecasts(n_members=9)
+test.load_forecasts(n_members=11)
 test.force_resolution()
 test.match_and_write()
-
-#temp = pd.read_hdf(test.outfiles[0])
-#test2 = SurfaceObservations(alias = 'rr', tmin = '1950-01-01', tmax = '1990-01-01', timemethod = 'M_mean')
-#test2.load()
+#test.recollect()
 
 # Make a counter plot:
 #obs = SurfaceObservations(alias = 'rr')
@@ -215,12 +216,14 @@ test.match_and_write()
 class Comparison(object):
     """
     All based on the dataframe format. No arrays anymore.
+    Potentially I can set an index like time in any operation where time becomes unique to speed up lookups.
     """
     
     def __init__(self, alignedobject):
         """
-        Observation | members | 
+        Observation | members |
         """
+        self.frame = alignedobject
     
     def post_process():
         """
@@ -232,9 +235,13 @@ class Comparison(object):
         okeedk
         """
     
-    def score():
+    def score(threshold):
         """
         Check requirements for the forecast horizon of Buizza.
         """
-    
-        
+        # Brier scoring.
+        delayed = self.frame[['forecast','observation']] > threshold
+        pi = delayed['forecast'].sum(axis = 1) / 9 # or use .count(axis = 1)
+        oi = delayed['observation']
+        dist = (pi - oi)**2
+        score = dist.groupby(self.frame['leadtime']).mean().compute()
