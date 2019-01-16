@@ -170,8 +170,8 @@ class ForecastToObsAlignment(object):
                 aligned_basket.append(temp) # temp.swaplevel(1,2, axis = 0)
                 print(date, 'matched')
                 
-                # If aligned takes too much system memory (> 3Gb) . Write it out
-                if sys.getsizeof(aligned_basket[0]) * len(aligned_basket) > 3*10**9:
+                # If aligned takes too much system memory (> 1Gb) . Write it out
+                if sys.getsizeof(aligned_basket[0]) * len(aligned_basket) > 1*10**9:
                     write_outfile(aligned_basket, filetype='h5')
                     aligned_basket = []
         
@@ -184,23 +184,28 @@ class ForecastToObsAlignment(object):
         from datetime import datetime
         pd.Series(self.outfiles).to_csv(self.basedir + datetime.now().strftime('%Y-%m-%d_%H:%M:%S'), index = False, header = False)
     
-    def recollect(self):
+    def recollect(self, outfilenames = None):
         """
-        Makes a dask dataframe object.
+        Makes a dask dataframe object. The outfilenames can be collected by reading the timefiles. Or for instance by searching with a regular expression.
         """
-        self.alignedobject = dd.read_hdf(self.outfiles, key = 'intermediate')
+        if hasattr(self, 'outfiles'):
+            outfilenames = self.outfiles
+            
+        self.alignedobject = dd.read_hdf(outfilenames, key = 'intermediate')
         
 obs = SurfaceObservations(alias = 'rr')
-obs.load(tmin = '1995-05-14', tmax = '2016-05-14', llcrnr = (25,-30), rucrnr = (75,75)) # "75/-30/25/75"
-#obs.aggregatetime(freq = 'w', method = 'mean')
+obs.load(tmin = '1995-05-14', tmax = '1998-09-01', llcrnr = (25,-30), rucrnr = (75,75)) # "75/-30/25/75"
+obs.aggregatetime(freq = 'w', method = 'mean')
 #obs.aggregatespace(step = 5, method = 'mean', by_degree = False)
 
 test = ForecastToObsAlignment(season = 'JJA', observations=obs)
+
 test.find_forecasts()
 test.load_forecasts(n_members=11)
 test.force_resolution()
 test.match_and_write()
-#test.recollect()
+#previousfiles = pd.read_table('/nobackup/users/straaten/match/2019-01-16_10:29:15', header = None).iloc[:,0].values.tolist()
+#test.recollect(outfilenames=previousfiles)
 
 # Make a counter plot:
 #obs = SurfaceObservations(alias = 'rr')
@@ -235,13 +240,16 @@ class Comparison(object):
         okeedk
         """
     
-    def score(threshold):
+    def score(self, threshold):
         """
         Check requirements for the forecast horizon of Buizza.
         """
         # Brier scoring.
         delayed = self.frame[['forecast','observation']] > threshold
-        pi = delayed['forecast'].sum(axis = 1) / 9 # or use .count(axis = 1)
+        pi = delayed['forecast'].sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
         oi = delayed['observation']
         dist = (pi - oi)**2
         score = dist.groupby(self.frame['leadtime']).mean().compute()
+        return(score)
+
+#temp = Comparison(test.alignedobject)
