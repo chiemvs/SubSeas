@@ -119,26 +119,42 @@ class ForecastToObsAlignment(object):
         at intermediate steps if intermediate results press too much on memory.
         """
         import uuid
+        from datetime import datetime
         
         aligned_basket = []
         self.outfiles = []
         
         # Make sure the first parts are recognizable as the time method and the space method. Make last part unique
         # Possibly I can also append in h5 files.
-        def write_outfile(basket, filetype = ['csv','h5']):
+        def write_outfile(basket):
+            """
+            Saves to a unique filename and creates a bookkeeping file (appends if it already exists)
+            """
             characteristics = [self.obs.basevar, self.season]
             for m in ['timemethod','spacemethod']:
                 if hasattr(self.obs, m):
                     characteristics.append(getattr(self.obs, m))
-            filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.' + filetype
-            if filetype == 'h5':
-                pd.concat(basket).to_hdf(filepath, key = 'intermediate', format = 'table') # format = 'table'
-            elif filetype == 'csv':
-                pd.concat(basket).to_csv(filepath)
-            else:
-                raise ValueError('give filetype as h5 or csv')
+            filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.h5'
+            books_path = self.basedir + 'books_' + '_'.join(characteristics) + '.csv'
+            
+            dataset = pd.concat(basket)
+            dataset.to_hdf(filepath, key = 'intermediate', format = 'table')
+            
+            books = pd.DataFrame({'write_date':[datetime.now().strftime('%Y-%m-%d_%H:%M:%S')],
+                                  'file':[filepath],
+                                  'tmin':[dataset.time.min().strftime('%Y-%m-%d')],
+                                  'tmax':[dataset.time.max().strftime('%Y-%m-%d')],
+                                  'unit':[self.obs.array.units]})
+            
+            try:
+                with open(books_path, 'x') as f:
+                    books.to_csv(f, header=True, index = False)
+            except FileExistsError:
+                with open(books_path, 'a') as f:
+                    books.to_csv(f, header = False, index = False)
+            
+            print('written out', filepath)
             self.outfiles.append(filepath)
-            print('write out', filepath)
         
         for date, listofforecasts in self.forecasts.items():
             
@@ -172,30 +188,30 @@ class ForecastToObsAlignment(object):
                 
                 # If aligned takes too much system memory (> 1Gb) . Write it out
                 if sys.getsizeof(aligned_basket[0]) * len(aligned_basket) > 1*10**9:
-                    write_outfile(aligned_basket, filetype='h5')
+                    write_outfile(aligned_basket)
                     aligned_basket = []
         
         # After last loop also write out 
         if aligned_basket:
-            write_outfile(aligned_basket, filetype='h5')
-                 
-        self.final_units = self.obs.array.units
-        # output a filelist for checking.
-        from datetime import datetime
-        pd.Series(self.outfiles).to_csv(self.basedir + datetime.now().strftime('%Y-%m-%d_%H:%M:%S'), index = False, header = False)
-    
-    def recollect(self, outfilenames = None):
+            write_outfile(aligned_basket)
+        
+    def recollect(self, booksname = None):
         """
         Makes a dask dataframe object. The outfilenames can be collected by reading the timefiles. Or for instance by searching with a regular expression.
         """
         if hasattr(self, 'outfiles'):
             outfilenames = self.outfiles
+        else:
+            try:
+                outfilenames = pd.read_csv(self.basedir + booksname)['file'].values.tolist()
+            except AttributeError:
+                pass
             
         self.alignedobject = dd.read_hdf(outfilenames, key = 'intermediate')
         
-obs = SurfaceObservations(alias = 'rr')
+obs = SurfaceObservations(alias = 'tg')
 obs.load(tmin = '1995-05-14', tmax = '1998-09-01', llcrnr = (25,-30), rucrnr = (75,75)) # "75/-30/25/75"
-obs.aggregatetime(freq = 'w', method = 'mean')
+#obs.aggregatetime(freq = 'w', method = 'mean')
 #obs.aggregatespace(step = 5, method = 'mean', by_degree = False)
 
 test = ForecastToObsAlignment(season = 'JJA', observations=obs)
@@ -204,7 +220,7 @@ test.find_forecasts()
 test.load_forecasts(n_members=11)
 test.force_resolution()
 test.match_and_write()
-#previousfiles = pd.read_table('/nobackup/users/straaten/match/2019-01-16_10:29:15', header = None).iloc[:,0].values.tolist()
+#previousfiles = pd.read_table('/nobackup/users/straaten/match/2019-01-16_11:54:49', header = None).iloc[:,0].values.tolist()
 #test.recollect(outfilenames=previousfiles)
 
 # Make a counter plot:
@@ -253,3 +269,5 @@ class Comparison(object):
         return(score)
 
 #temp = Comparison(test.alignedobject)
+
+# weekly mean leadtime = 5 days, map

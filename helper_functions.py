@@ -83,8 +83,8 @@ def unitconversionfactors(xunit, yunit):
     The desired outcome should be the units supplied at y.
     """
     library = {
-            'KtoC':(1,-273.15),
-            'CtoK':(1,273.15),
+            'KtoCelsius':(1,-273.15),
+            'CelsiustoK':(1,273.15),
             'mtomm':(1000,0),
             'mmtom':(0.001,0)}
     try:
