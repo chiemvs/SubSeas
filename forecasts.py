@@ -240,6 +240,7 @@ class Hindcast(object):
         # easier arithmetics when in pandas format, then to string for the mars format
         end = pd.to_datetime(self.hdate, format='%Y-%m-%d')
         self.hdates = [(end - pd.DateOffset(years = x)).strftime('%Y-%m-%d') for x in range(1,21)]
+        self.hdates = [hd for hd in self.hdates if '02-29' not in hd] # Filter out the leap years.
         self.hdates.sort()
         self.marshdates = '/'.join(self.hdates)
         self.hindcasts = [Forecast(indate, self.prefix) for indate in self.hdates]
@@ -352,4 +353,4 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
-#start_batch(tmin = '2016-03-17', tmax = '2016-03-17')
+start_batch(tmin = '2016-02-29', tmax = '2016-02-29')
