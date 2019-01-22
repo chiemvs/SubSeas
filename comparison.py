@@ -13,7 +13,7 @@ import pandas as pd
 import itertools
 import dask.dataframe as dd
 from observations import SurfaceObservations
-from forecasts import Forecast
+#from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
 
 class ForecastToObsAlignment(object):
@@ -209,19 +209,16 @@ class ForecastToObsAlignment(object):
             
         self.alignedobject = dd.read_hdf(outfilenames, key = 'intermediate')
         
-obs = SurfaceObservations(alias = 'tg')
-obs.load(tmin = '1995-05-14', tmax = '1998-09-01', llcrnr = (25,-30), rucrnr = (75,75)) # "75/-30/25/75"
+#obs = SurfaceObservations(alias = 'tg')
+#obs.load(tmin = '1995-05-14', tmax = '1998-09-01', llcrnr = (25,-30), rucrnr = (75,75)) # "75/-30/25/75"
 #obs.aggregatetime(freq = 'w', method = 'mean')
-#obs.aggregatespace(step = 5, method = 'mean', by_degree = False)
 
-test = ForecastToObsAlignment(season = 'JJA', observations=obs)
+#test = ForecastToObsAlignment(season = 'JJA', observations=obs)
 
-test.find_forecasts()
-test.load_forecasts(n_members=11)
-test.force_resolution()
-test.match_and_write()
-#previousfiles = pd.read_table('/nobackup/users/straaten/match/2019-01-16_11:54:49', header = None).iloc[:,0].values.tolist()
-#test.recollect(outfilenames=previousfiles)
+#test.find_forecasts()
+#test.load_forecasts(n_members=11)
+#test.force_resolution()
+#test.match_and_write()
 
 # Make a counter plot:
 #obs = SurfaceObservations(alias = 'rr')
@@ -240,34 +237,55 @@ class Comparison(object):
     Potentially I can set an index like time in any operation where time becomes unique to speed up lookups.
     """
     
-    def __init__(self, alignedobject):
+    def __init__(self, alignedobject, climatology = None):
         """
-        Observation | members |
+        The aligned object has Observation | members |
+        Potentially an external observed climatology can be supplied that takes advantage of the full observed dataset. It has to have a location and dayofyear timestamp. Is it already aggregated?
         """
         self.frame = alignedobject
+        self.clim = climatology
+        
+    def setup_cv(self, nfolds = 3):
+        """
+        Cross validation in time. Generation of another column. Pd.cut cannot be done delayed so written to in-memory attribute.
+        """
+        self.cvbins = pd.cut(self.frame['time'].compute(), bins = nfolds, labels = np.arange(1,nfolds+1))
+            
+    def fit_pp_models(self, groupers = ['leadtime','latitude','longitude']):
+        """
+        Based on ensemble mean and ensemble standard deviation
+        Local correction. Model per space point and leadtime. Saves the fitted models somewhere?
+        """
+        
+        
+    def make_pp_forecast(self):
+        """
+        Adds either forecast members or a probability distribution
+        """
     
-    def post_process():
-        """
-        jpsjods
-        """
-    
-    def setup_cv():
-        """
-        okeedk
-        """
-    
-    def score(self, threshold):
-        """
-        Check requirements for the forecast horizon of Buizza.
-        """
-        # Brier scoring.
-        delayed = self.frame[['forecast','observation']] > threshold
-        pi = delayed['forecast'].sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
-        oi = delayed['observation']
-        dist = (pi - oi)**2
-        score = dist.groupby(self.frame['leadtime']).mean().compute()
-        return(score)
 
-#temp = Comparison(test.alignedobject)
+    def add_custom_groups(self):
+        """
+        Add groups that are for instance chosen with clustering in observations. Based on lat-lon coding.
+        """
+    
+    def brierscore(self, threshold, groupers = ['leadtime']):
+        """
+        Check requirements for the forecast horizon of Buizza. Theirs is based on the crps. No turning the knob of extremity
+        Asks a list of groupers, could use custom groupers.
+        TODO: be able to supply threshold as local climatological quantile
+        """
+        columns = ['forecast', 'observation'] + groupers
+        delayed = self.frame[columns]
+        delayed['pi'] = (delayed['forecast'] > threshold).sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
+        delayed['oi'] = delayed['observation'] > threshold
+        delayed['dist'] = (delayed['pi'] - delayed['oi'])**2
+        grouped = delayed.groupby(groupers)
+        return(grouped.mean()['dist'].compute())
+        #grouped = delayed['dist'].groupby(delayed['leadtime'])
+        #return(grouped.mean().compute())
 
-# weekly mean leadtime = 5 days, map
+alignedobject = dd.read_hdf('/home/jsn295/Documents/rr_JJA_d780aa25451f4d8d9413d87eb34367bf.h5', key = 'intermediate')
+self = Comparison(alignedobject)
+#temp = self.brierscore(threshold = 1, groupers = ['leadtime','latitude', 'longitude'])
+self.setup_cv()
