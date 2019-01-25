@@ -13,7 +13,7 @@ import pandas as pd
 import itertools
 import dask.dataframe as dd
 from observations import SurfaceObservations
-#from forecasts import Forecast
+from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
 
 class ForecastToObsAlignment(object):
@@ -203,7 +203,8 @@ class ForecastToObsAlignment(object):
             outfilenames = self.outfiles
         else:
             try:
-                outfilenames = pd.read_csv(self.basedir + booksname)['file'].values.tolist()
+                books = pd.read_csv(self.basedir + booksname)
+                outfilenames = books['file'].values.tolist()
             except AttributeError:
                 pass
             
@@ -247,16 +248,38 @@ class Comparison(object):
         
     def setup_cv(self, nfolds = 3):
         """
-        Cross validation in time. Generation of another column. Pd.cut cannot be done delayed so written to in-memory attribute.
+        Cross validation in time. The amount of available times can differ per leadtime.
+        And due to NA's the field size is not always equal. Varies between 31544 and 31549.
+        This computes the amount of dates to be selected per leadtime, location and fold. Last fold should get the remainder.
         """
-        self.cvbins = pd.cut(self.frame['time'].compute(), bins = nfolds, labels = np.arange(1,nfolds+1))
+        self.nfolds = nfolds
+        datesperloclead = self.frame.groupby(['leadtime','latitude','longitude'])['time'].count()
+        self.n_per_fold = datesperloclead.floordiv(nfolds).compute()
+        # accessible with multi-index as self.n_per_fold.loc[(leadtime,latitude,longitude)]
+        
+        #self.cvbins = pd.cut(self.frame['time'].compute(), bins = nfolds, labels = np.arange(1,nfolds+1))
+        # Pd.cut cannot be done delayed and unfortunately the whole time column is too large to lead explicitly
             
     def fit_pp_models(self, groupers = ['leadtime','latitude','longitude']):
         """
         Based on ensemble mean and ensemble standard deviation
         Local correction. Model per space point and leadtime. Saves the fitted models somewhere?
+        Starts with NGR
         """
+        def ngr(data, groupkeys):
+            
+            # select training setbased on search in cv with keys
+            pass
         
+        grouped = self.frame.groupby(groupers)
+        
+        for keytuple, daskdata in grouped:
+            nperfold = self.n_per_fold.loc[keytuple]
+            print(keytuple)
+            #fullset = daskdata.compute()
+            
+            for i in range(1, self.nfolds + 1):
+                train = fullset.iloc[...]
         
     def make_pp_forecast(self):
         """
@@ -285,7 +308,16 @@ class Comparison(object):
         #grouped = delayed['dist'].groupby(delayed['leadtime'])
         #return(grouped.mean().compute())
 
-alignedobject = dd.read_hdf('/home/jsn295/Documents/rr_JJA_d780aa25451f4d8d9413d87eb34367bf.h5', key = 'intermediate')
-self = Comparison(alignedobject)
+#from dask.distributed import Client
+#client = Client(processes = False)
+        
+obs = SurfaceObservations(alias = 'tg')
+obs.load(tmin = '1995-05-14', tmax = '1998-09-01', llcrnr = (25,-30), rucrnr = (75,75))
+alignment = ForecastToObsAlignment(season = 'JJA', observations=obs)
+alignment.recollect(booksname='books_tg_JJA.csv')
+self = Comparison(alignment.alignedobject)
+#brierpool = self.brierscore(threshold = 30)
 #temp = self.brierscore(threshold = 1, groupers = ['leadtime','latitude', 'longitude'])
-self.setup_cv()
+#self.setup_cv(nfolds = 3)
+temp = dd.read_hdf('/nobackup/users/straaten/match/tg_JJA_9a820b55d52b4a57974c8389f1f3176d.h5', key = 'intermediate')
+grouped = temp.groupby(['leadtime','latitude','longitude']).first().compute()
