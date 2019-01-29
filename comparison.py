@@ -248,7 +248,7 @@ class Comparison(object):
         
     def setup_cv(self, nfolds = 3):
         """
-        Cross validation in time. The amount of available times can differ per leadtime.
+        The amount of available times can differ per leadtime.
         And due to NA's the field size is not always equal. Varies between 31544 and 31549.
         This computes the amount of dates to be selected per leadtime, location and fold. Last fold should get the remainder.
         """
@@ -260,26 +260,53 @@ class Comparison(object):
         #self.cvbins = pd.cut(self.frame['time'].compute(), bins = nfolds, labels = np.arange(1,nfolds+1))
         # Pd.cut cannot be done delayed and unfortunately the whole time column is too large to lead explicitly
             
-    def fit_pp_models(self, groupers = ['leadtime','latitude','longitude']):
+    def fit_pp_models(self, groupers = ['leadtime','latitude','longitude'], nfolds = 1):
         """
-        Based on ensemble mean and ensemble standard deviation
-        Local correction. Model per space point and leadtime. Saves the fitted models somewhere?
-        Starts with NGR
+        Computes simple predictors like. Groups the dask dataframe per location and leadtime, and then pushes these groups to an apply function. In this apply a model fitting function can be called which uses the predictor columns and the observation column, the function currently returns a Dataframe with parametric coefficients. Which are stored in-memory with the groupers as multi-index.
         """
-        def ngr(data, groupkeys):
-            
-            # select training setbased on search in cv with keys
-            pass
+        from sklearn.linear_model import LinearRegression
         
+        def fitngr(data):
+            reg = LinearRegression().fit(data['ensmean'].values.reshape(-1,1), data['observation'].values.reshape(-1,1))
+            return(pd.DataFrame({'intercept':reg.intercept_[0], 'slope':reg.coef_[0]}))
+        
+        def cv_fitlinear(data, nfolds):
+            """
+            Fits a linear model. If nfolds = 1 it uses all the data, otherwise it is split up. This cross validation is done here because addition of a column to the full ungrouped frame is too expensive, also the amount of available times can differ per leadtime and due to NA's the field size is not always equal. Therefore, the available amount is computed here.
+            TODO: needs to be expanded to NGR.
+            """
+            
+            modelcoefs = ['intercept','slope']
+            nperfold = len(data) // nfolds
+            foldindex = range(1,nfolds+1)
+            
+            # Pre-allocating a structure.
+            coefs = np.full((nfolds,len(modelcoefs)), np.nan)
+            
+            for fold in foldindex:
+                if (fold == foldindex[-1]):
+                    train = data.iloc[((fold - 1)*nperfold):,:]
+                else:
+                    train = data.iloc[((fold - 1)*nperfold):(fold*nperfold),:]
+                
+                # Fitting of the linear model
+                reg = LinearRegression().fit(train['ensmean'].values.reshape(-1,1), train['observation'].values.reshape(-1,1))
+                coefs[fold-1,:] = [reg.intercept_[0], reg.coef_[0]]
+            
+            models = pd.DataFrame(data = coefs, index = pd.Index(foldindex, name = 'fold'), columns = modelcoefs)            
+            
+            return(models)
+        
+        # Computation of predictands for the linear models.
+        # There are some negative precipitation values in .iloc[27:28,:]
+        self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
+        self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
+                
         grouped = self.frame.groupby(groupers)
+        #self.fits = grouped.apply(fitngr, meta = {'intercept':'float32', 'slope':'float32'}).compute() #
         
-        for keytuple, daskdata in grouped:
-            nperfold = self.n_per_fold.loc[keytuple]
-            print(keytuple)
-            #fullset = daskdata.compute()
-            
-            for i in range(1, self.nfolds + 1):
-                train = fullset.iloc[...]
+        self.fits = grouped.apply(cv_fitlinear, meta = {'intercept':'float32', 'slope':'float32'}, **{'nfolds':nfolds}).compute()
+        
         
     def make_pp_forecast(self):
         """
@@ -311,13 +338,17 @@ class Comparison(object):
 #from dask.distributed import Client
 #client = Client(processes = False)
         
-obs = SurfaceObservations(alias = 'tg')
-obs.load(tmin = '1995-05-14', tmax = '1998-09-01', llcrnr = (25,-30), rucrnr = (75,75))
-alignment = ForecastToObsAlignment(season = 'JJA', observations=obs)
-alignment.recollect(booksname='books_tg_JJA.csv')
-self = Comparison(alignment.alignedobject)
+#obs = SurfaceObservations(alias = 'tg')
+#obs.load(tmin = '1995-05-14', tmax = '1998-09-01', llcrnr = (25,-30), rucrnr = (75,75))
+#alignment = ForecastToObsAlignment(season = 'JJA', observations=obs)
+#alignment.recollect(booksname='books_tg_JJA.csv')
+#self = Comparison(alignment.alignedobject)
 #brierpool = self.brierscore(threshold = 30)
 #temp = self.brierscore(threshold = 1, groupers = ['leadtime','latitude', 'longitude'])
 #self.setup_cv(nfolds = 3)
-temp = dd.read_hdf('/nobackup/users/straaten/match/tg_JJA_9a820b55d52b4a57974c8389f1f3176d.h5', key = 'intermediate')
-grouped = temp.groupby(['leadtime','latitude','longitude']).first().compute()
+testset = dd.read_hdf('/home/jsn295/Documents/rr_JJA_d780aa25451f4d8d9413d87eb34367bf.h5', key = 'intermediate')
+#subset = testset.compute().iloc[:10000,:]
+#subset.to_hdf('/home/jsn295/Documents/subset.h5', key = 'intermediate', format = 'table')
+subset = dd.read_hdf('/home/jsn295/Documents/subset.h5', key = 'intermediate')
+self = Comparison(subset)
+
