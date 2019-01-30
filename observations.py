@@ -2,7 +2,6 @@ import os
 import numpy as np
 import xarray as xr
 import pandas as pd
-import itertools
 
 class SurfaceObservations(object):
     
@@ -174,31 +173,43 @@ class SurfaceObservations(object):
 
 class EventClassification(object):
     
-    def __init__(self, obs_array, obs_daskarray = None):
+    def __init__(self, obs, obs_dask = None):
         """
         Supply the observations xarray: Normal array for (memory efficient) grouping and fast explicit climatology computation
+        From the observation class time dimension the aggregation is inferred. If the number of days is larger than 1 the climatology needs to be still derived from daily values.
         If the dataset is potentially large to load completely then also supply a
         dask array for the anomaly computation which probably will not fit into memory.
         """
-        self.obs = obs_array
-        if obs_daskarray is not None:
-            self.obsd = obs_daskarray
+        self.obs = obs.array
+        self.ndayagg = (obs.array.time.values[1] - obs.array.time.values[0]).astype('timedelta64[D]').item().days
+        if obs_dask is not None:
+            self.obsd = obs_dask.array
     
-    def localclim(self, daysbefore = 0, daysafter = 0, mean = True, quant = None):
+    def localclim(self, daysbefore = 0, daysafter = 0, mean = True, quant = None, daily_obs_array = None):
         """
         Construct local climatological distribution within a rolling window, but with pooled years. 
         Extracts mean (for anomaly computation) or for instance a quantile. Returns fields of this for all supplied time and space.
-        Daysbefore and daysafter are inclusive. 
+        Daysbefore and daysafter are inclusive.
+        For non-daily aggregations.
         """ 
         if quant is not None:
             from helper_functions import nanquantile
-        doygroups = self.obs.groupby('time.dayofyear')
+        
+        if (self.ndayagg > 1):
+            try:
+                doygroups = daily_obs_array.groupby('time.dayofyear')
+            except AttributeError:
+                raise TypeError('provide a daily_obs_array needed for the climatology of aggregated observations')
+        else:
+            doygroups = self.obs.groupby('time.dayofyear')
+        
         doygroups = {str(key):value for key,value in doygroups} # Change to string
         maxday = 366
         results = []
         for doy in doygroups.keys():        
             doy = int(doy)
-            window = np.arange(doy - daysbefore, doy + daysafter + 1, dtype = 'int64')
+            # for aggregated values the day of year is the first day of the period. 
+            window = np.arange(doy - daysbefore, doy + daysafter + self.ndayagg, dtype = 'int64')
             # small corrections for overshooting into previous or next year.
             window[ window < 1 ] += maxday
             window[ window > maxday ] -= maxday
@@ -236,7 +247,15 @@ class EventClassification(object):
             results.append(fields - self.clim.sel(doy = doy))
             print('computed exceedance of', doy)
         self.exceedance = xr.concat(results, dim = 'time')
-    
-#self = EventClassification(obs_array=test1.array, obs_daskarray=test2.array)
-#self.localclim(daysbefore=2, daysafter=2, mean = False, quant = 0.95)
+
+#test1 = SurfaceObservations('tx')
+#test1.load(tmax = '1960-05-06')
+#test1.aggregatetime(freq = '6D')    
+#test2 = SurfaceObservations('tx')
+#test2.load(tmax = '1960-05-06')
+#self = EventClassification(obs=test1)
+#self.localclim(daysbefore=2, daysafter=2, mean = True, daily_obs_array=test2.array)
+
+#self2 = EventClassification(obs=test2)
+#self2.localclim(daysbefore=2, daysafter=2)
 
