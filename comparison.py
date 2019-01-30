@@ -10,7 +10,6 @@ import sys
 import numpy as np
 import xarray as xr
 import pandas as pd
-import itertools
 import dask.dataframe as dd
 from observations import SurfaceObservations
 from forecasts import Forecast
@@ -241,10 +240,21 @@ class Comparison(object):
     def __init__(self, alignedobject, climatology = None):
         """
         The aligned object has Observation | members |
-        Potentially an external observed climatology can be supplied that takes advantage of the full observed dataset. It has to have a location and dayofyear timestamp. Is it already aggregated?
+        Potentially an external observed climatology array can be supplied that takes advantage of the full observed dataset. It has to have a location and dayofyear timestamp. Is it already aggregated?
+        NOTE: make the climatological object also contain the climatological forecast for that quantile. (this is the quantile)
         """
         self.frame = alignedobject
-        self.clim = climatology
+        if climatology is not None: 
+            self.clim = climatology.to_dataframe().dropna(axis = 0, how = 'any')
+            self.clim.columns = ['climatology']
+            # Some formatting to make merging with the two-level aligned object easier
+            self.clim.reset_index(inplace = True)
+            self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']])
+            try:
+                self.quantile = climatology.attrs['quantile']
+            except KeyError:
+                pass
+            
         
     def setup_cv(self, nfolds = 3):
         """
@@ -319,16 +329,24 @@ class Comparison(object):
         Add groups that are for instance chosen with clustering in observations. Based on lat-lon coding.
         """
     
-    def brierscore(self, threshold, groupers = ['leadtime']):
+    def brierscore(self, threshold = None, exceedquantile = False, groupers = ['leadtime']):
         """
         Check requirements for the forecast horizon of Buizza. Theirs is based on the crps. No turning the knob of extremity
-        Asks a list of groupers, could use custom groupers.
-        TODO: be able to supply threshold as local climatological quantile
+        Asks a list of groupers, could use custom groupers. Also able to get climatological exceedence if climatology was supplied at initiazion.
         """
-        columns = ['forecast', 'observation'] + groupers
-        delayed = self.frame[columns]
-        delayed['pi'] = (delayed['forecast'] > threshold).sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
-        delayed['oi'] = delayed['observation'] > threshold
+        if exceedquantile:
+            self.frame['doy'] = self.frame['time'].dt.dayofyear
+            delayed = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
+            columns = ['forecast', 'observation', 'climatology'] + groupers
+            delayed = delayed[columns]
+            delayed['pi'] = (delayed['forecast'] > delayed['climatology']).sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
+            delayed['oi'] = delayed['observation'] > delayed['climatology']
+        else:
+            columns = ['forecast', 'observation'] + groupers
+            delayed = self.frame[columns]
+            delayed['pi'] = (delayed['forecast'] > threshold).sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
+            delayed['oi'] = delayed['observation'] > threshold
+            
         delayed['dist'] = (delayed['pi'] - delayed['oi'])**2
         grouped = delayed.groupby(groupers)
         return(grouped.mean()['dist'].compute())
@@ -346,9 +364,9 @@ class Comparison(object):
 #brierpool = self.brierscore(threshold = 30)
 #temp = self.brierscore(threshold = 1, groupers = ['leadtime','latitude', 'longitude'])
 #self.setup_cv(nfolds = 3)
-testset = dd.read_hdf('/home/jsn295/Documents/rr_JJA_d780aa25451f4d8d9413d87eb34367bf.h5', key = 'intermediate')
+#testset = dd.read_hdf('/nobackup/users/straaten/match/tg_JJA_9a820b55d52b4a57974c8389f1f3176d.h5', key = 'intermediate')
 #subset = testset.compute().iloc[:10000,:]
-#subset.to_hdf('/home/jsn295/Documents/subset.h5', key = 'intermediate', format = 'table')
-subset = dd.read_hdf('/home/jsn295/Documents/subset.h5', key = 'intermediate')
-self = Comparison(subset)
+#subset.to_hdf('/usr/people/straaten/Documents/python_tests/subset.h5', key = 'intermediate', format = 'table')
+#subset = dd.read_hdf('/usr/people/straaten/Documents/python_tests/subset.h5', key = 'intermediate')
+#self = Comparison(subset)
 
