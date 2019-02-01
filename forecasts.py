@@ -29,6 +29,11 @@ netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset
                    'number': {'dtype': 'int16'},
                    'leadtime': {'dtype': 'int16'}}
 
+model_cycles = pd.DataFrame(data = {'firstday':pd.to_datetime(['2015-05-12','2016-03-08','2016-11-22','2017-07-11','2018-06-05','']),
+                             'lastday':pd.to_datetime(['2016-03-07','2016-11-21','2017-07-10','2018-06-04','2019-06-30','']),
+                             'cycle':['41r1','41r2','43r1','43r3','45r1','46r1']})
+
+
 def mars_dict(date, hdate = None, contr = False):
     """
     Generates the appropriate mars request dictionary. This is the place to set parameters. Called from within the classes when ensemble or control files do not yet exist and need to be downloaded
@@ -67,10 +72,11 @@ def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
     dr = mondays.append(thursdays).sort_values()
     
     for indate in dr:
-        forecast = Forecast(indate.strftime('%Y-%m-%d'), prefix = 'for_')
+        cycle = model_cycles.loc[np.logical_and(model_cycles.firstday <= indate, indate <= model_cycles.lastday),'cycle'].values[0]
+        forecast = Forecast(indate.strftime('%Y-%m-%d'), prefix = 'for_', cycle = cycle)
         forecast.create_processed()
         forecast.cleanup()
-        hindcast = Hindcast(indate.strftime('%Y-%m-%d'), prefix = 'hin_')
+        hindcast = Hindcast(indate.strftime('%Y-%m-%d'), prefix = 'hin_', cycle = cycle)
         hindcast.invoke_processed_creation()
         hindcast.cleanup()
 
@@ -79,8 +85,9 @@ class CascadeError(Exception):
                        
 class Forecast(object):
 
-    def __init__(self, indate = '2015-05-14', prefix = 'for_'):
-        self.basedir = '/nobackup/users/straaten/EXT/'
+    def __init__(self, indate = '2015-05-14', prefix = 'for_', cycle = '41r1'):
+        self.cycle = cycle
+        self.basedir = '/nobackup/users/straaten/EXT/' + cycle + '/'
         self.prefix = prefix
         self.indate = indate
         self.processedfile = self.prefix + self.indate + '_processed.nc'
@@ -230,8 +237,9 @@ class Hindcast(object):
     """
     More difficult class because 20 reforecasts are contained in one file and need to be split to 20 separate processed files
     """
-    def __init__(self, hdate = '2015-05-14', prefix = 'hin_'):
-        self.basedir = '/nobackup/users/straaten/EXT/'
+    def __init__(self, hdate = '2015-05-14', prefix = 'hin_', cycle = '41r1'):
+        self.cycle = cycle
+        self.basedir = '/nobackup/users/straaten/EXT/' + cycle + '/'
         self.prefix = prefix
         self.hdate = hdate
         self.pffile = self.prefix + self.hdate + '_ens.grib'
@@ -243,7 +251,7 @@ class Hindcast(object):
         self.hdates = [hd for hd in self.hdates if '02-29' not in hd] # Filter out the leap years.
         self.hdates.sort()
         self.marshdates = '/'.join(self.hdates)
-        self.hindcasts = [Forecast(indate, self.prefix) for indate in self.hdates]
+        self.hindcasts = [Forecast(indate, self.prefix, self.cycle) for indate in self.hdates]
     
     def invoke_processed_creation(self):
         if all([os.path.isfile(self.basedir + hindcast.processedfile) for hindcast in self.hindcasts]):
@@ -353,4 +361,4 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
-#start_batch(tmin = '2016-02-29', tmax = '2016-02-29')
+start_batch(tmin = '2018-06-05', tmax = '2018-07-12')
