@@ -245,10 +245,11 @@ class Comparison(object):
         """
         self.frame = alignedobject
         if climatology is not None: 
+            climatology.name = 'climatology'
             self.clim = climatology.to_dataframe().dropna(axis = 0, how = 'any')
-            self.clim.columns = ['climatology']
             # Some formatting to make merging with the two-level aligned object easier
             self.clim.reset_index(inplace = True)
+            self.clim[['latitude','longitude','climatology']] = self.clim[['latitude','longitude','climatology']].apply(pd.to_numeric, downcast = 'float')
             self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']])
             try:
                 self.quantile = climatology.attrs['quantile']
@@ -283,7 +284,7 @@ class Comparison(object):
         def cv_fitlinear(data, nfolds):
             """
             Fits a linear model. If nfolds = 1 it uses all the data, otherwise it is split up. This cross validation is done here because addition of a column to the full ungrouped frame is too expensive, also the amount of available times can differ per leadtime and due to NA's the field size is not always equal. Therefore, the available amount is computed here.
-            TODO: needs to be expanded to NGR.
+            TODO: needs to be expanded to NGR and Logistic regression for the PoP.
             """
             
             modelcoefs = ['intercept','slope']
@@ -334,24 +335,28 @@ class Comparison(object):
         Check requirements for the forecast horizon of Buizza. Theirs is based on the crps. No turning the knob of extremity
         Asks a list of groupers, could use custom groupers. Also able to get climatological exceedence if climatology was supplied at initiazion.
         """
+        
         if exceedquantile:
             self.frame['doy'] = self.frame['time'].dt.dayofyear
-            delayed = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
-            columns = ['forecast', 'observation', 'climatology'] + groupers
-            delayed = delayed[columns]
-            delayed['pi'] = (delayed['forecast'] > delayed['climatology']).sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
+            delayed = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')#.to_hdf('temp2.h5', key = 'climquant', format = 'table')
+            #delayed = dd.read_hdf('temp2.h5', key = 'climquant')
+            boolcols = list()
+            # Boolean comparison cannot be made in one go. because it does not now how to compare N*members agains the climatology of N
+            for member in delayed['forecast'].columns:
+                name = '_'.join(['bool',str(member)])
+                delayed[name] = delayed[('forecast',member)] > delayed['climatology']
+                boolcols.append(name)
+            delayed['pi'] = delayed[boolcols].sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
             delayed['oi'] = delayed['observation'] > delayed['climatology']
         else:
-            columns = ['forecast', 'observation'] + groupers
-            delayed = self.frame[columns]
+            delayed = self.frame
             delayed['pi'] = (delayed['forecast'] > threshold).sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
-            delayed['oi'] = delayed['observation'] > threshold
-            
+            delayed['oi'] = delayed['observation'] > threshold  
+        
         delayed['dist'] = (delayed['pi'] - delayed['oi'])**2
+        
         grouped = delayed.groupby(groupers)
-        return(grouped.mean()['dist'].compute())
-        #grouped = delayed['dist'].groupby(delayed['leadtime'])
-        #return(grouped.mean().compute())
+        return(grouped['dist'].mean().compute())
 
 #from dask.distributed import Client
 #client = Client(processes = False)
