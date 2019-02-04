@@ -16,7 +16,7 @@ from observations import SurfaceObservations, EventClassification
 from comparison import ForecastToObsAlignment, Comparison
 
 
-# 4 years summer temperatures 1995-1998. In Forecast domain. Climatology of +- 5days of 30 years.
+# 4 years summer temperatures 1995-1998. In Forecast domain. match forecasts on .38 with obs on .25. Climatology of +- 5days of 30 years.
 #quantile = 0.9
 obs1day = SurfaceObservations('tg')
 obs1day.load(tmin = '1970-05-30', tmax = '2000-05-30', llcrnr = (25,-30), rucrnr = (75,75))
@@ -24,6 +24,7 @@ obs1day.load(tmin = '1970-05-30', tmax = '2000-05-30', llcrnr = (25,-30), rucrnr
 #windowed.localclim(daysbefore=5, daysafter=5, mean = False, quant=quantile)
 
 alignment = ForecastToObsAlignment(season = 'JJA', observations=obs1day)
+# alignment.force_resolution(time = True, space = False)
 alignment.recollect(booksname='books_tg_JJA.csv')
 #subset = dd.read_hdf('/nobackup/users/straaten/match/tg_JJA_badf363636004a808a701f250175131d.h5', key = 'intermediate')
 temp = xr.open_dataarray('/nobackup/users/straaten/E-OBS/climatologyQ09.nc')

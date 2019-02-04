@@ -21,12 +21,13 @@ class ForecastToObsAlignment(object):
     This searches the corresponding forecasts, and possibly forces the same aggregations.
     TODO: not sure how to handle groups yet.
     """
-    def __init__(self, season, observations):
+    def __init__(self, season, observations, cycle):
         """
         Temporal extend can be read from the attributes of the observation class. 
         Specify the season under inspection for subsetting.
         """
         self.basedir = '/nobackup/users/straaten/match/'
+        self.cycle = cycle
         self.season = season
         self.obs = observations
         self.dates = self.obs.array.coords['time'].to_series() # Left stamped
@@ -47,8 +48,8 @@ class ForecastToObsAlignment(object):
             containstart = date + pd.Timedelta(str(self.time_agg) + 'D') - pd.Timedelta(str(self.maxleadtime) + 'D')
             containend = date
             contain = pd.date_range(start = containstart, end = containend, freq = 'D').strftime('%Y-%m-%d')
-            forecasts = [Forecast(indate, prefix = 'for_') for indate in contain]
-            hindcasts = [Forecast(indate, prefix = 'hin_') for indate in contain]
+            forecasts = [Forecast(indate, prefix = 'for_', cycle = self.cycle) for indate in contain]
+            hindcasts = [Forecast(indate, prefix = 'hin_', cycle = self.cycle) for indate in contain]
             # select from potential forecasts only those that exist.
             forecasts = [f for f in forecasts if os.path.isfile(f.basedir + f.processedfile)]
             hindcasts = [h for h in hindcasts if os.path.isfile(h.basedir + h.processedfile)]
@@ -70,7 +71,7 @@ class ForecastToObsAlignment(object):
         
         self.n_members = n_members
     
-    def force_resolution(self):
+    def force_resolution(self, time = True, space = True):
         """
         Check if the same resolution and force spatial/temporal aggregation if that is not the case.
         Makes use of the methods of each Forecast class
@@ -80,35 +81,36 @@ class ForecastToObsAlignment(object):
         
             for forecast in listofforecasts:
                 
-                # Check time aggregation
-                try:
+                if time:
+                    # Check time aggregation
                     obstimemethod = getattr(self.obs, 'timemethod')
+                                
                     try:
                         fortimemethod = getattr(forecast, 'timemethod')
                         if not fortimemethod == obstimemethod:
                             raise AttributeError
+                        else:
+                            print('Time already aligned')
                     except AttributeError:
                         print('Aligning time aggregation')
                         freq, method = obstimemethod.split('_')
                         forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True)
-                except AttributeError:
-                    print('no time aggregation in obs')
-                    pass # obstimemethod has no aggregation
-
-                # Check space aggregation
-                try:
+                
+                if space:
+                    # Check space aggregation
                     obsspacemethod = getattr(self.obs, 'spacemethod')
+                        
                     try:
                         forspacemethod = getattr(forecast, 'spacemethod')
                         if not forspacemethod == obsspacemethod:
                             raise AttributeError
+                        else:
+                            print('Space already aligned')
                     except AttributeError:
                         print('Aligning space aggregation')
                         step, what, method = obsspacemethod.split('_')
                         forecast.aggregatespace(step = int(step), method = method, by_degree = (what is 'degrees'))
-                except AttributeError:
-                    print('no space aggregation in obs')
-                    pass # obsspacemethod has no aggregation                           
+                      
         
     def match_and_write(self):
         """
@@ -129,10 +131,7 @@ class ForecastToObsAlignment(object):
             """
             Saves to a unique filename and creates a bookkeeping file (appends if it already exists)
             """
-            characteristics = [self.obs.basevar, self.season]
-            for m in ['timemethod','spacemethod']:
-                if hasattr(self.obs, m):
-                    characteristics.append(getattr(self.obs, m))
+            characteristics = [self.obs.basevar, self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
             filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.h5'
             books_path = self.basedir + 'books_' + '_'.join(characteristics) + '.csv'
             
@@ -209,31 +208,11 @@ class ForecastToObsAlignment(object):
             
         self.alignedobject = dd.read_hdf(outfilenames, key = 'intermediate')
         
-#obs = SurfaceObservations(alias = 'tg')
-#obs.load(tmin = '1995-05-14', tmax = '1998-09-01', llcrnr = (25,-30), rucrnr = (75,75)) # "75/-30/25/75"
-#obs.aggregatetime(freq = 'w', method = 'mean')
 
-#test = ForecastToObsAlignment(season = 'JJA', observations=obs)
-
-#test.find_forecasts()
-#test.load_forecasts(n_members=11)
-#test.force_resolution()
-#test.match_and_write()
-
-# Make a counter plot:
-#obs = SurfaceObservations(alias = 'rr')
-#obs.load(tmin = '1995-05-14')
-#test = ForecastToObsAlignment(season = 'JJA', observations=obs)
-#test.find_forecasts()
-#counter = np.array([len(listofforecasts) for date, listofforecasts in test.forecasts.items()])
-#counter = pd.Series(data = counter, index = test.dates.index)
-#counter['19950514':'19960514'].plot()
-#plt.close()
-
-        
 class Comparison(object):
     """
-    All based on the dataframe format. No arrays anymore.
+    All based on the dataframe format. No arrays anymore. In this class the aligned object is grouped in multiple ways to fit models in a cross-validation sense. 
+    To make predictions and to score, raw, post-processed and climatological forecasts
     Potentially I can set an index like time in any operation where time becomes unique to speed up lookups.
     """
     
@@ -284,7 +263,7 @@ class Comparison(object):
         def cv_fitlinear(data, nfolds):
             """
             Fits a linear model. If nfolds = 1 it uses all the data, otherwise it is split up. This cross validation is done here because addition of a column to the full ungrouped frame is too expensive, also the amount of available times can differ per leadtime and due to NA's the field size is not always equal. Therefore, the available amount is computed here.
-            TODO: needs to be expanded to NGR and Logistic regression for the PoP.
+            TODO: needs to be expanded to NGR and Logistic regression for the PoP. Plus fitting on 2/3 of the data.
             """
             
             modelcoefs = ['intercept','slope']

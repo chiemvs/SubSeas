@@ -22,9 +22,9 @@ class SurfaceObservations(object):
         Uses the timemethod and spacemethod attributes
         """
         keys = ['tmin','tmax','timemethod','spacemethod']
-        attrs = [ getattr(self,x) if hasattr(self, x) else '' for x in keys]
+        attrs = [ getattr(self,x) for x in keys if hasattr(self, x)]
         attrs.insert(0,self.basevar) # Prepend with alias
-        self.name = ''.join(attrs)
+        self.name = '.'.join(attrs)
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
     def downloadraw(self):
@@ -94,6 +94,12 @@ class SurfaceObservations(object):
         
         freq = pd.infer_freq(full.coords['time'].values)
         self.array = full.sel(time = pd.date_range(tmin, tmax, freq = freq), longitude = slice(llcrnr[1], rucrnr[1]), latitude = slice(llcrnr[0], rucrnr[0])) # slice gives an inexact lookup, everything within the range
+        
+        if not hasattr(self, 'timemethod'): # Attribute is only missing if it has not been given upon initialization.
+            self.timemethod = '1D'
+        if not hasattr(self, 'spacemethod'):
+            self.spacemethod = '0.25_degrees'
+        
 
     def aggregatespace(self, step, method = 'mean', by_degree = False):
         """
@@ -131,7 +137,6 @@ class SurfaceObservations(object):
         """
         Calls new name creation after writing tmin and tmax as attributes. Then writes the dask array to this file. 
         Can give a warning of all NaN slices encountered during writing.
-        Possibly: add option for experiment name?. Clear internal array?
         """
         self.tmin = pd.Series(self.array.time).min().strftime('%Y-%m-%d')
         self.tmax = pd.Series(self.array.time).max().strftime('%Y-%m-%d')
@@ -146,11 +151,10 @@ class SurfaceObservations(object):
 
 # I want to make a class for heatevent. within the definitionmethods I want to have an option to convert the array to a flat dataframe. remove NA'. Then based on previously clustering I can also aggregate by spatial grouping?
 
-# Later on I want to make an experiment class. Combining surface observations on a certain aggregation, with 
-
 #test1 = SurfaceObservations(alias = 'rr')
-#test1.load(tmin = '1995-05-14', tmax = '2015-07-02') #lazychunk = {'latitude': 50, 'longitude': 50}  
-#test1.aggregatespace(step = 5)
+#test1.load(tmin = '1995-05-14', tmax = '2000-07-02') #lazychunk = {'latitude': 50, 'longitude': 50}  
+#test1.aggregatespace(0.5, method = 'mean', by_degree=True)
+#test1.aggregatetime(freq = '3D')
 #test2 = SurfaceObservations(alias = 'rr')
 #test2.load(tmax = '1950-01-03', lazychunk = {'time':300})
     
@@ -175,23 +179,31 @@ class EventClassification(object):
     
     def __init__(self, obs, obs_dask = None):
         """
+        Aimed at on-the-grid classification and computation of climatologies.
         Supply the observations xarray: Normal array for (memory efficient) grouping and fast explicit climatology computation
-        From the observation class time dimension the aggregation is inferred. If the number of days is larger than 1 the climatology needs to be still derived from daily values.
-        If the dataset is potentially large to load completely then also supply a
+        If the dataset is potentially large then one can supply a version withy dask array
         dask array for the anomaly computation which probably will not fit into memory.
         """
-        self.obs = obs.array
-        self.ndayagg = (obs.array.time.values[1] - obs.array.time.values[0]).astype('timedelta64[D]').item().days
+        self.obs = obs
         if obs_dask is not None:
             self.obsd = obs_dask.array
+    
+    def pop(self, threshold = 0.1):
+        """
+        Method to change rainfall accumulation arrays to a boolean variable of whether it rains or not. 
+        """
+        self.obs.array = self.obs.array > threshold
     
     def localclim(self, daysbefore = 0, daysafter = 0, mean = True, quant = None, daily_obs_array = None):
         """
         Construct local climatological distribution within a rolling window, but with pooled years. 
         Extracts mean (for anomaly computation) or for instance a quantile. Returns fields of this for all supplied time and space.
         Daysbefore and daysafter are inclusive.
-        For non-daily aggregations.
+        For non-daily aggregations the procedure is the same, as the climatology needs to be still derived from daily values. 
+        Therefore the amount of aggregated dats is inferred.
         """ 
+        self.ndayagg = (self.obs.array.time.values[1] - self.obs.array.time.values[0]).astype('timedelta64[D]').item().days
+        
         if quant is not None:
             from helper_functions import nanquantile
         
@@ -201,7 +213,7 @@ class EventClassification(object):
             except AttributeError:
                 raise TypeError('provide a daily_obs_array needed for the climatology of aggregated observations')
         else:
-            doygroups = self.obs.groupby('time.dayofyear')
+            doygroups = self.obs.array.groupby('time.dayofyear')
         
         doygroups = {str(key):value for key,value in doygroups} # Change to string
         maxday = 366
@@ -239,21 +251,21 @@ class EventClassification(object):
         This leads to anomalies when the climatological mean was taken. Exceedances become sorted by doy.
         """
         if hasattr(self, 'obsd'):
-            doygroups = self.obsd.groupby('time.dayofyear')
+            doygroups = self.obsd.array.groupby('time.dayofyear')
         else:
-            doygroups = self.obs.groupby('time.dayofyear')
+            doygroups = self.obs.array.groupby('time.dayofyear')
         results = []
         for doy, fields in doygroups:
             results.append(fields - self.clim.sel(doy = doy))
             print('computed exceedance of', doy)
         self.exceedance = xr.concat(results, dim = 'time')
 
-#test1 = SurfaceObservations('tx')
-#test1.load(tmax = '1960-05-06')
+test1 = SurfaceObservations('tx')
+test1.load(tmax = '1960-05-06')
 #test1.aggregatetime(freq = '6D')    
 #test2 = SurfaceObservations('tx')
 #test2.load(tmax = '1960-05-06')
-#self = EventClassification(obs=test1)
+self = EventClassification(obs=test1)
 #self.localclim(daysbefore=2, daysafter=2, mean = True, daily_obs_array=test2.array)
 
 #self2 = EventClassification(obs=test2)

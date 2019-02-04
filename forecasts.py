@@ -203,6 +203,9 @@ class Forecast(object):
         self.array = full.sel(time = pd.date_range(tmin, tmax, freq = 'D'), number = numbers)
         # reset the index
         self.array.coords['number'] = np.arange(0,n_members, dtype = 'int16')
+        # Standard methods of the processed files.
+        self.timemethod = '1D'
+        self.spacemethod = '0.38_degrees'
         
     def aggregatetime(self, freq = 'w' , method = 'mean', keep_leadtime = False):
         """
@@ -361,4 +364,4 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
-start_batch(tmin = '2018-06-05', tmax = '2018-07-12')
+#start_batch(tmin = '2018-06-05', tmax = '2018-07-12')
