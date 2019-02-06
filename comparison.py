@@ -11,7 +11,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import dask.dataframe as dd
-from observations import SurfaceObservations
+from observations import SurfaceObservations, EventClassification
 from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
 
@@ -70,10 +70,10 @@ class ForecastToObsAlignment(object):
                     forecast.load(variable = self.obs.basevar, tmin = tmin, tmax = tmax, n_members = n_members)
         
         self.n_members = n_members
-    
+     
     def force_resolution(self, time = True, space = True):
         """
-        Check if the same resolution and force spatial/temporal aggregation if that is not the case.
+        Force the observed resolution onto the Forecast arrays. Checks if the same resolution and force spatial/temporal aggregation if that is not the case.
         Makes use of the methods of each Forecast class
         """
             
@@ -111,7 +111,18 @@ class ForecastToObsAlignment(object):
                         step, what, method = obsspacemethod.split('_')
                         forecast.aggregatespace(step = int(step), method = method, by_degree = (what is 'degrees'))
                       
+    def force_new_variable(self, array):
+        """
+        Call upon event classification to get the on-the-grid conversion of the base variable.
+        Do this by a small initization of an object with an .array attribute.
+        Then call the classification method with a similar name as the newvar and execute it to let it return the newvar array
+        """
+        newvariable = self.obs.newvar
+        temp = SurfaceObservations(alias = newvariable, **{'array':array}) # Just a convenient class, does not mean the array is an observed one.
+        method = getattr(EventClassification(obs = temp), newvariable)
+        return(method(inplace = False))
         
+                
     def match_and_write(self):
         """
         Neirest neighbouring to match pairs. Be careful when domain of observations is larger.
@@ -162,6 +173,8 @@ class ForecastToObsAlignment(object):
                 allleadtimes = xr.concat(objs = [f.array.swap_dims({'time':'leadtime'}) for f in listofforecasts], dim = 'leadtime') # concatenates over leadtime dimension.
                 a,b = unitconversionfactors(xunit = allleadtimes.units, yunit = fieldobs.units)
                 exp = allleadtimes.reindex_like(fieldobs, method='nearest') * a + b
+                
+                # Call force_new_variable here.
                 
                 # Merging, exporting to pandas and masking by dropping on NA observations.
                 combined = xr.Dataset({'forecast':exp.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0)
@@ -235,20 +248,6 @@ class Comparison(object):
             except KeyError:
                 pass
             
-        
-    def setup_cv(self, nfolds = 3):
-        """
-        The amount of available times can differ per leadtime.
-        And due to NA's the field size is not always equal. Varies between 31544 and 31549.
-        This computes the amount of dates to be selected per leadtime, location and fold. Last fold should get the remainder.
-        """
-        self.nfolds = nfolds
-        datesperloclead = self.frame.groupby(['leadtime','latitude','longitude'])['time'].count()
-        self.n_per_fold = datesperloclead.floordiv(nfolds).compute()
-        # accessible with multi-index as self.n_per_fold.loc[(leadtime,latitude,longitude)]
-        
-        #self.cvbins = pd.cut(self.frame['time'].compute(), bins = nfolds, labels = np.arange(1,nfolds+1))
-        # Pd.cut cannot be done delayed and unfortunately the whole time column is too large to lead explicitly
             
     def fit_pp_models(self, groupers = ['leadtime','latitude','longitude'], nfolds = 1):
         """
@@ -332,10 +331,12 @@ class Comparison(object):
             delayed['pi'] = (delayed['forecast'] > threshold).sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
             delayed['oi'] = delayed['observation'] > threshold  
         
-        delayed['dist'] = (delayed['pi'] - delayed['oi'])**2
+        delayed['rawbrier'] = (delayed['pi'] - delayed['oi'])**2
+        # Add the climatological score. use self.quantile.
+        #delayed['climbrier'] = (self.quantile - delayed['oi'])**2
         
         grouped = delayed.groupby(groupers)
-        return(grouped['dist'].mean().compute())
+        return(grouped['rawbrier'].mean().compute())
 
 #from dask.distributed import Client
 #client = Client(processes = False)

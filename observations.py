@@ -2,6 +2,7 @@ import os
 import numpy as np
 import xarray as xr
 import pandas as pd
+import dask.array as da
 
 class SurfaceObservations(object):
     
@@ -177,7 +178,7 @@ class SurfaceObservations(object):
 
 class EventClassification(object):
     
-    def __init__(self, obs, obs_dask = None):
+    def __init__(self, obs, obs_dask = None, **kwds):
         """
         Aimed at on-the-grid classification and computation of climatologies.
         Supply the observations xarray: Normal array for (memory efficient) grouping and fast explicit climatology computation
@@ -186,18 +187,45 @@ class EventClassification(object):
         """
         self.obs = obs
         if obs_dask is not None:
-            self.obsd = obs_dask.array
+            self.obsd = obs_dask
+            
+        for key in kwds.keys():
+            setattr(self, key, kwds[key])
     
-    def pop(self, threshold = 0.1):
+    def pop(self, threshold = 0.1, inplace = True):
         """
-        Method to change rainfall accumulation arrays to a boolean variable of whether it rains or not. 
+        Method to change rainfall accumulation arrays to a boolean variable of whether it rains or not. Unit is mm.
+        Because we still like to incorporate np.NaN on the unobserved areas, the array has to be floats of 0 and 1
         """
-        self.obs.array = self.obs.array > threshold
+        if hasattr(self, 'obsd'):
+            data = da.where(da.isnan(self.obsd.array.data), self.obsd.array.data, self.obsd.array.data > threshold)
+        else:
+            data = np.where(np.isnan(self.obs.array), self.obs.array, self.obs.array.data > threshold)
+        
+        if inplace:
+            self.obs.array = xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop')
+            self.obs.newvar = 'pop'
+            #self.obs.construct_name()
+        else:
+            return(xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop'))
+    
+    def stefanon2012(self):
+        """
+        First a climatology. Then local exceedence, 4 consecutive days, 60% in sliding square of 3.75 degree.
+        Not the connection yet of events within neighbouring squares yet.
+        """
+        # check for variable is tmax, construct quantile climatology, get.
+    
+    def zscheischler2013(self):
+        """
+        time/space greedy fill of local exceedence of climatological quantile.
+        """
     
     def localclim(self, daysbefore = 0, daysafter = 0, mean = True, quant = None, daily_obs_array = None):
         """
         Construct local climatological distribution within a rolling window, but with pooled years. 
-        Extracts mean (for anomaly computation) or for instance a quantile. Returns fields of this for all supplied time and space.
+        Extracts mean (for anomaly computation, or for probability computation if you have a binary variable) 
+        It can also compute a quantile on a continues variable. Returns fields of this for all supplied day-of-year (doy) and space.
         Daysbefore and daysafter are inclusive.
         For non-daily aggregations the procedure is the same, as the climatology needs to be still derived from daily values. 
         Therefore the amount of aggregated dats is inferred.
@@ -260,13 +288,14 @@ class EventClassification(object):
             print('computed exceedance of', doy)
         self.exceedance = xr.concat(results, dim = 'time')
 
-test1 = SurfaceObservations('tx')
-test1.load(tmax = '1960-05-06')
+#test1 = SurfaceObservations('rr')
+#test1.load(tmin = '1980-05-06', tmax = '2010-05-06') # lazychunk = {'time':300}
 #test1.aggregatetime(freq = '6D')    
 #test2 = SurfaceObservations('tx')
 #test2.load(tmax = '1960-05-06')
-self = EventClassification(obs=test1)
-#self.localclim(daysbefore=2, daysafter=2, mean = True, daily_obs_array=test2.array)
+#self = EventClassification(obs=test1) #obs_dask = test1
+#self.pop(threshold = 0.1)
+#self.localclim(daysbefore=2, daysafter=2, mean = True) # 
 
 #self2 = EventClassification(obs=test2)
 #self2.localclim(daysbefore=2, daysafter=2)
