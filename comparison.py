@@ -118,12 +118,12 @@ class ForecastToObsAlignment(object):
         Then call the classification method with a similar name as the newvar and execute it to let it return the newvar array
         """
         newvariable = self.obs.newvar
-        temp = SurfaceObservations(alias = newvariable, **{'array':array}) # Just a convenient class, does not mean the array is an observed one.
+        temp = SurfaceObservations(alias = newvariable, **{'array':array}) # Just a convenient class, does not neccessarily mean the array is an observed one.
         method = getattr(EventClassification(obs = temp), newvariable)
         return(method(inplace = False))
         
                 
-    def match_and_write(self):
+    def match_and_write(self, newvariable = False):
         """
         Neirest neighbouring to match pairs. Be careful when domain of observations is larger.
         Also converts forecast units to observed units.
@@ -138,11 +138,14 @@ class ForecastToObsAlignment(object):
         
         # Make sure the first parts are recognizable as the time method and the space method. Make last part unique
         # Possibly I can also append in h5 files.
-        def write_outfile(basket):
+        def write_outfile(basket, newvariable = False):
             """
             Saves to a unique filename and creates a bookkeeping file (appends if it already exists)
             """
-            characteristics = [self.obs.basevar, self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
+            if newvariable:
+                characteristics = [self.obs.newvar, self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
+            else:
+                characteristics = [self.obs.basevar, self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
             filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.h5'
             books_path = self.basedir + 'books_' + '_'.join(characteristics) + '.csv'
             
@@ -174,17 +177,27 @@ class ForecastToObsAlignment(object):
                 a,b = unitconversionfactors(xunit = allleadtimes.units, yunit = fieldobs.units)
                 exp = allleadtimes.reindex_like(fieldobs, method='nearest') * a + b
                 
-                # Call force_new_variable here.
+                # Call force_new_variable here. Which in its turn calls the same EventClassification method that was also used on the obs.
+                if newvariable:
+                    binary = self.force_new_variable(exp) # the binary members are discarded at some point.
+                    pi = binary.mean(dim = 'number') # only the probability of the event over the members is retained.
+                    # Merging, exporting to pandas and masking by dropping on NA observations.
+                    combined = xr.Dataset({'forecast':exp.drop('time'),'observation':fieldobs, 'pi':pi.drop('time')}).to_dataframe().dropna(axis = 0)
+                    # Unstack creates duplicates. Two extra columns (obs and pi) need to be selected. Therefore the iloc
+                    temp = combined.unstack('number').iloc[:,np.append(np.arange(0,self.n_members + 1), self.n_members * 2)]
+                    temp.reset_index(inplace = True) # places latitude and all in 
+                    labels = [l for l in temp.columns.labels[1]]
+                    labels[-2:] = np.repeat(self.n_members, 2)
+                else:
+                    # Merging, exporting to pandas and masking by dropping on NA observations.
+                    combined = xr.Dataset({'forecast':exp.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0)
+                    # Handle the multi-index
+                    # first puts number dimension into columns. observerations are duplicated so therefore selects up to n_members +1
+                    temp = combined.unstack('number').iloc[:,:(self.n_members + 1)]
+                    temp.reset_index(inplace = True) # places latitude and all in 
+                    labels = [l for l in temp.columns.labels[1]]
+                    labels[-1] = self.n_members
                 
-                # Merging, exporting to pandas and masking by dropping on NA observations.
-                combined = xr.Dataset({'forecast':exp.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0)
-                
-                # Handle the multi-index
-                # first puts number dimension into columns. observerations are duplicated so therefore selects up to n_members +1
-                temp = combined.unstack('number').iloc[:,:(self.n_members + 1)]
-                temp.reset_index(inplace = True) # places latitude and all in 
-                labels = [l for l in temp.columns.labels[1]]
-                labels[-1] = self.n_members
                 temp.columns.set_labels(labels, level = 1, inplace = True)
                 
                 # Downcasting latitude and longitude
@@ -199,12 +212,12 @@ class ForecastToObsAlignment(object):
                 
                 # If aligned takes too much system memory (> 1Gb) . Write it out
                 if sys.getsizeof(aligned_basket[0]) * len(aligned_basket) > 1*10**9:
-                    write_outfile(aligned_basket)
+                    write_outfile(aligned_basket, newvariable=newvariable)
                     aligned_basket = []
         
         # After last loop also write out 
         if aligned_basket:
-            write_outfile(aligned_basket)
+            write_outfile(aligned_basket, newvariable=newvariable)
         
     def recollect(self, booksname = None):
         """
@@ -233,7 +246,7 @@ class Comparison(object):
         """
         The aligned object has Observation | members |
         Potentially an external observed climatology array can be supplied that takes advantage of the full observed dataset. It has to have a location and dayofyear timestamp. Is it already aggregated?
-        NOTE: make the climatological object also contain the climatological forecast for that quantile. (this is the quantile)
+        This climatology can be a quantile (used as the threshold for brier scoring) of it is a climatological probability if we have an aligned event predictor like POP.
         """
         self.frame = alignedobject
         if climatology is not None: 
@@ -290,7 +303,7 @@ class Comparison(object):
         # There are some negative precipitation values in .iloc[27:28,:]
         self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
         self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
-                
+        
         grouped = self.frame.groupby(groupers)
         #self.fits = grouped.apply(fitngr, meta = {'intercept':'float32', 'slope':'float32'}).compute() #
         
@@ -308,35 +321,38 @@ class Comparison(object):
         Add groups that are for instance chosen with clustering in observations. Based on lat-lon coding.
         """
     
-    def brierscore(self, threshold = None, exceedquantile = False, groupers = ['leadtime']):
+    def brierscore(self, groupers = ['leadtime']):
         """
         Check requirements for the forecast horizon of Buizza. Theirs is based on the crps. No turning the knob of extremity
         Asks a list of groupers, could use custom groupers. Also able to get climatological exceedence if climatology was supplied at initiazion.
         """
+        # Merging with climatological file. In case of quantile scoring for the exceeding quantiles. In case of an already e.g. pop for the climatological probability.
+        self.frame['doy'] = self.frame['time'].dt.dayofyear
+        delayed = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
         
-        if exceedquantile:
-            self.frame['doy'] = self.frame['time'].dt.dayofyear
-            delayed = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')#.to_hdf('temp2.h5', key = 'climquant', format = 'table')
-            #delayed = dd.read_hdf('temp2.h5', key = 'climquant')
-            boolcols = list()
+        if 'pi' in self.frame.columns: # This column comes from the match-and-write, when it is present we are dealing with an already binary observation.
+            delayed['rawbrier'] = (delayed['pi'] - delayed['observation'])**2
+            delayed['climbrier'] = (delayed['climatology'] - delayed['observation'])**2
+        else: # In this case quantile scoring.
             # Boolean comparison cannot be made in one go. because it does not now how to compare N*members agains the climatology of N
+            boolcols = list()
             for member in delayed['forecast'].columns:
                 name = '_'.join(['bool',str(member)])
                 delayed[name] = delayed[('forecast',member)] > delayed['climatology']
                 boolcols.append(name)
             delayed['pi'] = delayed[boolcols].sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
             delayed['oi'] = delayed['observation'] > delayed['climatology']
-        else:
-            delayed = self.frame
-            delayed['pi'] = (delayed['forecast'] > threshold).sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
-            delayed['oi'] = delayed['observation'] > threshold  
+            delayed['rawbrier'] = (delayed['pi'] - delayed['oi'])**2
+            delayed['climbrier'] = ((1 - self.quantile) - delayed['oi'])**2  # Add the climatological score. use self.quantile.
         
-        delayed['rawbrier'] = (delayed['pi'] - delayed['oi'])**2
-        # Add the climatological score. use self.quantile.
-        #delayed['climbrier'] = (self.quantile - delayed['oi'])**2
+        
+        # threshold base scoring OLD
+        #delayed = self.frame
+        #delayed['pi'] = (delayed['forecast'] > threshold).sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
+        #delayed['oi'] = delayed['observation'] > threshold  
         
         grouped = delayed.groupby(groupers)
-        return(grouped['rawbrier'].mean().compute())
+        return(grouped.mean()[['rawbrier','climbrier']].compute())
 
 #from dask.distributed import Client
 #client = Client(processes = False)

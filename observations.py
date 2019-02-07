@@ -192,7 +192,7 @@ class EventClassification(object):
         for key in kwds.keys():
             setattr(self, key, kwds[key])
     
-    def pop(self, threshold = 0.1, inplace = True):
+    def pop(self, threshold = 0.3, inplace = True):
         """
         Method to change rainfall accumulation arrays to a boolean variable of whether it rains or not. Unit is mm.
         Because we still like to incorporate np.NaN on the unobserved areas, the array has to be floats of 0 and 1
@@ -203,8 +203,10 @@ class EventClassification(object):
             data = np.where(np.isnan(self.obs.array), self.obs.array, self.obs.array.data > threshold)
         
         if inplace:
+            attrs = self.obs.array.attrs # to make sure that the original units are maintained.
             self.obs.array = xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop')
             self.obs.newvar = 'pop'
+            self.obs.array.attrs = attrs
             #self.obs.construct_name()
         else:
             return(xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop'))

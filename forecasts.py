@@ -202,7 +202,8 @@ class Forecast(object):
         
         self.array = full.sel(time = pd.date_range(tmin, tmax, freq = 'D'), number = numbers)
         # reset the index
-        self.array.coords['number'] = np.arange(0,n_members, dtype = 'int16')
+        if n_members is not None:
+            self.array.coords['number'] = np.arange(0,n_members, dtype = 'int16')
         # Standard methods of the processed files.
         self.timemethod = '1D'
         self.spacemethod = '0.38_degrees'
