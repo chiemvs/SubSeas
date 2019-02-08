@@ -109,7 +109,7 @@ class ForecastToObsAlignment(object):
                     except AttributeError:
                         print('Aligning space aggregation')
                         step, what, method = obsspacemethod.split('_')
-                        forecast.aggregatespace(step = int(step), method = method, by_degree = (what is 'degrees'))
+                        forecast.aggregatespace(step = float(step), method = method, by_degree = (what == 'degrees'))
                       
     def force_new_variable(self, array):
         """
@@ -147,7 +147,8 @@ class ForecastToObsAlignment(object):
             else:
                 characteristics = [self.obs.basevar, self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
             filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.h5'
-            books_path = self.basedir + 'books_' + '_'.join(characteristics) + '.csv'
+            self.books_name = 'books_' + '_'.join(characteristics) + '.csv'
+            books_path = self.basedir + self.books_name
             
             dataset = pd.concat(basket)
             dataset.to_hdf(filepath, key = 'intermediate', format = 'table')
@@ -218,6 +219,7 @@ class ForecastToObsAlignment(object):
         # After last loop also write out 
         if aligned_basket:
             write_outfile(aligned_basket, newvariable=newvariable)
+        
         
     def recollect(self, booksname = None):
         """
@@ -353,21 +355,3 @@ class Comparison(object):
         
         grouped = delayed.groupby(groupers)
         return(grouped.mean()[['rawbrier','climbrier']].compute())
-
-#from dask.distributed import Client
-#client = Client(processes = False)
-        
-#obs = SurfaceObservations(alias = 'tg')
-#obs.load(tmin = '1995-05-14', tmax = '1998-09-01', llcrnr = (25,-30), rucrnr = (75,75))
-#alignment = ForecastToObsAlignment(season = 'JJA', observations=obs)
-#alignment.recollect(booksname='books_tg_JJA.csv')
-#self = Comparison(alignment.alignedobject)
-#brierpool = self.brierscore(threshold = 30)
-#temp = self.brierscore(threshold = 1, groupers = ['leadtime','latitude', 'longitude'])
-#self.setup_cv(nfolds = 3)
-#testset = dd.read_hdf('/nobackup/users/straaten/match/tg_JJA_9a820b55d52b4a57974c8389f1f3176d.h5', key = 'intermediate')
-#subset = testset.compute().iloc[:10000,:]
-#subset.to_hdf('/usr/people/straaten/Documents/python_tests/subset.h5', key = 'intermediate', format = 'table')
-#subset = dd.read_hdf('/usr/people/straaten/Documents/python_tests/subset.h5', key = 'intermediate')
-#self = Comparison(subset)
-

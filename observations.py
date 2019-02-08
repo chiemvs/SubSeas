@@ -148,10 +148,6 @@ class SurfaceObservations(object):
     
     # Define a detrend method? Look at the Toy weather data documentation of xarray. Scipy has a detrend method.
         
-# I want to keep the real advanced operations seperate, like PCA, clustering,
-
-# I want to make a class for heatevent. within the definitionmethods I want to have an option to convert the array to a flat dataframe. remove NA'. Then based on previously clustering I can also aggregate by spatial grouping?
-
 #test1 = SurfaceObservations(alias = 'rr')
 #test1.load(tmin = '1995-05-14', tmax = '2000-07-02') #lazychunk = {'latitude': 50, 'longitude': 50}  
 #test1.aggregatespace(0.5, method = 'mean', by_degree=True)

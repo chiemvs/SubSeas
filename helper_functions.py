@@ -8,7 +8,6 @@ Created on Thu Nov 29 13:55:37 2018
 import numpy as np
 import pandas as pd
 import xarray as xr
-import itertools
 
 def agg_space(array, orlats, orlons, step, method = 'mean', by_degree = False):
     """
@@ -18,25 +17,26 @@ def agg_space(array, orlats, orlons, step, method = 'mean', by_degree = False):
     TODO: make efficient handling of dask arrays. Ideas for this are commented, problem is that stacking and groupby fuck up the efficiency.
     TODO: enable minimum number of cells for computation.
     """
-
+    
+    # Binning. The rims are added to the closest bin
     if by_degree:
-        binlon = pd.cut(orlons, bins = np.arange(orlons.min(), orlons.max(), step), include_lowest = True) # Lowest is included because otherwise NA's arise at begin and end, making a single group
-        binlat = pd.cut(orlats, bins = np.arange(orlats.min(), orlats.max(), step), include_lowest = True)
+        binlon = np.digitize(x = orlons, bins = np.arange(orlons.min(), orlons.max(), step)) + 200 # + 200 to make sure that both groups are on a different scale, needed for when we want to derive unique (integer) combinations. 
+        binlat = np.digitize(x = orlats, bins = np.arange(orlats.min(), orlats.max(), step))
     else:
         lon_n, lon_rem = divmod(orlons.size, step)
-        binlon = np.repeat(np.arange(0, lon_n), repeats = step)
-        binlon = np.append(binlon, np.repeat(np.NaN, lon_rem))
+        binlon = np.repeat(np.arange(1, lon_n + 1), repeats = step)
+        binlon = np.append(binlon, np.repeat(binlon[-1], lon_rem)) + 200
         lat_n, lat_rem = divmod(orlats.size, step)
-        binlat = np.repeat(np.arange(0, lat_n), repeats = step)
-        binlat = np.append(binlat, np.repeat(np.NaN, lat_rem))
+        binlat = np.repeat(np.arange(1, lat_n + 1), repeats = step)
+        binlat = np.append(binlat, np.repeat(binlat[-1], lat_rem))
     
     # Counts along axis
     #binlatcount = np.unique(np.char.array(binlat), return_counts=True)[1]
     #binloncount = np.unique(np.char.array(binlon), return_counts=True)[1]
     
     # Concatenate as strings to a group variable
-    combined = np.char.array(binlat)[:, None] + np.char.array(binlon)[None, :] # Numpy broadcasting behaviour. Kind of an outer product
-    combined = xr.DataArray(combined, [orlats, orlons], name = 'latlongroup')
+    combined = np.core.defchararray.add(binlat.astype(np.unicode_)[:, None], binlon.astype(np.unicode_)[None, :])
+    combined = xr.DataArray(combined.astype(np.int), [orlats, orlons], name = 'latlongroup')
     
     # if array is dask array: Re-chunking such that the each group is in a single chunk.
     #if array.chunks:
@@ -57,15 +57,15 @@ def agg_space(array, orlats, orlons, step, method = 'mean', by_degree = False):
     grouped = f('stacked_latitude_longitude', keep_attrs=True)        
     
     # Compute new coordinates, and construct a spatial multiindex with lats and lons for each group
-    newlat = orlats.to_pandas().groupby(np.char.array(binlat)).mean()
-    newlon = orlons.to_pandas().groupby(np.char.array(binlon)).mean()
-    newlatlon = pd.MultiIndex.from_tuples(list(itertools.product(newlat, newlon)), names=('latitude', 'longitude'))
+    newlat = orlats.to_series().groupby(binlat).mean()
+    newlon = orlons.to_series().groupby(binlon).mean()
+    newlatlon = pd.MultiIndex.from_product([newlat, newlon], names=('latitude', 'longitude'))
     
     # Prepare the coordinates of stack dimension and replace the array
     grouped['latlongroup'] = newlatlon        
     array = grouped.unstack('latlongroup')
     spacemethod = '_'.join([str(step), 'cells', method]) if not by_degree else '_'.join([str(step), 'degrees', method])
-    return (array, spacemethod)
+    return(array, spacemethod)
 
 def agg_time(array, freq = 'w' , method = 'mean'):
     """
@@ -75,7 +75,7 @@ def agg_time(array, freq = 'w' , method = 'mean'):
     f = getattr(array.resample(time = freq, closed = 'left', label = 'left'), method) # timestamp is left and can be changed with label = 'right'
     array = f('time', keep_attrs=True) 
     timemethod = '_'.join([freq,method])
-    return (array, timemethod)
+    return(array, timemethod)
 
 def unitconversionfactors(xunit, yunit):
     """
