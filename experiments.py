@@ -11,7 +11,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import dask.dataframe as dd
-from observations import SurfaceObservations, EventClassification
+from observations import SurfaceObservations, Climatology, EventClassification
 #from forecasts import Forecast
 from comparison import ForecastToObsAlignment, Comparison
 import itertools
@@ -27,31 +27,32 @@ basevar = 'tx'
 method = 'max'
 timeaggregations = ['1D', '2D', '3D', '4D', '7D'] # Make this smoother? daily steps?
 spaceaggregations = [0.25, 0.75, 1.5, 3] # In degrees, in case of None, we take the raw res 0.25 of obs and raw res 0.38 of forecasts. Space aggregation cannot deal with minimum number of cells yet.
-experiment_log = pd.DataFrame(data = '', index = pd.MultiIndex.from_product([spaceaggregations, timeaggregations], names = ['spaceagg','timeagg']), columns = ['booksname'])
+experiment_log = pd.DataFrame(data = '', index = pd.MultiIndex.from_product([spaceaggregations, timeaggregations], names = ['spaceagg','timeagg']), columns = ['obsname','booksname'])
 quantiles = [0.1, 0.5, 0.9]
 
 # Writing of the files.
 for spaceagg, timeagg in []: #itertools.product(spaceaggregations, timeaggregations):
     
     obs = SurfaceObservations(basevar)
-    obs.load(tmin = '1996-05-30', tmax = '2001-08-31', llcrnr = (25,-30), rucrnr = (75,75))
+    obs.load(tmin = '1996-05-30', tmax = '2006-08-31', llcrnr = (25,-30), rucrnr = (75,75))
     if timeagg != '1D':
         obs.aggregatetime(freq = timeagg, method = method)
     if spaceagg != 0.25:
         obs.aggregatespace(step = spaceagg, method = method, by_degree = True)
     obs.savechanges()
+    experiment_log.loc[(spaceagg, timeagg),'obsname'] = obs.name
     
     alignment = ForecastToObsAlignment(season = season, observations=obs, cycle=cycle)
-    #alignment.find_forecasts()
-    #alignment.load_forecasts(n_members = 11)
-    #alignment.force_resolution(time = (timeagg != '1D'), space = (spaceagg != 0.25))
-    #alignment.match_and_write()
-    #experiment_log.loc[(spaceagg, timeagg),'booksname'] = alignment.books_name
+    alignment.find_forecasts()
+    alignment.load_forecasts(n_members = 11)
+    alignment.force_resolution(time = (timeagg != '1D'), space = (spaceagg != 0.25))
+    alignment.match_and_write()
+    experiment_log.loc[(spaceagg, timeagg),'booksname'] = alignment.books_name
     
 
-#experiment_log.to_hdf(resultsdir + experiment + '.h5', key = 'exp')
+experiment_log.to_hdf(resultsdir + experiment + '.h5', key = 'exp')
 
-experiment_log = pd.read_hdf(resultsdir + experiment + '.h5', key = 'exp')
+#experiment_log = pd.read_hdf(resultsdir + experiment + '.h5', key = 'exp')
 
 # Reading and scoring of the files. Make climatologies based on a period of 30 years, longer than the 5 years in matching.
 for spaceagg, timeagg in itertools.product(spaceaggregations, timeaggregations):
@@ -67,8 +68,9 @@ for spaceagg, timeagg in itertools.product(spaceaggregations, timeaggregations):
         dailyobs.aggregatespace(step = spaceagg, method = method, by_degree = True) # Aggregate the dailyobs for the climatology
     
     for quantile in quantiles:
-        climatology = EventClassification(obs = obs)
-        climatology.localclim(daysbefore = 5, daysafter=5, mean = False, quant = quantile, daily_obs_array = dailyobs.array)
+        climatology = Climatology(basevar)
+        climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = quantile, daily_obs_array = dailyobs.array)
+        climatology.savelocalclim()
         alignment = ForecastToObsAlignment(season = season, observations=obs, cycle=cycle)
         alignment.recollect(booksname = experiment_log.loc[(spaceagg, timeagg),'booksname'])
         test = Comparison(alignedobject= alignment.alignedobject, climatology = climatology.clim)

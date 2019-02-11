@@ -102,6 +102,8 @@ class SurfaceObservations(object):
         if not hasattr(self, 'spacemethod'):
             self.spacemethod = '0.25_degrees'
         
+        self.tmin = pd.Series(self.array.time).min().strftime('%Y-%m-%d')
+        self.tmax = pd.Series(self.array.time).max().strftime('%Y-%m-%d')
 
     def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = False):
         """
@@ -137,44 +139,121 @@ class SurfaceObservations(object):
         Calls new name creation after writing tmin and tmax as attributes. Then writes the dask array to this file. 
         Can give a warning of all NaN slices encountered during writing.
         """
-        self.tmin = pd.Series(self.array.time).min().strftime('%Y-%m-%d')
-        self.tmax = pd.Series(self.array.time).max().strftime('%Y-%m-%d')
         self.construct_name()
         # invoke the computation (if loading was lazy) and writing
         self.array.to_netcdf(self.filepath)
         #delattr(self, 'array')
     
     # Define a detrend method? Look at the Toy weather data documentation of xarray. Scipy has a detrend method.
-        
-#test1 = SurfaceObservations(alias = 'rr')
-#test1.load(tmin = '1995-05-14', tmax = '2000-07-02') #lazychunk = {'latitude': 50, 'longitude': 50}  
-#test1.aggregatespace(0.5, method = 'mean', by_degree=True)
-#test1.aggregatetime(freq = '3D')
-#test2 = SurfaceObservations(alias = 'rr')
-#test2.load(tmax = '1950-01-03', lazychunk = {'time':300})
+
+
+class Climatology(object):
     
-# To matrix with (observations, locations), where NaN is filtered
-#dsflat = xr.Dataset({'rr' :test1.array.stack(latlon = ['latitude', 'longitude'])})
-#nona = dsflat.dropna(dim = 'latlon')
-#obsmat = nona.rr.values
-
-#U, s, Vt = np.linalg.svd(obsmat, full_matrices=False)
-# s are the singular values. Square them for the eigenvalues of np.dot(obsmat.T, obsmat). Already ordered.
-# eigenvectors are the columns in V = Vt.T (just like regular eigenvector matrix) or in the rows of Vt
-
-# plot the first eigenvector
-#pc1 = xr.DataArray(Vt[0,:], coords = [nona.latlon], dims = ['latlon'])
-#import matplotlib.pyplot as plt
-#axes = plt.axes()
-#pc1.unstack('latlon').plot(ax = axes)
-#plt.savefig('test')
-
-
+    def __init__(self, alias, **kwds):
+        """
+        Class to contain local climatologies. Construct from observations or load a previously constructed one
+        """
+        self.var = alias
+        self.basedir = "/nobackup/users/straaten/climatology/"
+    
+    def construct_name(self):
+        """
+        Name and filepath are based on the base variable and the relevant attributes (if present)
+        Uses the timemethod and spacemethod attributes
+        """
+        keys = ['tmin','tmax','timemethod','spacemethod', 'daysbefore', 'daysafter', 'climmethod']
+        attrs = [ str(getattr(self,x)) for x in keys if hasattr(self, x)]
+        attrs.insert(0,'clim') # Prepend with clim
+        attrs.insert(0,self.var) # Prepend with alias
+        self.name = '.'.join(attrs)
+        self.filepath = ''.join([self.basedir, self.name, ".nc"])
+        
+    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, daily_obs_array = None):
+        """
+        Load a local clim if one with corresponding basevar, tmin, tmax and method is found. 
+        Construct local climatological distribution within a rolling window, but with pooled years. 
+        Extracts mean (giving probabilities if you have a binary variable) 
+        It can also compute a quantile on a continuous variables. Returns fields of this for all supplied day-of-year (doy) and space.
+        Daysbefore and daysafter are inclusive.
+        For non-daily aggregations the procedure is the same, as the climatology needs to be still derived from daily values. 
+        Therefore the amount of aggregated dats is inferred.
+        """
+        keys = ['tmin','tmax','timemethod','spacemethod']
+        for key in keys:
+            try:
+                setattr(self, key, getattr(obs, key))
+            except AttributeError:
+                setattr(self, key, locals()[key])
+        self.daysbefore = daysbefore
+        self.daysafter = daysafter
+        if mean:
+            self.climmethod = 'mean'
+        else:
+            self.climmethod = 'q' + str(quant)
+        
+        try:
+            self.loadlocalclim()
+            print('climatology directly loaded')
+        except OSError:
+            self.ndayagg = (obs.array.time.values[1] - obs.array.time.values[0]).astype('timedelta64[D]').item().days
+        
+            if quant is not None:
+                from helper_functions import nanquantile
+            
+            if (self.ndayagg > 1):
+                try:
+                    doygroups = daily_obs_array.groupby('time.dayofyear')
+                except AttributeError:
+                    raise TypeError('provide a daily_obs_array needed for the climatology of aggregated observations')
+            else:
+                doygroups = obs.array.groupby('time.dayofyear')
+            
+            doygroups = {str(key):value for key,value in doygroups} # Change to string
+            maxday = 366
+            results = []
+            for doy in doygroups.keys():        
+                doy = int(doy)
+                # for aggregated values the day of year is the first day of the period. 
+                window = np.arange(doy - daysbefore, doy + daysafter + self.ndayagg, dtype = 'int64')
+                # small corrections for overshooting into previous or next year.
+                window[ window < 1 ] += maxday
+                window[ window > maxday ] -= maxday
+                
+                complete = xr.concat([doygroups[str(key)] for key in window if str(key) in doygroups.keys()], dim = 'time')
+    
+                if mean:
+                    reduced = complete.mean('time')
+                elif quant is not None:
+                    # nanquantile method based on sorting. So not compatible with xarray. Therefore feed values and restore coordinates.
+                    reduced = xr.DataArray(data = nanquantile(array = complete.values, q = quant),
+                                            coords = [complete.coords['latitude'], complete.coords['longitude']],
+                                            dims = ['latitude','longitude'])
+                    reduced.attrs['quantile'] = quant
+                else:
+                    raise ValueError('Provide a quantile if mean is set to False')
+                
+                print('computed clim of', doy)
+                reduced.coords['doy'] = doy
+                results.append(reduced)
+            
+            self.clim = xr.concat(results, dim = 'doy')
+    
+    def loadlocalclim(self):
+        
+        self.construct_name()
+        self.clim = xr.open_dataarray(self.filepath)
+    
+    def savelocalclim(self):
+        
+        self.construct_name()
+        self.clim.to_netcdf(self.filepath)
+        
+        
 class EventClassification(object):
     
     def __init__(self, obs, obs_dask = None, **kwds):
         """
-        Aimed at on-the-grid classification and computation of climatologies.
+        Aimed at on-the-grid classification.
         Supply the observations xarray: Normal array for (memory efficient) grouping and fast explicit climatology computation
         If the dataset is potentially large then one can supply a version withy dask array
         dask array for the anomaly computation which probably will not fit into memory.
@@ -210,66 +289,14 @@ class EventClassification(object):
         First a climatology. Then local exceedence, 4 consecutive days, 60% in sliding square of 3.75 degree.
         Not the connection yet of events within neighbouring squares yet.
         """
-        # check for variable is tmax, construct quantile climatology, get.
+        # check for variable is tmax, construct quantile climatology by calling the Climatology class. get.
     
     def zscheischler2013(self):
         """
         time/space greedy fill of local exceedence of climatological quantile.
         """
     
-    def localclim(self, daysbefore = 0, daysafter = 0, mean = True, quant = None, daily_obs_array = None):
-        """
-        Construct local climatological distribution within a rolling window, but with pooled years. 
-        Extracts mean (for anomaly computation, or for probability computation if you have a binary variable) 
-        It can also compute a quantile on a continues variable. Returns fields of this for all supplied day-of-year (doy) and space.
-        Daysbefore and daysafter are inclusive.
-        For non-daily aggregations the procedure is the same, as the climatology needs to be still derived from daily values. 
-        Therefore the amount of aggregated dats is inferred.
-        """ 
-        self.ndayagg = (self.obs.array.time.values[1] - self.obs.array.time.values[0]).astype('timedelta64[D]').item().days
-        
-        if quant is not None:
-            from helper_functions import nanquantile
-        
-        if (self.ndayagg > 1):
-            try:
-                doygroups = daily_obs_array.groupby('time.dayofyear')
-            except AttributeError:
-                raise TypeError('provide a daily_obs_array needed for the climatology of aggregated observations')
-        else:
-            doygroups = self.obs.array.groupby('time.dayofyear')
-        
-        doygroups = {str(key):value for key,value in doygroups} # Change to string
-        maxday = 366
-        results = []
-        for doy in doygroups.keys():        
-            doy = int(doy)
-            # for aggregated values the day of year is the first day of the period. 
-            window = np.arange(doy - daysbefore, doy + daysafter + self.ndayagg, dtype = 'int64')
-            # small corrections for overshooting into previous or next year.
-            window[ window < 1 ] += maxday
-            window[ window > maxday ] -= maxday
-            
-            complete = xr.concat([doygroups[str(key)] for key in window if str(key) in doygroups.keys()], dim = 'time')
-
-            if mean:
-                reduced = complete.mean('time')
-            elif quant is not None:
-                # nanquantile method based on sorting. So not compatible with xarray. Therefore feed values and restore coordinates.
-                reduced = xr.DataArray(data = nanquantile(array = complete.values, q = quant),
-                                        coords = [complete.coords['latitude'], complete.coords['longitude']],
-                                        dims = ['latitude','longitude'])
-                reduced.attrs['quantile'] = quant
-            else:
-                raise ValueError('Provide a quantile if mean is set to False')
-            
-            print('computed clim of', doy)
-            reduced.coords['doy'] = doy
-            results.append(reduced)
-        
-        self.clim = xr.concat(results, dim = 'doy')
-    
-    def climexceedance(self):
+    def climexceedance(self, clim):
         """
         Substracts the climatological value for the associated day of year from the observations.
         This leads to anomalies when the climatological mean was taken. Exceedances become sorted by doy.
