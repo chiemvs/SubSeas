@@ -3,6 +3,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import dask.array as da
+from helper_functions import agg_space, agg_time
 
 class SurfaceObservations(object):
     
@@ -102,14 +103,12 @@ class SurfaceObservations(object):
             self.spacemethod = '0.25_degrees'
         
 
-    def aggregatespace(self, step, method = 'mean', by_degree = False):
+    def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = False):
         """
         Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
         In the case of degree grouping the groups might not contain an equal number of cells.
         Completely lazy when supplied array is lazy.
         """
-        from helper_functions import agg_space
-        
         # Check if already loaded.
         if not hasattr(self, 'array'):
             self.load(lazychunk = {'latitude': 50, 'longitude': 50})
@@ -117,14 +116,13 @@ class SurfaceObservations(object):
         self.array, self.spacemethod = agg_space(array = self.array, 
                                                  orlats = self.array.latitude.load(),
                                                  orlons = self.array.longitude.load(),
-                                                 step = step, method = method, by_degree = by_degree)
+                                                 step = step, method = method, by_degree = by_degree, skipna = skipna)
     
     def aggregatetime(self, freq = 'w' , method = 'mean'):
         """
         Uses the pandas frequency indicators. Method can be mean, min, max, std
         Completely lazy when loading is lazy.
         """
-        from helper_functions import agg_time
         
         if not hasattr(self, 'array'):
             self.load(lazychunk = {'time': 365})

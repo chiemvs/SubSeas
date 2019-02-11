@@ -19,19 +19,22 @@ import itertools
 """
 Mean temperature benchmarks.
 """
+resultsdir = '/nobackup/users/straaten/results/'
 experiment = 'test1' # not used yet for directory based writing.
 season = 'JJA'
 cycle = '41r1'
 basevar = 'tx'
 method = 'max'
-timeaggregations = ['1D', '2D', '3D', '4D', '1w'] # Make this smoother? daily steps?
+timeaggregations = ['1D', '2D', '3D', '4D', '7D'] # Make this smoother? daily steps?
 spaceaggregations = [0.25, 0.75, 1.5, 3] # In degrees, in case of None, we take the raw res 0.25 of obs and raw res 0.38 of forecasts. Space aggregation cannot deal with minimum number of cells yet.
 experiment_log = pd.DataFrame(data = '', index = pd.MultiIndex.from_product([spaceaggregations, timeaggregations], names = ['spaceagg','timeagg']), columns = ['booksname'])
+quantiles = [0.1, 0.5, 0.9]
 
-for spaceagg, timeagg in itertools.product(spaceaggregations, timeaggregations):
+# Writing of the files.
+for spaceagg, timeagg in []: #itertools.product(spaceaggregations, timeaggregations):
     
     obs = SurfaceObservations(basevar)
-    obs.load(tmin = '1995-05-30', tmax = '2000-08-31', llcrnr = (25,-30), rucrnr = (75,75))
+    obs.load(tmin = '1996-05-30', tmax = '2001-08-31', llcrnr = (25,-30), rucrnr = (75,75))
     if timeagg != '1D':
         obs.aggregatetime(freq = timeagg, method = method)
     if spaceagg != 0.25:
@@ -39,12 +42,41 @@ for spaceagg, timeagg in itertools.product(spaceaggregations, timeaggregations):
     obs.savechanges()
     
     alignment = ForecastToObsAlignment(season = season, observations=obs, cycle=cycle)
-    alignment.find_forecasts()
-    alignment.load_forecasts(n_members = 11)
-    alignment.force_resolution(time = (timeagg != '1D'), space = (spaceagg != 0.25))
-    alignment.match_and_write()
-    experiment_log.loc[(spaceagg, timeagg),'booksname'] = alignment.books_name
+    #alignment.find_forecasts()
+    #alignment.load_forecasts(n_members = 11)
+    #alignment.force_resolution(time = (timeagg != '1D'), space = (spaceagg != 0.25))
+    #alignment.match_and_write()
+    #experiment_log.loc[(spaceagg, timeagg),'booksname'] = alignment.books_name
+    
 
+#experiment_log.to_hdf(resultsdir + experiment + '.h5', key = 'exp')
+
+experiment_log = pd.read_hdf(resultsdir + experiment + '.h5', key = 'exp')
+
+# Reading and scoring of the files. Make climatologies based on a period of 30 years, longer than the 5 years in matching.
+for spaceagg, timeagg in itertools.product(spaceaggregations, timeaggregations):
+    
+    obs = SurfaceObservations(basevar)
+    obs.load(tmin = '1980-05-30', tmax = '2010-08-31', llcrnr = (25,-30), rucrnr = (75,75))
+    dailyobs = SurfaceObservations(basevar)
+    dailyobs.load(tmin = '1980-05-30', tmax = '2010-08-31', llcrnr = (25,-30), rucrnr = (75,75))
+    if timeagg != '1D':
+        obs.aggregatetime(freq = timeagg, method = method)
+    if spaceagg != 0.25:
+        obs.aggregatespace(step = spaceagg, method = method, by_degree = True)
+        dailyobs.aggregatespace(step = spaceagg, method = method, by_degree = True) # Aggregate the dailyobs for the climatology
+    
+    for quantile in quantiles:
+        climatology = EventClassification(obs = obs)
+        climatology.localclim(daysbefore = 5, daysafter=5, mean = False, quant = quantile, daily_obs_array = dailyobs.array)
+        alignment = ForecastToObsAlignment(season = season, observations=obs, cycle=cycle)
+        alignment.recollect(booksname = experiment_log.loc[(spaceagg, timeagg),'booksname'])
+        test = Comparison(alignedobject= alignment.alignedobject, climatology = climatology.clim)
+        scores = test.brierscore(groupers=['latitude','longitude'])
+        
+        # rename the columns
+        scores.columns = scores.columns.droplevel(1)
+        
 # books_tx_JJA_41r1_2D_max_0.25_degrees.csv
 #alignment.recollect(booksname = 'books_tx_JJA_41r1_2D_max_0.25_degrees.csv')
 #quantiles = [0.1,0.5,0.9] # quantile loop comes after the file writing. Just constructing different climatologies.

@@ -222,7 +222,7 @@ class Forecast(object):
         else:
             self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
     
-    def aggregatespace(self, step, method = 'mean', by_degree = False):
+    def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = True):
         """
         Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
         In the case of degree grouping the groups might not contain an equal number of cells.
@@ -234,7 +234,7 @@ class Forecast(object):
         self.array, self.spacemethod = agg_space(array = self.array, 
                                                  orlats = self.array.latitude.load(),
                                                  orlons = self.array.longitude.load(),
-                                                 step = step, method = method, by_degree = by_degree)
+                                                 step = step, method = method, by_degree = by_degree, skipna = skipna)
     
         
 class Hindcast(object):

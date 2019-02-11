@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-def agg_space(array, orlats, orlons, step, method = 'mean', by_degree = False):
+def agg_space(array, orlats, orlons, step, skipna = False, method = 'mean', by_degree = False):
     """
     Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
     In the case of degree grouping the groups might not contain an equal number of cells.
@@ -54,7 +54,16 @@ def agg_space(array, orlats, orlons, step, method = 'mean', by_degree = False):
     
     # Compute grouped values. This stacks the dimensions to one spatial and one temporal.
     f = getattr(array.groupby(combined), method) # This loads the data into memory if a non-dask array is supplied. Put into try except framework for personally defined functions.
-    grouped = f('stacked_latitude_longitude', keep_attrs=True)        
+    grouped = f('stacked_latitude_longitude', keep_attrs=True) # if very strict: skipna = False
+    
+    # Maximum amount of missing values is 40% in space  = 0.4 * stepsize^2 (in case of cells)
+    if not skipna:
+        if by_degree:
+            maxnacells = int(0.4 * (len(binlat[binlat == 1]))**2)
+        else:
+            maxnacells = int(0.4 * step**2)
+        toomanyna = np.isnan(array).groupby(combined).sum('stacked_latitude_longitude') > maxnacells
+        grouped.values[toomanyna] = np.nan # Set the values.
     
     # Compute new coordinates, and construct a spatial multiindex with lats and lons for each group
     newlat = orlats.to_series().groupby(binlat).mean()
