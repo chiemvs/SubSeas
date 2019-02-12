@@ -21,7 +21,7 @@ class ForecastToObsAlignment(object):
     This searches the corresponding forecasts, and possibly forces the same aggregations.
     TODO: not sure how to handle groups yet.
     """
-    def __init__(self, season, observations, cycle):
+    def __init__(self, season, cycle, observations = None):
         """
         Temporal extend can be read from the attributes of the observation class. 
         Specify the season under inspection for subsetting.
@@ -29,12 +29,13 @@ class ForecastToObsAlignment(object):
         self.basedir = '/nobackup/users/straaten/match/'
         self.cycle = cycle
         self.season = season
-        self.obs = observations
-        self.dates = self.obs.array.coords['time'].to_series() # Left stamped
-        self.dates = self.dates[monthtoseasonlookup(self.dates.index.month) == self.season]
-        # infer dominant time aggregation in days
-        self.time_agg = int(self.dates.diff().dt.days.mode())
-        self.maxleadtime = 46
+        if observations is not None:
+            self.obs = observations
+            self.dates = self.obs.array.coords['time'].to_series() # Left stamped
+            self.dates = self.dates[monthtoseasonlookup(self.dates.index.month) == self.season]
+            # infer dominant time aggregation in days
+            self.time_agg = int(self.dates.diff().dt.days.mode())
+            self.maxleadtime = 46
     
     def find_forecasts(self):
         """

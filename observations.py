@@ -18,15 +18,16 @@ class SurfaceObservations(object):
         for key in kwds.keys():
             setattr(self, key, kwds[key])
     
-    def construct_name(self):
+    def construct_name(self, force = False):
         """
         Name and filepath are based on the base variable and the relevant attributes (if present)
         Uses the timemethod and spacemethod attributes
         """
-        keys = ['tmin','tmax','timemethod','spacemethod']
-        attrs = [ getattr(self,x) for x in keys if hasattr(self, x)]
-        attrs.insert(0,self.basevar) # Prepend with alias
-        self.name = '.'.join(attrs)
+        if (not hasattr(self, 'name')) or (force):
+            keys = ['tmin','tmax','timemethod','spacemethod']
+            attrs = [ getattr(self,x) for x in keys if hasattr(self, x)]
+            attrs.insert(0,self.basevar) # Prepend with alias
+            self.name = '.'.join(attrs)
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
     def downloadraw(self):
@@ -74,7 +75,7 @@ class SurfaceObservations(object):
         If a lazychunk is given (e.g. dictionary: {'time': 3650}) a dask array will be loaded
         """
         
-        self.construct_name() # To take account of attributes given at initialization.
+        self.construct_name() # To take account of attributes or even name given at initialization.
         
         # Check file existence. Download if base variable
         if not os.path.isfile(self.filepath):
@@ -139,7 +140,7 @@ class SurfaceObservations(object):
         Calls new name creation after writing tmin and tmax as attributes. Then writes the dask array to this file. 
         Can give a warning of all NaN slices encountered during writing.
         """
-        self.construct_name()
+        self.construct_name(force = True)
         # invoke the computation (if loading was lazy) and writing
         self.array.to_netcdf(self.filepath)
         #delattr(self, 'array')
@@ -155,17 +156,20 @@ class Climatology(object):
         """
         self.var = alias
         self.basedir = "/nobackup/users/straaten/climatology/"
+        for key in kwds.keys():
+            setattr(self, key, kwds[key])
     
-    def construct_name(self):
+    def construct_name(self, force = False):
         """
         Name and filepath are based on the base variable and the relevant attributes (if present)
         Uses the timemethod and spacemethod attributes
         """
-        keys = ['tmin','tmax','timemethod','spacemethod', 'daysbefore', 'daysafter', 'climmethod']
-        attrs = [ str(getattr(self,x)) for x in keys if hasattr(self, x)]
-        attrs.insert(0,'clim') # Prepend with clim
-        attrs.insert(0,self.var) # Prepend with alias
-        self.name = '.'.join(attrs)
+        if (not hasattr(self, 'name')) or (force):
+            keys = ['tmin','tmax','timemethod','spacemethod', 'daysbefore', 'daysafter', 'climmethod']
+            attrs = [ str(getattr(self,x)) for x in keys if hasattr(self, x)]
+            attrs.insert(0,'clim') # Prepend with clim
+            attrs.insert(0,self.var) # Prepend with alias
+            self.name = '.'.join(attrs)
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
         
     def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, daily_obs_array = None):
@@ -245,7 +249,7 @@ class Climatology(object):
     
     def savelocalclim(self):
         
-        self.construct_name()
+        self.construct_name(force = True)
         self.clim.to_netcdf(self.filepath)
         
         
