@@ -17,7 +17,7 @@ import pygrib
 
 # Global variables
 server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)
-netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
+for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'mx2t6': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'tp': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
                    'rr': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
@@ -136,7 +136,7 @@ class Forecast(object):
             result.leadtime.attrs.update({'long_name':'leadtime', 'units':'days'})
             result.set_coords('leadtime', inplace=True) # selection by leadtime requires a quick swap: result.swap_dims({'time':'leadtime'})
             
-            particular_encoding = {key : netcdf_encoding[key] for key in result.keys()} 
+            particular_encoding = {key : for_netcdf_encoding[key] for key in result.keys()} 
             result.to_netcdf(path = self.basedir + self.processedfile, encoding = particular_encoding)
             comb.close()
             print('Processed forecast successfully created')
@@ -165,7 +165,7 @@ class Forecast(object):
         
         cf.coords['number'] = np.array(0, dtype='int16')
         cf = cf.expand_dims('number',-1)
-        particular_encoding = {key : netcdf_encoding[key] for key in cf.keys()} 
+        particular_encoding = {key : for_netcdf_encoding[key] for key in cf.keys()} 
         xr.concat([cf,pf], dim = 'number').to_netcdf(path = self.basedir + self.interfile, encoding= particular_encoding)
     
     def cleanup(self):
@@ -353,7 +353,7 @@ class Hindcast(object):
             # Save the dataset to netcdf under hdate.
             onehdate = xr.Dataset(collectparams)
             svname = self.prefix + hd + '_comb.nc'
-            particular_encoding = {key : netcdf_encoding[key] for key in onehdate.keys()} # get only encoding of present variables
+            particular_encoding = {key : for_netcdf_encoding[key] for key in onehdate.keys()} # get only encoding of present variables
             onehdate.to_netcdf(path = self.basedir + svname, encoding= particular_encoding)
         pf.close()
         cf.close()

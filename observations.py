@@ -5,6 +5,15 @@ import pandas as pd
 import dask.array as da
 from helper_functions import agg_space, agg_time
 
+obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
+                   'tx': {'dtype': 'int16', 'scale_factor': 0.0015, '_FillValue': -32767},
+                   'tg': {'dtype': 'int16', 'scale_factor': 0.0015, '_FillValue': -32767},
+                   'pop': {'dtype': 'int16', 'scale_factor': 0.0001, '_FillValue': -32767},
+                   'time': {'dtype': 'int64'},
+                   'latitude': {'dtype': 'float32'},
+                   'longitude': {'dtype': 'float32'},
+                   'doy': {'dtype': 'int16'}}
+
 class SurfaceObservations(object):
     
     def __init__(self, alias, **kwds):
@@ -26,7 +35,10 @@ class SurfaceObservations(object):
         if (not hasattr(self, 'name')) or (force):
             keys = ['tmin','tmax','timemethod','spacemethod']
             attrs = [ getattr(self,x) for x in keys if hasattr(self, x)]
-            attrs.insert(0,self.basevar) # Prepend with alias
+            try:
+                attrs.insert(0,self.newvar) # Prepend with alias
+            except AttributeError:
+                attrs.insert(0,self.basevar)
             self.name = '.'.join(attrs)
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
@@ -142,7 +154,8 @@ class SurfaceObservations(object):
         """
         self.construct_name(force = True)
         # invoke the computation (if loading was lazy) and writing
-        self.array.to_netcdf(self.filepath)
+        particular_encoding = {key : obs_netcdf_encoding[key] for key in self.array.to_dataset().keys()} 
+        self.array.to_netcdf(self.filepath, encoding = particular_encoding)
         #delattr(self, 'array')
     
     # Define a detrend method? Look at the Toy weather data documentation of xarray. Scipy has a detrend method.
@@ -174,7 +187,7 @@ class Climatology(object):
         
     def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, daily_obs_array = None):
         """
-        Load a local clim if one with corresponding basevar, tmin, tmax and method is found. 
+        Load a local clim if one with corresponding basevar, tmin, tmax and method is found, or if name given at initialization is found.
         Construct local climatological distribution within a rolling window, but with pooled years. 
         Extracts mean (giving probabilities if you have a binary variable) 
         It can also compute a quantile on a continuous variables. Returns fields of this for all supplied day-of-year (doy) and space.
@@ -226,12 +239,13 @@ class Climatology(object):
                 complete = xr.concat([doygroups[str(key)] for key in window if str(key) in doygroups.keys()], dim = 'time')
     
                 if mean:
-                    reduced = complete.mean('time')
+                    reduced = complete.mean('time', keep_attrs = True)
                 elif quant is not None:
                     # nanquantile method based on sorting. So not compatible with xarray. Therefore feed values and restore coordinates.
                     reduced = xr.DataArray(data = nanquantile(array = complete.values, q = quant),
                                             coords = [complete.coords['latitude'], complete.coords['longitude']],
-                                            dims = ['latitude','longitude'])
+                                            dims = ['latitude','longitude'], name = self.var)
+                    reduced.attrs = complete.attrs
                     reduced.attrs['quantile'] = quant
                 else:
                     raise ValueError('Provide a quantile if mean is set to False')
@@ -250,7 +264,8 @@ class Climatology(object):
     def savelocalclim(self):
         
         self.construct_name(force = True)
-        self.clim.to_netcdf(self.filepath)
+        particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clim.to_dataset().keys()} 
+        self.clim.to_netcdf(self.filepath, encoding = particular_encoding)
         
         
 class EventClassification(object):
@@ -280,10 +295,9 @@ class EventClassification(object):
             data = np.where(np.isnan(self.obs.array), self.obs.array, self.obs.array.data > threshold)
         
         if inplace:
-            attrs = self.obs.array.attrs # to make sure that the original units are maintained.
             self.obs.array = xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop')
             self.obs.newvar = 'pop'
-            self.obs.array.attrs = attrs
+            self.obs.array.attrs = {'long_name':'probability_of_precipitation', 'threshold_mm':threshold}
             #self.obs.construct_name()
         else:
             return(xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop'))
@@ -315,15 +329,15 @@ class EventClassification(object):
             print('computed exceedance of', doy)
         self.exceedance = xr.concat(results, dim = 'time')
 
+       
 #test1 = SurfaceObservations('rr')
-#test1.load(tmin = '1980-05-06', tmax = '2010-05-06') # lazychunk = {'time':300}
-#test1.aggregatetime(freq = '6D')    
-#test2 = SurfaceObservations('tx')
-#test2.load(tmax = '1960-05-06')
-#self = EventClassification(obs=test1) #obs_dask = test1
-#self.pop(threshold = 0.1)
-#self.localclim(daysbefore=2, daysafter=2, mean = True) # 
+#test1.load(tmax = '1980-01-01', lazychunk={'time':300})
 
-#self2 = EventClassification(obs=test2)
-#self2.localclim(daysbefore=2, daysafter=2)
-
+#clas = EventClassification(obs = test1, obsd = test1)
+#clas.pop()
+#clas.obs.savechanges()
+#clim1 = Climatology('pop')
+#obs = SurfaceObservations('pop', **{'name':'pop.1950-01-01.1980-01-01.1D.0.25_degrees'})
+#obs.load()
+#clim1.localclim(obs = obs, daysbefore = 5, daysafter = 5)
+#clim1.savelocalclim()
