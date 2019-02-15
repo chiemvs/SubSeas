@@ -40,9 +40,9 @@ class Experiment(object):
         try:
             self.log = pd.read_hdf(self.logpath, key = 'exp')
         except OSError:
-            self.log = pd.DataFrame(data = object, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations, self.quantiles], names = ['spaceagg','timeagg','quantile']), columns = ['climname','scores'])
+            self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations, self.quantiles], names = ['spaceagg','timeagg','quantile']), columns = ['climname','scores'])
             self.log = self.log.unstack(level = -1)
-            self.log = self.log.assign(**{'obsname':'','booksname':''})
+            self.log = self.log.assign(**{'obsname':None,'booksname':None}) # :''
     
     def savelog(self):
         """
@@ -53,16 +53,19 @@ class Experiment(object):
         else:
             print('No log to save')
     
-    def iterateaggregations(self, func, column = None, kwargs = {}):
+    def iterateaggregations(self, func, column, kwargs = {}):
         """
         Wrapper that calls the function with a specific spaceagg and timeagg and writes the returns of the function to the column if a name was given
         """
         for spaceagg, timeagg in itertools.product(self.spaceaggregations,self.timeaggregations):
-            f = getattr(self, func)
-            ret = f(spaceagg, timeagg, **kwargs)
-            if (ret is not None) and (column is not None):
-                self.log.loc[(spaceagg, timeagg),column] = ret
-                self.savelog()
+            if self.log.loc[(spaceagg, timeagg),column].isna().any():
+                f = getattr(self, func)
+                ret = f(spaceagg, timeagg, **kwargs)
+                if (ret is not None):
+                    self.log.loc[(spaceagg, timeagg),column] = ret
+                    self.savelog()
+            else:
+                print('already filled')
     
     def prepareobs(self, spaceagg, timeagg, tmin, tmax):
         """
@@ -120,7 +123,7 @@ class Experiment(object):
         alignment = ForecastToObsAlignment(season = self.season, cycle=self.cycle)
         alignment.recollect(booksname = self.log.loc[(spaceagg, timeagg),('booksname','')])
         
-        result = []
+        result = np.repeat(None,len(self.quantiles))
         for quantile in self.quantiles:    
             climatology = Climatology(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('climname', quantile)]})
             climatology.localclim() # loading in this case. Creation was done in the makeclim method.
@@ -129,7 +132,7 @@ class Experiment(object):
             
             # rename the columns
             scores.columns = scores.columns.droplevel(1)
-            result.append(scores)
+            result[self.quantiles.index(quantile)] = scores
         
         return(result)
 
@@ -141,8 +144,34 @@ test1 = Experiment(expname = 'test1', basevar = 'tx', cycle = '41r1', season = '
 test1.setuplog()
 #test1.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1996-05-30','tmax':'2006-08-31'})
 #test1.iterateaggregations(func = 'match', column = 'booksname')
-test1.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2010-08-31'})
-test1.iterateaggregations(func = 'score', column = 'scores')
+#test1.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2010-08-31'})
+#test1.iterateaggregations(func = 'score', column = 'scores')
+
+scoreseries = test1.log.loc[:,('scores',slice(None,None,None))].stack(level = -1)['scores']
+temp = pd.concat(scoreseries.tolist(), keys = scoreseries.index)
+temp.index.set_names(scoreseries.index.names, level = [0,1,2], inplace=True)
+skill = 1 - temp['rawbrier'] / temp['climbrier'] # Nice one to write out.
+#skill.to_hdf('/nobackup/users/straaten/results/test1skill.h5', key = 'skill')
+
+# Plotting
+skill.loc[(0.75,slice(None), 0.9)].unstack(level = [0,1,2]).plot()
+skill.xs(0.5, level = 'quantile', drop_level = False).unstack(level = [0,1,2]).plot()
+
+# Small test as a forecast horizon
+def lastconsecutiveabovezero(series):
+    gtzero = series.gt(0)
+    if not gtzero.any():
+        leadtime = 0
+    elif gtzero.all():
+        leadtime = gtzero.index.get_level_values(level = -1)[-1]
+    else:
+        tupfirst = gtzero.idxmin()
+        locfirst = gtzero.index.get_loc(tupfirst)
+        tup = gtzero.index.get_values()[locfirst - 1]
+        leadtime = tup[-1]
+    return(leadtime)
+
+zeroskillleadtime = skill.groupby(['spaceagg', 'timeagg', 'quantile']).apply(func = lastconsecutiveabovezero)
 
 """
 4 years summer temperatures 1995-1998. In Forecast domain. 
