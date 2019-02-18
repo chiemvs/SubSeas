@@ -20,7 +20,7 @@ class SurfaceObservations(object):
         """
         Sets the base E-OBS variable alias. And sets the base storage directory. 
         Additionally you can supply 'timemethod', 'spacemethod', 'tmin' and 
-        'tmax' if you want to load a pre-existing adapted file.
+        'tmax', or the comple filename if you want to load a pre-existing adapted file.
         """
         self.basevar = alias
         self.basedir = "/nobackup/users/straaten/E-OBS/"
@@ -29,17 +29,22 @@ class SurfaceObservations(object):
     
     def construct_name(self, force = False):
         """
-        Name and filepath are based on the base variable and the relevant attributes (if present)
-        Uses the timemethod and spacemethod attributes
+        Name and filepath are based on the base variable (or new variable) and the relevant attributes (if present).
+        If name is already present as an attribute given upon initialization: reverse engineer the other attributes
         """
-        if (not hasattr(self, 'name')) or (force):
-            keys = ['tmin','tmax','timemethod','spacemethod']
-            attrs = [ getattr(self,x) for x in keys if hasattr(self, x)]
+        keys = ['var','tmin','tmax','timemethod','spacemethod']
+        if hasattr(self, 'name') and (not force):
+            values = self.name.split(sep = '_')
+            for key in keys[1:]:
+                setattr(self, key, values[keys.index(key)])
+        else:
+            values = [ getattr(self,key) for key in keys[1:] if hasattr(self, key)]
             try:
-                attrs.insert(0,self.newvar) # Prepend with alias
+                values.insert(0,self.newvar) 
             except AttributeError:
-                attrs.insert(0,self.basevar)
-            self.name = '.'.join(attrs)
+                values.insert(0,self.basevar)
+            self.name = '_'.join(values)
+        
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
     def downloadraw(self):
@@ -113,7 +118,7 @@ class SurfaceObservations(object):
         if not hasattr(self, 'timemethod'): # Attribute is only missing if it has not been given upon initialization.
             self.timemethod = '1D'
         if not hasattr(self, 'spacemethod'):
-            self.spacemethod = '0.25_degrees'
+            self.spacemethod = '0.25-degrees'
         
         self.tmin = pd.Series(self.array.time).min().strftime('%Y-%m-%d')
         self.tmax = pd.Series(self.array.time).max().strftime('%Y-%m-%d')
@@ -174,15 +179,20 @@ class Climatology(object):
     
     def construct_name(self, force = False):
         """
-        Name and filepath are based on the base variable and the relevant attributes (if present)
-        Uses the timemethod and spacemethod attributes
+        Name and filepath are based on the base variable (or new variable) and the relevant attributes (if present).
+        The second position in the name is just 'clim' for easy recognition in the directories.
         """
-        if (not hasattr(self, 'name')) or (force):
-            keys = ['tmin','tmax','timemethod','spacemethod', 'daysbefore', 'daysafter', 'climmethod']
-            attrs = [ str(getattr(self,x)) for x in keys if hasattr(self, x)]
-            attrs.insert(0,'clim') # Prepend with clim
-            attrs.insert(0,self.var) # Prepend with alias
-            self.name = '.'.join(attrs)
+        keys = ['var','tmin','tmax','timemethod','spacemethod', 'daysbefore', 'daysafter', 'climmethod']
+        if hasattr(self, 'name') and (not force):
+            values = self.name.split(sep = '_')
+            values.pop(1)
+            for key in keys:
+                setattr(self, key, values[keys.index(key)])
+        else:
+            values = [ getattr(self,key) for key in keys if hasattr(self, key)]
+            values.insert(1,'clim') # at the second spot, after the basevar
+            self.name = '_'.join(values)
+        
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
         
     def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, daily_obs_array = None):
@@ -195,21 +205,24 @@ class Climatology(object):
         For non-daily aggregations the procedure is the same, as the climatology needs to be still derived from daily values. 
         Therefore the amount of aggregated dats is inferred.
         """
-        keys = ['tmin','tmax','timemethod','spacemethod']
+        
+        keys = ['tmin','tmax','timemethod','spacemethod', 'daysbefore', 'daysafter']
         for key in keys:
             try:
                 setattr(self, key, getattr(obs, key))
             except AttributeError:
                 setattr(self, key, locals()[key])
-        self.daysbefore = daysbefore
-        self.daysafter = daysafter
+
         if mean:
             self.climmethod = 'mean'
         else:
             self.climmethod = 'q' + str(quant)
         
+        # Overwrites possible nonsense attributes
+        self.construct_name(force = False)
+                
         try:
-            self.loadlocalclim()
+            self.clim = xr.open_dataarray(self.filepath)
             print('climatology directly loaded')
         except OSError:
             self.ndayagg = (obs.array.time.values[1] - obs.array.time.values[0]).astype('timedelta64[D]').item().days
@@ -256,10 +269,6 @@ class Climatology(object):
             
             self.clim = xr.concat(results, dim = 'doy')
     
-    def loadlocalclim(self):
-        
-        self.construct_name()
-        self.clim = xr.open_dataarray(self.filepath)
     
     def savelocalclim(self):
         

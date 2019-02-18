@@ -206,7 +206,7 @@ class Forecast(object):
             self.array.coords['number'] = np.arange(0,n_members, dtype = 'int16')
         # Standard methods of the processed files.
         self.timemethod = '1D'
-        self.spacemethod = '0.38_degrees'
+        self.spacemethod = '0.38-degrees'
         
     def aggregatetime(self, freq = 'w' , method = 'mean', keep_leadtime = False):
         """

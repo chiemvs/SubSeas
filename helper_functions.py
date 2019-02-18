@@ -73,7 +73,7 @@ def agg_space(array, orlats, orlons, step, skipna = False, method = 'mean', by_d
     # Prepare the coordinates of stack dimension and replace the array
     grouped['latlongroup'] = newlatlon        
     array = grouped.unstack('latlongroup')
-    spacemethod = '_'.join([str(step), 'cells', method]) if not by_degree else '_'.join([str(step), 'degrees', method])
+    spacemethod = '-'.join([str(step), 'cells', method]) if not by_degree else '-'.join([str(step), 'degrees', method])
     return(array, spacemethod)
 
 def agg_time(array, freq = 'w' , method = 'mean'):
@@ -83,7 +83,7 @@ def agg_time(array, freq = 'w' , method = 'mean'):
     """
     f = getattr(array.resample(time = freq, closed = 'left', label = 'left'), method) # timestamp is left and can be changed with label = 'right'
     array = f('time', keep_attrs=True, skipna = False) 
-    timemethod = '_'.join([freq,method])
+    timemethod = '-'.join([freq,method])
     return(array, timemethod)
 
 def unitconversionfactors(xunit, yunit):

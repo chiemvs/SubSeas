@@ -137,41 +137,63 @@ class Experiment(object):
         return(result)
 
 """
-Mean temperature benchmarks.
+Max temperature benchmarks.
 """
-# Calling of the class        
+## Calling of the class        
 test1 = Experiment(expname = 'test1', basevar = 'tx', cycle = '41r1', season = 'JJA', method = 'max', timeaggregations = ['1D', '2D', '3D', '4D', '7D'], spaceaggregations = [0.25, 0.75, 1.5, 3], quantiles = [0.5, 0.9, 0.95])
 test1.setuplog()
-#test1.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1996-05-30','tmax':'2006-08-31'})
-#test1.iterateaggregations(func = 'match', column = 'booksname')
-#test1.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2010-08-31'})
-#test1.iterateaggregations(func = 'score', column = 'scores')
+##test1.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1996-05-30','tmax':'2006-08-31'})
+##test1.iterateaggregations(func = 'match', column = 'booksname')
+##test1.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2010-08-31'})
+##test1.iterateaggregations(func = 'score', column = 'scores')
+#
+#scoreseries = test1.log.loc[:,('scores',slice(None,None,None))].stack(level = -1)['scores']
+#temp = pd.concat(scoreseries.tolist(), keys = scoreseries.index)
+#temp.index.set_names(scoreseries.index.names, level = [0,1,2], inplace=True)
+#skill = 1 - temp['rawbrier'] / temp['climbrier'] # Nice one to write out.
+##skill.to_hdf('/nobackup/users/straaten/results/test1skill.h5', key = 'skill')
+#
+## Plotting
+#skill.loc[(0.75,slice(None), 0.9)].unstack(level = [0,1,2]).plot()
+#skill.xs(0.5, level = 'quantile', drop_level = False).unstack(level = [0,1,2]).plot()
+#
+## Small test as a forecast horizon
+#def lastconsecutiveabovezero(series):
+#    gtzero = series.gt(0)
+#    if not gtzero.any():
+#        leadtime = 0
+#    elif gtzero.all():
+#        leadtime = gtzero.index.get_level_values(level = -1)[-1]
+#    else:
+#        tupfirst = gtzero.idxmin()
+#        locfirst = gtzero.index.get_loc(tupfirst)
+#        tup = gtzero.index.get_values()[locfirst - 1]
+#        leadtime = tup[-1]
+#    return(leadtime)
+#
+#zeroskillleadtime = skill.groupby(['spaceagg', 'timeagg', 'quantile']).apply(func = lastconsecutiveabovezero)
 
-scoreseries = test1.log.loc[:,('scores',slice(None,None,None))].stack(level = -1)['scores']
-temp = pd.concat(scoreseries.tolist(), keys = scoreseries.index)
-temp.index.set_names(scoreseries.index.names, level = [0,1,2], inplace=True)
-skill = 1 - temp['rawbrier'] / temp['climbrier'] # Nice one to write out.
-#skill.to_hdf('/nobackup/users/straaten/results/test1skill.h5', key = 'skill')
+"""
+Mean temperature benchmarks
+"""
 
-# Plotting
-skill.loc[(0.75,slice(None), 0.9)].unstack(level = [0,1,2]).plot()
-skill.xs(0.5, level = 'quantile', drop_level = False).unstack(level = [0,1,2]).plot()
+# Calling of the class        
+test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
+                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66])
+test2.setuplog()
+#test2.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1995-11-30','tmax':'2015-02-28'})
+#test2.iterateaggregations(func = 'match', column = 'booksname')
+#test2.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
+#test2.iterateaggregations(func = 'score', column = 'scores')
 
-# Small test as a forecast horizon
-def lastconsecutiveabovezero(series):
-    gtzero = series.gt(0)
-    if not gtzero.any():
-        leadtime = 0
-    elif gtzero.all():
-        leadtime = gtzero.index.get_level_values(level = -1)[-1]
-    else:
-        tupfirst = gtzero.idxmin()
-        locfirst = gtzero.index.get_loc(tupfirst)
-        tup = gtzero.index.get_values()[locfirst - 1]
-        leadtime = tup[-1]
-    return(leadtime)
+#def replace(string, first, later, number = None):
+#    if not number is None:
+#        return(string.replace(first, later, number))
+#    else:
+#        return(string.replace(first, later))
 
-zeroskillleadtime = skill.groupby(['spaceagg', 'timeagg', 'quantile']).apply(func = lastconsecutiveabovezero)
+#test2.log['obsname'] = test2.log['obsname'].apply(replace, args = ('_','-'))
+#test2.log['obsname'] = test2.log['obsname'].apply(replace, args = ('.','_', 4))
 
 """
 4 years summer temperatures 1995-1998. In Forecast domain. 

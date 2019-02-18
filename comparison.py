@@ -94,7 +94,7 @@ class ForecastToObsAlignment(object):
                             print('Time already aligned')
                     except AttributeError:
                         print('Aligning time aggregation')
-                        freq, method = obstimemethod.split('_')
+                        freq, method = obstimemethod.split('-')
                         forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True)
                 
                 if space:
@@ -109,7 +109,7 @@ class ForecastToObsAlignment(object):
                             print('Space already aligned')
                     except AttributeError:
                         print('Aligning space aggregation')
-                        step, what, method = obsspacemethod.split('_')
+                        step, what, method = obsspacemethod.split('-')
                         forecast.aggregatespace(step = float(step), method = method, by_degree = (what == 'degrees'))
                       
     def force_new_variable(self, array):
