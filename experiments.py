@@ -53,12 +53,12 @@ class Experiment(object):
         else:
             print('No log to save')
     
-    def iterateaggregations(self, func, column, kwargs = {}):
+    def iterateaggregations(self, func, column, overwrite = False, kwargs = {}):
         """
         Wrapper that calls the function with a specific spaceagg and timeagg and writes the returns of the function to the column if a name was given
         """
         for spaceagg, timeagg in itertools.product(self.spaceaggregations,self.timeaggregations):
-            if self.log.loc[(spaceagg, timeagg),column].isna().any():
+            if self.log.loc[(spaceagg, timeagg),column].isna().any() or overwrite:
                 f = getattr(self, func)
                 ret = f(spaceagg, timeagg, **kwargs)
                 if (ret is not None):
@@ -80,11 +80,11 @@ class Experiment(object):
         obs.savechanges()
         return(obs.name)
     
-    def match(self, spaceagg, timeagg):
+    def match(self, spaceagg, timeagg, obscol = 'obsname'):
         """
         Writes the intermediate files. And returns the (possibly appended) booksname
         """
-        obs = SurfaceObservations(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('obsname','')]})
+        obs = SurfaceObservations(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),(obscol,'')]})
         obs.load()
         alignment = ForecastToObsAlignment(season = self.season, observations=obs, cycle=self.cycle)
         alignment.find_forecasts()
@@ -140,8 +140,8 @@ class Experiment(object):
 Max temperature benchmarks.
 """
 ## Calling of the class        
-test1 = Experiment(expname = 'test1', basevar = 'tx', cycle = '41r1', season = 'JJA', method = 'max', timeaggregations = ['1D', '2D', '3D', '4D', '7D'], spaceaggregations = [0.25, 0.75, 1.5, 3], quantiles = [0.5, 0.9, 0.95])
-test1.setuplog()
+#test1 = Experiment(expname = 'test1', basevar = 'tx', cycle = '41r1', season = 'JJA', method = 'max', timeaggregations = ['1D', '2D', '3D', '4D', '7D'], spaceaggregations = [0.25, 0.75, 1.5, 3], quantiles = [0.5, 0.9, 0.95])
+#test1.setuplog()
 ##test1.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1996-05-30','tmax':'2006-08-31'})
 ##test1.iterateaggregations(func = 'match', column = 'booksname')
 ##test1.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2010-08-31'})
@@ -174,15 +174,19 @@ test1.setuplog()
 #zeroskillleadtime = skill.groupby(['spaceagg', 'timeagg', 'quantile']).apply(func = lastconsecutiveabovezero)
 
 """
-Mean temperature benchmarks
+Mean temperature benchmarks. Observations split into two decades. Otherwise potential memory error in matching.
 """
 
 # Calling of the class        
 test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
                    timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66])
 test2.setuplog()
-#test2.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1995-11-30','tmax':'2015-02-28'})
-#test2.iterateaggregations(func = 'match', column = 'booksname')
+#test2.log = test2.log.assign(**{'obsname2':None}) # Extra observation column.
+test2.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1995-11-30','tmax':'2005-02-28'})
+test2.iterateaggregations(func = 'prepareobs', column = 'obsname2', kwargs = {'tmin':'2005-03-01','tmax':'2015-02-28'})
+
+#test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
+#test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname2'}, overwrite = True) # Replaces with updated books name.
 #test2.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
 #test2.iterateaggregations(func = 'score', column = 'scores')
 
