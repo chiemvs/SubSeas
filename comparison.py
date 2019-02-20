@@ -12,7 +12,7 @@ import xarray as xr
 import pandas as pd
 import dask.dataframe as dd
 from observations import SurfaceObservations, EventClassification
-from forecasts import Forecast
+#from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
 
 class ForecastToObsAlignment(object):
@@ -270,10 +270,78 @@ class Comparison(object):
         Computes simple predictors like. Groups the dask dataframe per location and leadtime, and then pushes these groups to an apply function. In this apply a model fitting function can be called which uses the predictor columns and the observation column, the function currently returns a Dataframe with parametric coefficients. Which are stored in-memory with the groupers as multi-index.
         """
         from sklearn.linear_model import LinearRegression
+        from scipy import optimize
         
-        def fitngr(data):
-            reg = LinearRegression().fit(data['ensmean'].values.reshape(-1,1), data['observation'].values.reshape(-1,1))
-            return(pd.DataFrame({'intercept':reg.intercept_[0], 'slope':reg.coef_[0]}))
+        def cv_fit(data, nfolds, fitfunc, modelcoefs = ['a0','a1']):
+            """
+            Acts per group (predictors should already be constructed). Calls a fitting function in a time-cross-validation fashion. Supplies data as (nfolds - 1)/nfolds for training, and writes the returned coeficients by the model to the remaining 1/nfolds part (where the prediction will be made) as a dataframe
+            """
+            
+            nperfold = len(data) // nfolds
+            foldindex = range(1,nfolds+1)
+            
+            # Pre-allocating a structure for the dataframe.
+            coefs = pd.DataFrame(data = np.nan, index = data['time'], columns = modelcoefs)
+                        
+            # Need inverse of the data index to select train. For loc this can be np.setdiff1d or df.index.difference(indexyoudontwant).
+            # Question is: what kind of index is present within the groups?
+            # Stored by increasing time enables the cv to be done by integer location. (assuming equal group size)
+            full_ind = np.arange(len(coefs))
+            
+            for fold in foldindex:
+                if (fold == foldindex[-1]):
+                    test_ind = np.arange((fold - 1)*nperfold, len(coefs))
+                else:
+                    test_ind = np.arange(((fold - 1)*nperfold),(fold*nperfold))
+
+                train_ind = np.setdiff1d(full_ind, test_ind)
+                
+                # Calling of the fitting function on the training Should return an 1d array with the indices (same size as modelcoefs)
+                fitted_coef = fitfunc(data.iloc[train_ind,:])
+                
+                # Write to the frame with time index. Should the fold be prepended as extra level in a multi-index?
+                coefs.iloc[test_ind,:] = fitted_coef
+                         
+            return(coefs)
+        
+        def fit_ngr(train):
+            """
+            Uses CRPS-minimization for the fitting.
+            Model is specified as N(a0 + a1 * mu_ens, exp(b0 + b1 * sig_ens)) 
+            So a logarithmic transformation on sigma to keep those positive.
+            Returns an array with 4 model coefs.
+            """
+            
+            def crpscostfunc(parameters, mu_ens, std_ens, obs):
+                """
+                Cost function returns the mean crps (to be independent from the amount of observations) and also the analytical gradient, 
+                translated from sigma and mu to the model parameters,
+                for better optimization (need not be approximated)
+                """
+                mu = parameters[0] + parameters[1] * mu_ens
+                logstd = parameters[2] + parameters[3] * std_ens
+                std = np.exp(logstd)
+                crps, grad = ps.crps_gaussian(obs, mu, std, grad = True) # grad is returned as np.array([dmu, dsig])
+                dcrps_d0 = grad[0,:]
+                dcrps_d1 = grad[0,:] * mu_ens
+                dcrps_d2 = grad[1,:] * std
+                dcrps_d3 = grad[1,:] * std * std_ens
+                return(crps.mean(), np.array([dcrps_d0.mean(), dcrps_d1.mean(), dcrps_d2.mean(), dcrps_d3.mean()])) # obs can be vector.
+
+            res = optimize.minimize(crpscostfunc, x0 = [0,1,0.5,0.2], jac = True,
+                            args=(train['ensmean'], train['ensstd'], train['observation']), 
+                            method='L-BFGS-B', bounds = [(-20,20),(0,10),(-10,10),(-10,10)])
+                             
+            return(res.x)
+
+        def fit_logistic(train):
+            """
+            Uses L2-loss minimization to fit a logistic model
+            The model is specified as ln(p/(1-p)) = a0 + a1 * raw_pop + a2 * mu_ens
+            """
+            clf = LogisticRegression(solver='liblinear').fit(X = pd.DataFrame({'pi':train['pi'], 'ens_mean':train['forecast'].mean(axis = 1)}), y = train['observation'])
+            
+            return(clf.intercept_.append(clf.coef_))
         
         def cv_fitlinear(data, nfolds):
             """
@@ -356,3 +424,8 @@ class Comparison(object):
         
         grouped = delayed.groupby(groupers)
         return(grouped.mean()[['rawbrier','climbrier']].compute())
+        
+
+ddtx = dd.read_hdf('/home/jsn295/ownCloud/Documents/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
+
+self = Comparison(alignedobject = ddtx)
