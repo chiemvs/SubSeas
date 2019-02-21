@@ -11,8 +11,9 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import dask.dataframe as dd
-from observations import SurfaceObservations, EventClassification
-#from forecasts import Forecast
+import itertools
+from observations import SurfaceObservations, Climatology, EventClassification
+from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
 
 class ForecastToObsAlignment(object):
@@ -242,7 +243,9 @@ class Comparison(object):
     """
     All based on the dataframe format. No arrays anymore. In this class the aligned object is grouped in multiple ways to fit models in a cross-validation sense. 
     To make predictions and to score, raw, post-processed and climatological forecasts
-    Potentially I can set an index like time in any operation where time becomes unique to speed up lookups.
+    The type of scoring and the type of prediction is inferred from whether certain columns are present
+    For binary (event) observations, there already is a 'pi' column, inferred on-the-grid during matching from the raw members.
+    For continuous variables, the quantile of the climatology is important, this will determine the event.
     """
     
     def __init__(self, alignedobject, climatology = None):
@@ -265,16 +268,24 @@ class Comparison(object):
                 pass
             
             
-    def fit_pp_models(self, groupers = ['leadtime','latitude','longitude'], nfolds = 1):
+    def fit_pp_models(self, fitfuncname, groupers = ['leadtime','latitude','longitude'], nfolds = 3):
         """
-        Computes simple predictors like. Groups the dask dataframe per location and leadtime, and then pushes these groups to an apply function. In this apply a model fitting function can be called which uses the predictor columns and the observation column, the function currently returns a Dataframe with parametric coefficients. Which are stored in-memory with the groupers as multi-index.
+        Computes simple predictors like ensmean and ensstd (next to the optional raw 'pi' for an event variable). 
+        Groups the dask dataframe with the groupers, and then pushes these groups to an apply function. 
+        In this apply a model fitting function is called which uses the predictor columns and the observation column.
+        fitfuncname has to be a string because fitting functions are currently defined within this method
         """
-        from sklearn.linear_model import LinearRegression
+        from sklearn.linear_model import LogisticRegression
         from scipy import optimize
+        import properscoring as ps
         
-        def cv_fit(data, nfolds, fitfunc, modelcoefs = ['a0','a1']):
+        def cv_fit(data, nfolds, fitfunc, modelcoefs):
             """
-            Acts per group (predictors should already be constructed). Calls a fitting function in a time-cross-validation fashion. Supplies data as (nfolds - 1)/nfolds for training, and writes the returned coeficients by the model to the remaining 1/nfolds part (where the prediction will be made) as a dataframe
+            Acts per group (predictors should already be constructed). Calls a fitting function 
+            in a time-cross-validation fashion. Supplies data as (nfolds - 1)/nfolds for training, 
+            and writes the returned coeficients by the model to the remaining 1/nfolds part 
+            (where the prediction will be made) as a dataframe. The returned Dataframe is indexed with time
+            Which combines with the groupers to a multi-index.
             """
             
             nperfold = len(data) // nfolds
@@ -283,9 +294,10 @@ class Comparison(object):
             # Pre-allocating a structure for the dataframe.
             coefs = pd.DataFrame(data = np.nan, index = data['time'], columns = modelcoefs)
                         
-            # Need inverse of the data index to select train. For loc this can be np.setdiff1d or df.index.difference(indexyoudontwant).
-            # Question is: what kind of index is present within the groups?
-            # Stored by increasing time enables the cv to be done by integer location. (assuming equal group size)
+            # Need inverse of the data test index to select train. For loc is done through np.setdiff1d
+            # Stored by increasing time enables the cv to be done by integer location. (assuming equal group size). 
+            # Times are ppossibly non-unique when also fitting to a spatial pool
+            # Later we remove duplicate times (if present)
             full_ind = np.arange(len(coefs))
             
             for fold in foldindex:
@@ -301,8 +313,9 @@ class Comparison(object):
                 
                 # Write to the frame with time index. Should the fold be prepended as extra level in a multi-index?
                 coefs.iloc[test_ind,:] = fitted_coef
-                         
-            return(coefs)
+            
+            # Returning only the unique time indices but this eases the wrapping and joining of the grouped results later on.
+            return(coefs[~coefs.index.duplicated(keep='first')])
         
         def fit_ngr(train):
             """
@@ -338,54 +351,60 @@ class Comparison(object):
             """
             Uses L2-loss minimization to fit a logistic model
             The model is specified as ln(p/(1-p)) = a0 + a1 * raw_pop + a2 * mu_ens
+            so p = exp(a0 + a1 * raw_pop + a2 * mu_ens) / (1 + exp(a0 + a1 * raw_pop + a2 * mu_ens))
             """
-            clf = LogisticRegression(solver='liblinear').fit(X = pd.DataFrame({'pi':train['pi'], 'ens_mean':train['forecast'].mean(axis = 1)}), y = train['observation'])
+            X = train[['pi','ensmean']]
+            y = train['observation']
+            clf = LogisticRegression(solver='liblinear')
+            clf.fit(X = X, y = y)
             
-            return(clf.intercept_.append(clf.coef_))
+            return(np.concatenate([clf.intercept_, clf.coef_.squeeze()]))
         
-        def cv_fitlinear(data, nfolds):
-            """
-            Fits a linear model. If nfolds = 1 it uses all the data, otherwise it is split up. This cross validation is done here because addition of a column to the full ungrouped frame is too expensive, also the amount of available times can differ per leadtime and due to NA's the field size is not always equal. Therefore, the available amount is computed here.
-            TODO: needs to be expanded to NGR and Logistic regression for the PoP. Plus fitting on 2/3 of the data.
-            """
-            
-            modelcoefs = ['intercept','slope']
-            nperfold = len(data) // nfolds
-            foldindex = range(1,nfolds+1)
-            
-            # Pre-allocating a structure.
-            coefs = np.full((nfolds,len(modelcoefs)), np.nan)
-            
-            for fold in foldindex:
-                if (fold == foldindex[-1]):
-                    train = data.iloc[((fold - 1)*nperfold):,:]
-                else:
-                    train = data.iloc[((fold - 1)*nperfold):(fold*nperfold),:]
-                
-                # Fitting of the linear model
-                reg = LinearRegression().fit(train['ensmean'].values.reshape(-1,1), train['observation'].values.reshape(-1,1))
-                coefs[fold-1,:] = [reg.intercept_[0], reg.coef_[0]]
-            
-            models = pd.DataFrame(data = coefs, index = pd.Index(foldindex, name = 'fold'), columns = modelcoefs)            
-            
-            return(models)
+        # Set some function attributes
+        fit_logistic.model_coefs = ['a0','a1','a2']
+        fit_ngr.model_coefs = ['a0','a1','b0','b1']
+        fitfunc = locals()[fitfuncname]
+        fitreturns = dict(itertools.product(fitfunc.model_coefs, ['float32']))
         
-        # Computation of predictands for the linear models.
-        # There are some negative precipitation values in .iloc[27:28,:]
+        # Computation of predictands for the models.
         self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
         self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
         
         grouped = self.frame.groupby(groupers)
-        #self.fits = grouped.apply(fitngr, meta = {'intercept':'float32', 'slope':'float32'}).compute() #
         
-        self.fits = grouped.apply(cv_fitlinear, meta = {'intercept':'float32', 'slope':'float32'}, **{'nfolds':nfolds}).compute()
-        
+        self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 'fitfunc':fitfunc, 'modelcoefs':fitfunc.model_coefs}).compute()
+        self.fits.reset_index(inplace = True)
+        self.fitgroupers = groupers
         
     def make_pp_forecast(self):
         """
-        Adds either forecast members or a probability distribution
+        Makes a probabilistic forecast based on already fitted models. 
+        Works by joining the fitted parameters (indexed by the fitting groupers and time) to the dask frame.
+        The event for which we forecast is already present as an observed event variable. Or it is the exceedence of the quantile beloning to the climatology.
+        The forecast is made with the parametric model for the logistic regression, or a scipy implementation of the normal model
+        TODO: perhaps predfunc should be a method of a model class that is also used for fitting and in the helper functions?
         """
-    
+        from scipy.stats import norm
+        
+        joincolumns = ['time']
+        joincolumns.extend(self.fitgroupers)
+        
+        delayed = self.frame.merge(self.fits, on = joincolumns, how = 'left')
+        
+        if ('pi' in self.frame.columns) and (not hasattr(self.quantile)):
+            # In this case we have an event variable and fitted a logistic model. And predict with that parametric model.
+            def predfunc(params, pi, mu_ens):
+                #p = exp(a0 + a1 * raw_pop + a2 * mu_ens) / (1 + exp(a0 + a1 * raw_pop + a2 * mu_ens))
+                return(None)
+            delayed.map_partitions(meta = None, predfunc)
+            
+        elif (not 'pi' in self.frame.columns) and (hasattr(self.quantile)):
+            # in this case continuous and we predict exceedence
+            def predfunc(params, pi, mu_ens):
+                norm.cdf()
+                return(None)
+        else:
+            raise AttributeError('Check what you are doing. Quantile found for binary variable or continuous variable has raw pi')
 
     def add_custom_groups(self):
         """
@@ -426,6 +445,15 @@ class Comparison(object):
         return(grouped.mean()[['rawbrier','climbrier']].compute())
         
 
-ddtx = dd.read_hdf('/home/jsn295/ownCloud/Documents/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
+#ddtx = dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
+#climatology = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_3D-max_1.5-degrees-max_5_5_q0.9'})
+#climatology.localclim()
+#self = Comparison(alignedobject = ddtx, climatology=climatology.clim)
+#self.fit_pp_models(fitfuncname = 'fit_ngr', groupers = 'leadtime')
 
-self = Comparison(alignedobject = ddtx)
+#ddpop = dd.read_hdf('/nobackup/users/straaten/match/pop_DJF_41r1_1D_0.25_degrees_8b505d0f2d024bf086054fdf7629e8ed.h5', key = 'intermediate')
+#climatology = Climatology('pop', **{'name':'pop_clim_1980-01-01_2017-12-31_1D_0.25-degrees_5_5_mean'})
+#climatology.localclim()
+#self = Comparison(alignedobject = ddpop, climatology=climatology.clim)
+#self.fit_pp_models(fitfuncname = 'fit_logistic', groupers = 'leadtime')
+
