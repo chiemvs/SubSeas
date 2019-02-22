@@ -15,6 +15,7 @@ import itertools
 from observations import SurfaceObservations, Climatology, EventClassification
 from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
+from fitting import NGR, Logistic
 
 class ForecastToObsAlignment(object):
     """
@@ -268,16 +269,13 @@ class Comparison(object):
                 pass
             
             
-    def fit_pp_models(self, fitfuncname, groupers = ['leadtime','latitude','longitude'], nfolds = 3):
+    def fit_pp_models(self, pp_model, groupers = ['leadtime','latitude','longitude'], nfolds = 3):
         """
         Computes simple predictors like ensmean and ensstd (next to the optional raw 'pi' for an event variable). 
         Groups the dask dataframe with the groupers, and then pushes these groups to an apply function. 
         In this apply a model fitting function is called which uses the predictor columns and the observation column.
-        fitfuncname has to be a string because fitting functions are currently defined within this method
+        pp_model is an object from the fitting script. It has a fit method, returning parameters and a predict method.
         """
-        from sklearn.linear_model import LogisticRegression
-        from scipy import optimize
-        import properscoring as ps
         
         def cv_fit(data, nfolds, fitfunc, modelcoefs):
             """
@@ -317,94 +315,43 @@ class Comparison(object):
             # Returning only the unique time indices but this eases the wrapping and joining of the grouped results later on.
             return(coefs[~coefs.index.duplicated(keep='first')])
         
-        def fit_ngr(train):
-            """
-            Uses CRPS-minimization for the fitting.
-            Model is specified as N(a0 + a1 * mu_ens, exp(b0 + b1 * sig_ens)) 
-            So a logarithmic transformation on sigma to keep those positive.
-            Returns an array with 4 model coefs.
-            """
-            
-            def crpscostfunc(parameters, mu_ens, std_ens, obs):
-                """
-                Cost function returns the mean crps (to be independent from the amount of observations) and also the analytical gradient, 
-                translated from sigma and mu to the model parameters,
-                for better optimization (need not be approximated)
-                """
-                mu = parameters[0] + parameters[1] * mu_ens
-                logstd = parameters[2] + parameters[3] * std_ens
-                std = np.exp(logstd)
-                crps, grad = ps.crps_gaussian(obs, mu, std, grad = True) # grad is returned as np.array([dmu, dsig])
-                dcrps_d0 = grad[0,:]
-                dcrps_d1 = grad[0,:] * mu_ens
-                dcrps_d2 = grad[1,:] * std
-                dcrps_d3 = grad[1,:] * std * std_ens
-                return(crps.mean(), np.array([dcrps_d0.mean(), dcrps_d1.mean(), dcrps_d2.mean(), dcrps_d3.mean()])) # obs can be vector.
-
-            res = optimize.minimize(crpscostfunc, x0 = [0,1,0.5,0.2], jac = True,
-                            args=(train['ensmean'], train['ensstd'], train['observation']), 
-                            method='L-BFGS-B', bounds = [(-20,20),(0,10),(-10,10),(-10,10)])
-                             
-            return(res.x)
-
-        def fit_logistic(train):
-            """
-            Uses L2-loss minimization to fit a logistic model
-            The model is specified as ln(p/(1-p)) = a0 + a1 * raw_pop + a2 * mu_ens
-            so p = exp(a0 + a1 * raw_pop + a2 * mu_ens) / (1 + exp(a0 + a1 * raw_pop + a2 * mu_ens))
-            """
-            X = train[['pi','ensmean']]
-            y = train['observation']
-            clf = LogisticRegression(solver='liblinear')
-            clf.fit(X = X, y = y)
-            
-            return(np.concatenate([clf.intercept_, clf.coef_.squeeze()]))
-        
-        # Set some function attributes
-        fit_logistic.model_coefs = ['a0','a1','a2']
-        fit_ngr.model_coefs = ['a0','a1','b0','b1']
-        fitfunc = locals()[fitfuncname]
-        fitreturns = dict(itertools.product(fitfunc.model_coefs, ['float32']))
-        
         # Computation of predictands for the models.
         self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
-        self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
+        if pp_model.need_std:
+            self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
+        
+        fitfunc = getattr(pp_model, 'fit')
+        fitreturns = dict(itertools.product(pp_model.model_coefs, ['float32']))
         
         grouped = self.frame.groupby(groupers)
         
-        self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 'fitfunc':fitfunc, 'modelcoefs':fitfunc.model_coefs}).compute()
+        self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 'fitfunc':fitfunc, 'modelcoefs':pp_model.model_coefs}).compute()
         self.fits.reset_index(inplace = True)
+        self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']])
         self.fitgroupers = groupers
         
-    def make_pp_forecast(self):
+    def make_pp_forecast(self, pp_model):
         """
         Makes a probabilistic forecast based on already fitted models. 
         Works by joining the fitted parameters (indexed by the fitting groupers and time) to the dask frame.
         The event for which we forecast is already present as an observed event variable. Or it is the exceedence of the quantile beloning to the climatology.
-        The forecast is made with the parametric model for the logistic regression, or a scipy implementation of the normal model
-        TODO: perhaps predfunc should be a method of a model class that is also used for fitting and in the helper functions?
+        The forecast is made with the parametric model for the logistic regression, or a scipy implementation of the normal model, both contained in the fitting classes
         """
-        from scipy.stats import norm
         
-        joincolumns = ['time']
-        joincolumns.extend(self.fitgroupers)
+        joincolumns = ['time'] + self.fitgroupers
         
-        delayed = self.frame.merge(self.fits, on = joincolumns, how = 'left')
+        self.frame = self.frame.merge(self.fits, on = joincolumns, how = 'left')
         
-        if ('pi' in self.frame.columns) and (not hasattr(self.quantile)):
+        predfunc = getattr(pp_model, 'predict')
+        
+        if isinstance(pp_model, Logistic):
             # In this case we have an event variable and fitted a logistic model. And predict with that parametric model.
-            def predfunc(params, pi, mu_ens):
-                #p = exp(a0 + a1 * raw_pop + a2 * mu_ens) / (1 + exp(a0 + a1 * raw_pop + a2 * mu_ens))
-                return(None)
-            delayed.map_partitions(meta = None, predfunc)
-            
-        elif (not 'pi' in self.frame.columns) and (hasattr(self.quantile)):
-            # in this case continuous and we predict exceedence
-            def predfunc(params, pi, mu_ens):
-                norm.cdf()
-                return(None)
+            self.frame['pi_cor'] = self.frame.map_partitions(predfunc, meta = ('pi_cor','float32'))
         else:
-            raise AttributeError('Check what you are doing. Quantile found for binary variable or continuous variable has raw pi')
+            # in this case continuous and we predict exceedence, of the climatological quantile. So we need an extra merge.
+            self.frame['doy'] = self.frame['time'].dt.dayofyear
+            self.frame = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
+            self.frame['pi_cor'] = self.frame.map_partitions(predfunc, **{'quant_col':'climatology'}, meta = ('pi_cor','float32'))
 
     def add_custom_groups(self):
         """
@@ -417,13 +364,16 @@ class Comparison(object):
         Asks a list of groupers, could use custom groupers. Also able to get climatological exceedence if climatology was supplied at initiazion.
         """
         # Merging with climatological file. In case of quantile scoring for the exceeding quantiles. In case of an already e.g. pop for the climatological probability.
-        self.frame['doy'] = self.frame['time'].dt.dayofyear
-        delayed = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
+        if not ('climatology' in self.frame.columns):
+            self.frame['doy'] = self.frame['time'].dt.dayofyear
+            delayed = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
+        else:
+            delayed = self.frame
         
-        if 'pi' in self.frame.columns: # This column comes from the match-and-write, when it is present we are dealing with an already binary observation.
-            delayed['rawbrier'] = (delayed['pi'] - delayed['observation'])**2
-            delayed['climbrier'] = (delayed['climatology'] - delayed['observation'])**2
-        else: # In this case quantile scoring.
+        if 'pi' in delayed.columns: # This column comes from the match-and-write, when it is present we are dealing with an already binary observation.
+            obscolname = 'observation'
+            delayed['climbrier'] = (delayed['climatology'] - delayed[obscolname])**2
+        else: # In this case quantile scoring. and pi needs creation
             # Boolean comparison cannot be made in one go. because it does not now how to compare N*members agains the climatology of N
             boolcols = list()
             for member in delayed['forecast'].columns:
@@ -432,14 +382,13 @@ class Comparison(object):
                 boolcols.append(name)
             delayed['pi'] = delayed[boolcols].sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
             delayed['oi'] = delayed['observation'] > delayed['climatology']
-            delayed['rawbrier'] = (delayed['pi'] - delayed['oi'])**2
-            delayed['climbrier'] = ((1 - self.quantile) - delayed['oi'])**2  # Add the climatological score. use self.quantile.
-        
-        
-        # threshold base scoring OLD
-        #delayed = self.frame
-        #delayed['pi'] = (delayed['forecast'] > threshold).sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
-        #delayed['oi'] = delayed['observation'] > threshold  
+            obscolname = 'oi'
+            delayed['climbrier'] = ((1 - self.quantile) - delayed[obscolname])**2
+            
+        delayed['rawbrier'] = (delayed['pi'] - delayed[obscolname])**2
+          # Add the climatological score. use self.quantile.
+        if 'pi_cor' in self.frame.columns:
+            delayed['corbrier'] = (delayed['pi_cor'] - delayed[obscolname])**2        
         
         grouped = delayed.groupby(groupers)
         return(grouped.mean()[['rawbrier','climbrier']].compute())
@@ -449,11 +398,13 @@ class Comparison(object):
 #climatology = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_3D-max_1.5-degrees-max_5_5_q0.9'})
 #climatology.localclim()
 #self = Comparison(alignedobject = ddtx, climatology=climatology.clim)
-#self.fit_pp_models(fitfuncname = 'fit_ngr', groupers = 'leadtime')
+#self.fit_pp_models(pp_model= NGR(), groupers = ['leadtime'])
+#self.make_pp_forecast(pp_model = NGR())
 
 #ddpop = dd.read_hdf('/nobackup/users/straaten/match/pop_DJF_41r1_1D_0.25_degrees_8b505d0f2d024bf086054fdf7629e8ed.h5', key = 'intermediate')
 #climatology = Climatology('pop', **{'name':'pop_clim_1980-01-01_2017-12-31_1D_0.25-degrees_5_5_mean'})
 #climatology.localclim()
 #self = Comparison(alignedobject = ddpop, climatology=climatology.clim)
-#self.fit_pp_models(fitfuncname = 'fit_logistic', groupers = 'leadtime')
+#self.fit_pp_models(pp_model = Logistic(), groupers = ['leadtime'])
+#self.make_pp_forecast(pp_model = Logistic())
 
