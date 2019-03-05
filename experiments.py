@@ -13,7 +13,7 @@ import pandas as pd
 import dask.dataframe as dd
 from observations import SurfaceObservations, Climatology, EventClassification
 #from forecasts import Forecast
-from comparison import ForecastToObsAlignment, Comparison
+from comparison import ForecastToObsAlignment, Comparison, ScoreAnalysis
 import itertools
 
 class Experiment(object):
@@ -35,12 +35,13 @@ class Experiment(object):
     def setuplog(self):
         """
         Load an experiment log if it is present. Otherwise create one.
+        Columns are for obsname and booksname. For climname, scorefiles and scores the amount of columns is times the amount of quantiles.
         """
         self.logpath = self.resultsdir + self.expname + '.h5'
         try:
             self.log = pd.read_hdf(self.logpath, key = 'exp')
         except OSError:
-            self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations, self.quantiles], names = ['spaceagg','timeagg','quantile']), columns = ['climname','scores'])
+            self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations, self.quantiles], names = ['spaceagg','timeagg','quantile']), columns = ['climname','scorefiles','scores'])
             self.log = self.log.unstack(level = -1)
             self.log = self.log.assign(**{'obsname':None,'booksname':None}) # :''
     
@@ -116,9 +117,13 @@ class Experiment(object):
         
         return(climnames)
             
+    
     def score(self, spaceagg, timeagg):
         """
-        Read the obs and clim. make a comparison object which computes the scores in the dask dataframe. Returns a list of dataframes with raw and climatological scores. Perhaps write intermediate scores to a file? Distributed computation can take very long.
+        Read the obs and clim. make a comparison object which computes the scores in the dask dataframe. 
+        This dask dataframe is exported.
+        Returns a list with intermediate filenames of the raw, climatological and corrected scores.
+        TODO: add post-processing option.
         """
         alignment = ForecastToObsAlignment(season = self.season, cycle=self.cycle)
         alignment.recollect(booksname = self.log.loc[(spaceagg, timeagg),('booksname','')])
@@ -127,14 +132,29 @@ class Experiment(object):
         for quantile in self.quantiles:    
             climatology = Climatology(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('climname', quantile)]})
             climatology.localclim() # loading in this case. Creation was done in the makeclim method.
-            comp = Comparison(alignedobject= alignment.alignedobject, climatology = climatology.clim)
-            scores = comp.brierscore(groupers=['leadtime'])
-            
-            # rename the columns
-            scores.columns = scores.columns.droplevel(1)
-            result[self.quantiles.index(quantile)] = scores
+            comp = Comparison(alignment = alignment, climatology = climatology)
+            comp.brierscore()
+            scorefile = comp.export()
+
+            result[self.quantiles.index(quantile)] = scorefile
         
         return(result)
+    
+    def skill(self, spaceagg, timeagg):
+        """
+        Reads the exported file and calls upon several possible methods to compute (bootstrapped) skill scores
+        """
+        result = np.repeat(None,len(self.quantiles))
+        
+        for quantile in self.quantiles:    
+            scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)])
+            skillscore = scoreanalysis.bootstrap_skillscore(groupers=['leadtime'])
+            # rename the columns
+            skillscore.columns = skillscore.columns.droplevel(1)
+            result[self.quantiles.index(quantile)] = skillscore
+        
+        return(result)
+        
 
 """
 Max temperature benchmarks.
@@ -188,7 +208,8 @@ test2.setuplog()
 #test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
 #test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname2'}, overwrite = True) # Replaces with updated books name.
 test2.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
-#test2.iterateaggregations(func = 'score', column = 'scores')
+#test2.iterateaggregations(func = 'score', column = 'scorefiles')
+#test2.iterateaggregations(func = 'skill', column = 'scores')
 
 #def replace(string, first, later, number = None):
 #    if not number is None:
