@@ -233,6 +233,7 @@ class ForecastToObsAlignment(object):
         else:
             try:
                 books = pd.read_csv(self.basedir + booksname)
+                self.books_name = booksname
                 outfilenames = books['file'].values.tolist()
             except AttributeError:
                 pass
@@ -249,24 +250,26 @@ class Comparison(object):
     For continuous variables, the quantile of the climatology is important, this will determine the event.
     """
     
-    def __init__(self, alignedobject, climatology = None):
+    def __init__(self, alignment, climatology):
         """
         The aligned object has Observation | members |
-        Potentially an external observed climatology array can be supplied that takes advantage of the full observed dataset. It has to have a location and dayofyear timestamp. Is it already aggregated?
+        Potentially an external observed climatology object can be supplied that takes advantage of the full observed dataset. It has to have a location and dayofyear timestamp. Is it already aggregated?
         This climatology can be a quantile (used as the threshold for brier scoring) of it is a climatological probability if we have an aligned event predictor like POP.
         """
-        self.frame = alignedobject
-        if climatology is not None: 
-            climatology.name = 'climatology'
-            self.clim = climatology.to_dataframe().dropna(axis = 0, how = 'any')
-            # Some formatting to make merging with the two-level aligned object easier
-            self.clim.reset_index(inplace = True)
-            self.clim[['latitude','longitude','climatology']] = self.clim[['latitude','longitude','climatology']].apply(pd.to_numeric, downcast = 'float')
-            self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']])
-            try:
-                self.quantile = climatology.attrs['quantile']
-            except KeyError:
-                pass
+        self.frame = alignment.alignedobject
+        self.basedir = '/nobackup/users/straaten/scores/'
+        self.name = alignment.books_name[6:-4] + '_' + climatology.name
+        
+        climatology.clim.name = 'climatology'
+        self.clim = climatology.clim.to_dataframe().dropna(axis = 0, how = 'any')
+        # Some formatting to make merging with the two-level aligned object easier
+        self.clim.reset_index(inplace = True)
+        self.clim[['latitude','longitude','climatology']] = self.clim[['latitude','longitude','climatology']].apply(pd.to_numeric, downcast = 'float')
+        self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']])
+        try:
+            self.quantile = climatology.clim.attrs['quantile']
+        except KeyError:
+            pass
             
             
     def fit_pp_models(self, pp_model, groupers = ['leadtime','latitude','longitude'], nfolds = 3):
@@ -328,7 +331,17 @@ class Comparison(object):
         self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 'fitfunc':fitfunc, 'modelcoefs':pp_model.model_coefs}).compute()
         self.fits.reset_index(inplace = True)
         self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']])
+        # Store some information
         self.fitgroupers = groupers
+        self.coefcols = pp_model.model_coefs
+    
+    def merge_to_clim(self):
+        """
+        Based on day-of-year, writes an extra column to the dataframe with 'climatology', either a numeric quantile, or a climatological probability of occurrence.
+        """
+        self.frame['doy'] = self.frame['time'].dt.dayofyear
+        self.frame = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
+        
         
     def make_pp_forecast(self, pp_model):
         """
@@ -349,8 +362,7 @@ class Comparison(object):
             self.frame['pi_cor'] = self.frame.map_partitions(predfunc, meta = ('pi_cor','float32'))
         else:
             # in this case continuous and we predict exceedence, of the climatological quantile. So we need an extra merge.
-            self.frame['doy'] = self.frame['time'].dt.dayofyear
-            self.frame = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
+            self.merge_to_clim()
             self.frame['pi_cor'] = self.frame.map_partitions(predfunc, **{'quant_col':'climatology'}, meta = ('pi_cor','float32'))
 
     def add_custom_groups(self):
@@ -358,53 +370,102 @@ class Comparison(object):
         Add groups that are for instance chosen with clustering in observations. Based on lat-lon coding.
         """
     
-    def brierscore(self, groupers = ['leadtime']):
+    def brierscore(self):
         """
-        Check requirements for the forecast horizon of Buizza. Theirs is based on the crps. No turning the knob of extremity
-        Asks a list of groupers, could use custom groupers. Also able to get climatological exceedence if climatology was supplied at initiazion.
+        Asks a list of groupers, could use custom groupers. Computes the climatological and raw scores.
+        Also computes the score of the predictions from the post-processed model if this column (pi_cor) is present in the dataframe
         """
         # Merging with climatological file. In case of quantile scoring for the exceeding quantiles. In case of an already e.g. pop for the climatological probability.
         if not ('climatology' in self.frame.columns):
-            self.frame['doy'] = self.frame['time'].dt.dayofyear
-            delayed = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
-        else:
-            delayed = self.frame
+            self.merge_to_clim()
         
-        if 'pi' in delayed.columns: # This column comes from the match-and-write, when it is present we are dealing with an already binary observation.
+        if 'pi' in self.frame.columns: # This column comes from the match-and-write, when it is present we are dealing with an already binary observation.
             obscolname = 'observation'
-            delayed['climbrier'] = (delayed['climatology'] - delayed[obscolname])**2
+            self.frame['climbrier'] = (self.frame['climatology'] - self.frame[obscolname])**2
         else: # In this case quantile scoring. and pi needs creation
             # Boolean comparison cannot be made in one go. because it does not now how to compare N*members agains the climatology of N
-            boolcols = list()
-            for member in delayed['forecast'].columns:
+            self.boolcols = list()
+            for member in self.frame['forecast'].columns:
                 name = '_'.join(['bool',str(member)])
-                delayed[name] = delayed[('forecast',member)] > delayed['climatology']
-                boolcols.append(name)
-            delayed['pi'] = delayed[boolcols].sum(axis = 1) / len(delayed['forecast'].columns) # or use .count(axis = 1) if members might be NA
-            delayed['oi'] = delayed['observation'] > delayed['climatology']
+                self.frame[name] = self.frame[('forecast',member)] > self.frame['climatology']
+                self.boolcols.append(name)
+            self.frame['pi'] = self.frame[self.boolcols].sum(axis = 1) / len(self.frame['forecast'].columns) # or use .count(axis = 1) if members might be NA
+            self.frame['oi'] = self.frame['observation'] > self.frame['climatology']
             obscolname = 'oi'
-            delayed['climbrier'] = ((1 - self.quantile) - delayed[obscolname])**2
+            self.frame['climbrier'] = ((1 - self.quantile) - self.frame[obscolname])**2 # Add the climatological score. use self.quantile.
             
-        delayed['rawbrier'] = (delayed['pi'] - delayed[obscolname])**2
-          # Add the climatological score. use self.quantile.
+        self.frame['rawbrier'] = (self.frame['pi'] - self.frame[obscolname])**2
+        
         if 'pi_cor' in self.frame.columns:
-            delayed['corbrier'] = (delayed['pi_cor'] - delayed[obscolname])**2        
+            self.frame['corbrier'] = (self.frame['pi_cor'] - self.frame[obscolname])**2
         
-        grouped = delayed.groupby(groupers)
-        return(grouped.mean()[['rawbrier','climbrier']].compute())
+        # No grouping and averaging yet.
+        #grouped = delayed.groupby(groupers)
+        #return(grouped.mean()[['rawbrier','climbrier']].compute())
+    
+    def export(self):
+        """
+        Writes one dataframe for self.frame, discarding only the duplicated model coefficients if these are present. Fits are written to a separate entry. 
+        """
+        self.filepath = self.basedir + self.name + '.h5'
+        if hasattr(self, 'fits'):
+            try:
+                self.frame.drop(self.coefcols + self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table')
+            except AttributeError:
+                self.frame.drop(self.coefcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table')
+            self.fits.to_hdf(self.filepath, key = 'fits', format = 'table')
+        else:
+            try:
+                self.frame.drop(self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table')
+            except AttributeError:
+                self.frame.to_hdf(self.filepath, key = 'scores', format = 'table')
         
+        return(self.name)
 
-#ddtx = dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
+class ScoreAnalysis(object):
+    """
+    Contains several ways to analyse an exported file with scores. 
+    """
+    def __init__(self, scorefile):
+        """
+        Provide the name of the exported file with Brier scores.
+        """
+        self.basedir = '/nobackup/users/straaten/scores/'
+        self.filepath = self.basedir + scorefile + '.h5'
+        self.frame = dd.read_hdf(self.filepath, key = 'scores')
+    
+    def bootstrap_skillscore(self, groupers = ['leadtime']):
+        """
+        Samples the score entries. First grouping and then random number generation. 100% of the sample size with replacement. Average and compute skill score. Return a 1000 skill scores.
+        """
+        scorecols = [col for col in ['rawbrier', 'climbrier','corbrier'] if (col in self.frame.columns)]
+        grouped =  self.frame.groupby(groupers)
+        return(grouped.mean()[scorecols].compute())
+        # DataFrame.sample(frac = 1, replace = True)
+            
+#ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
+#ddtx.recollect(booksname='books_tx_JJA_41r1_3D_max_1.5_degrees_max.csv') #dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
 #climatology = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_3D-max_1.5-degrees-max_5_5_q0.9'})
 #climatology.localclim()
-#self = Comparison(alignedobject = ddtx, climatology=climatology.clim)
+#self = Comparison(alignment=ddtx, climatology = climatology)
 #self.fit_pp_models(pp_model= NGR(), groupers = ['leadtime'])
 #self.make_pp_forecast(pp_model = NGR())
+#self.brierscore()
 
-#ddpop = dd.read_hdf('/nobackup/users/straaten/match/pop_DJF_41r1_1D_0.25_degrees_8b505d0f2d024bf086054fdf7629e8ed.h5', key = 'intermediate')
+#ddpop = ForecastToObsAlignment(season = 'DJF', cycle = '41r1') #dd.read_hdf('/nobackup/users/straaten/match/pop_DJF_41r1_1D_0.25_degrees_8b505d0f2d024bf086054fdf7629e8ed.h5', key = 'intermediate')
+#ddpop.outfiles = ['/nobackup/users/straaten/match/pop_DJF_41r1_1D_0.25_degrees_8b505d0f2d024bf086054fdf7629e8ed.h5']
+#ddpop.recollect()
+#ddpop.books_name = 'books_pop_DJF_41r1_1D_0.25_degrees.csv'
 #climatology = Climatology('pop', **{'name':'pop_clim_1980-01-01_2017-12-31_1D_0.25-degrees_5_5_mean'})
 #climatology.localclim()
-#self = Comparison(alignedobject = ddpop, climatology=climatology.clim)
+#self = Comparison(alignment=ddpop, climatology = climatology)
 #self.fit_pp_models(pp_model = Logistic(), groupers = ['leadtime'])
 #self.make_pp_forecast(pp_model = Logistic())
+#self.brierscore()
+#self.export()
 
+#temp = ScoreAnalysis(scorefile = 'tx_JJA_41r1_3D_max_1.5_degrees_max_tx_clim_1980-05-30_2010-08-31_3D-max_1.5-degrees-max_5_5_q0.9')
+#sc = temp.bootstrap_skillscore()
+
+#temp2 = ScoreAnalysis(scorefile= 'pop_DJF_41r1_1D_0.25_degrees_pop_clim_1980-01-01_2017-12-31_1D_0.25-degrees_5_5_mean')
+#sc2 = temp2.bootstrap_skillscore()
