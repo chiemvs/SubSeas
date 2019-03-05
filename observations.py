@@ -189,7 +189,7 @@ class Climatology(object):
             for key in keys:
                 setattr(self, key, values[keys.index(key)])
         else:
-            values = [ getattr(self,key) for key in keys if hasattr(self, key)]
+            values = [ str(getattr(self,key)) for key in keys if hasattr(self, key)]
             values.insert(1,'clim') # at the second spot, after the basevar
             self.name = '_'.join(values)
         
