@@ -20,6 +20,7 @@ server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting th
 for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'mx2t6': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'tp': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
+                   'tpvar': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
                    'rr': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
                    'tx': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'tg': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
@@ -31,13 +32,15 @@ for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_of
 
 model_cycles = pd.DataFrame(data = {'firstday':pd.to_datetime(['2015-05-12','2016-03-08','2016-11-22','2017-07-11','2018-06-05','']),
                              'lastday':pd.to_datetime(['2016-03-07','2016-11-21','2017-07-10','2018-06-04','2019-06-30','']),
-                             'cycle':['41r1','41r2','43r1','43r3','45r1','46r1']})
+                             'cycle':['41r1','41r2','43r1','43r3','45r1','46r1'],
+                             'stepbeforeresswitch':[240,360,360,360,360,360]})
 
 
-def mars_dict(date, hdate = None, contr = False):
+def mars_dict(date, hdate = None, contr = False, varres = False, stepbeforeresswitch = None):
     """
     Generates the appropriate mars request dictionary. This is the place to set parameters. Called from within the classes when ensemble or control files do not yet exist and need to be downloaded
     """
+
     req = {
     'stream'    : "enfo" if hdate is None else "enfh",
     'number'    : "0" if contr else "1/to/50" if hdate is None else "1/to/10",
@@ -54,12 +57,17 @@ def mars_dict(date, hdate = None, contr = False):
     'grid'      : ".38/.38", # Octahedral grid does not support sub-areas
     'expect'    : "any",
     }
+    
     if hdate is not None:
         req['hdate'] = hdate
     else:
         req['format'] = "netcdf"
+    if varres:
+        req['stream'] = "efov" if hdate is None else "efho" # Some modification
+        req['param'] = "228.230" # Only the variable resolution prec needed for de-accumulation
+        req['step'] = str(stepbeforeresswitch)
+        
     return(req)
-
 
 def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
     """
@@ -87,6 +95,7 @@ class Forecast(object):
 
     def __init__(self, indate = '2015-05-14', prefix = 'for_', cycle = '41r1'):
         self.cycle = cycle
+        self.stepbeforeswitch = model_cycles.loc[model_cycles['cycle'] == self.cycle, 'stepbeforeresswitch'] 
         self.basedir = '/nobackup/users/straaten/EXT/' + cycle + '/'
         self.prefix = prefix
         self.indate = indate
@@ -243,6 +252,7 @@ class Hindcast(object):
     """
     def __init__(self, hdate = '2015-05-14', prefix = 'hin_', cycle = '41r1'):
         self.cycle = cycle
+        self.stepbeforeswitch = model_cycles.loc[model_cycles['cycle'] == self.cycle, 'stepbeforeresswitch']
         self.basedir = '/nobackup/users/straaten/EXT/' + cycle + '/'
         self.prefix = prefix
         self.hdate = hdate
