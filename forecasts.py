@@ -20,6 +20,7 @@ server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting th
 for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'mx2t6': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'tp': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
+                   'tpvar': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
                    'rr': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
                    'tx': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
                    'tg': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
@@ -31,13 +32,15 @@ for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_of
 
 model_cycles = pd.DataFrame(data = {'firstday':pd.to_datetime(['2015-05-12','2016-03-08','2016-11-22','2017-07-11','2018-06-05','']),
                              'lastday':pd.to_datetime(['2016-03-07','2016-11-21','2017-07-10','2018-06-04','2019-06-30','']),
-                             'cycle':['41r1','41r2','43r1','43r3','45r1','46r1']})
+                             'cycle':['41r1','41r2','43r1','43r3','45r1','46r1'],
+                             'stepbeforeresswitch':[240,360,360,360,360,360]})
 
 
-def mars_dict(date, hdate = None, contr = False):
+def mars_dict(date, hdate = None, contr = False, varres = False, stepbeforeresswitch = None):
     """
     Generates the appropriate mars request dictionary. This is the place to set parameters. Called from within the classes when ensemble or control files do not yet exist and need to be downloaded
     """
+
     req = {
     'stream'    : "enfo" if hdate is None else "enfh",
     'number'    : "0" if contr else "1/to/50" if hdate is None else "1/to/10",
@@ -54,12 +57,17 @@ def mars_dict(date, hdate = None, contr = False):
     'grid'      : ".38/.38", # Octahedral grid does not support sub-areas
     'expect'    : "any",
     }
+    
     if hdate is not None:
         req['hdate'] = hdate
     else:
         req['format'] = "netcdf"
+    if varres:
+        req['stream'] = "efov" if hdate is None else "efho" # Some modification
+        req['param'] = "228.230" # Only the variable resolution prec needed for de-accumulation
+        req['step'] = str(stepbeforeresswitch)
+        
     return(req)
-
 
 def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
     """
@@ -86,18 +94,28 @@ class CascadeError(Exception):
 class Forecast(object):
 
     def __init__(self, indate = '2015-05-14', prefix = 'for_', cycle = '41r1'):
+        """
+        Defines all the intermediate and raw forecast files that are needed for the processing.
+        The final usable daily product is 'processedfile'
+        """
         self.cycle = cycle
+        self.stepbeforeresswitch = model_cycles.loc[model_cycles['cycle'] == self.cycle, 'stepbeforeresswitch'][0]
         self.basedir = '/nobackup/users/straaten/EXT/' + cycle + '/'
         self.prefix = prefix
         self.indate = indate
         self.processedfile = self.prefix + self.indate + '_processed.nc'
         self.interfile = self.prefix + self.indate + '_comb.nc'
+        self.interfile_varres = self.prefix + self.indate + '_comb_varres.nc'
         self.pffile = self.prefix + self.indate + '_ens.nc'
+        self.pffile_varres = self.prefix + self.indate + '_ens_varres.nc'
         self.cffile = self.prefix + self.indate + '_contr.nc'
+        self.cffile_varres = self.prefix + self.indate + '_contr_varres.nc'
     
     def create_processed(self, prevent_cascade = False):
         """
-        Joining of members for the combined file is not needed for forecasts 
+        Tries to load the 6h forecasts with all members and variables in it, and to load the variable res precipitation forecast. 
+        If not available these are create by 'join_members' calls.
+        Joining of members for the combined file is not needed for (re)forecasts 
         that are extracted form hindcast Grib-files, therefore CascadeError is raised before function call.
         The actual processing does a daily temporal resampling, and left-labels timestamps to match E-OBS variables:
         - tg: Mean of 6h temperatures in the 24 hrs belonging to yyyy-mm-dd (including 00UTC, excluding 00 UTC of next day)
@@ -114,14 +132,33 @@ class Forecast(object):
                 print('Combined file needs creation')
                 if prevent_cascade:
                     raise CascadeError
-                self.join_members() # creates the interfile
+                self.join_members(pf_in = self.pffile, 
+                                  cf_in = self.cffile, 
+                                  comb_out = self.interfile) # creates the combined interfile
                 comb = xr.open_dataset(self.basedir + self.interfile)
             
+            try:
+                comb_varres = xr.open_dataset(self.basedir + self.interfile_varres)
+                print('Combined file successfully loaded')
+            except OSError:
+                print('Combined file needs creation')
+                if prevent_cascade:
+                    raise CascadeError
+                self.join_members(pf_in = self.pffile_varres,
+                                  cf_in = self.cffile_varres,
+                                  comb_out = self.interfile_varres) # creates the combined varres interfile
+                comb_varres = xr.open_dataset(self.basedir + self.interfile_varres)
+                
             comb.load()
+            comb_varres.load() # Also read as a dataset.
             
             # Precipitation. First resample: right limit is included because rain within a day accumulated till that 00UTC timestamp. Then de-accumulate
             tp = comb.tp.resample(time = 'D', closed = 'right').last()
             rr = tp.diff(dim = 'time', label = 'upper') # This cutoffs the first timestep.
+            # Correction of de-accumulation. By subtracting coarse varres 00 UTC field before switch from 00UTC after switch (in tp, but labeled left)
+            coarse_coarse = tp.sel(time = comb_varres.tpvar.time) - comb_varres.tpvar
+            coarse_coarse = coarse_coarse.where(coarse_coarse >= 0, 0.0) # removing some very spurious and small negative values
+            rr.loc[comb_varres.tpvar.time,...] = coarse_coarse
             rr.attrs.update({'long_name':'precipitation', 'units':comb.tp.units})
             # Mean temperature. Resample. Cutoff last timestep because this is no average (only instantaneous 00UTC value)
             tg = comb.t2m.resample(time = 'D').mean('time').isel(time = slice(0,-1))
@@ -139,40 +176,45 @@ class Forecast(object):
             particular_encoding = {key : for_netcdf_encoding[key] for key in result.keys()} 
             result.to_netcdf(path = self.basedir + self.processedfile, encoding = particular_encoding)
             comb.close()
+            comb_varres.close()
             print('Processed forecast successfully created')
             
 
-    def join_members(self):
+    def join_members(self, pf_in, cf_in, comb_out):
         """
         Join members save the dataset. Control member gets the number 0.
         Only for non-hindcast forecasts.
         """
         try:
-            pf = xr.open_dataset(self.basedir + self.pffile)
+            pf = xr.open_dataset(self.basedir + pf_in)
             print('Ensemble file successfully loaded')
         except OSError:
             print('Ensemble file need to be downloaded')
-            server.execute(mars_dict(self.indate, contr = False), self.basedir+self.pffile)
-            pf = xr.open_dataset(self.basedir + self.pffile)
+            server.execute(mars_dict(self.indate, contr = False,
+                                     varres = (comb_out == self.interfile_varres),
+                                     stepbeforeresswitch = self.stepbeforeresswitch), self.basedir + pf_in)
+            pf = xr.open_dataset(self.basedir + pf_in)
         
         try:
-            cf = xr.open_dataset(self.basedir + self.cffile)
+            cf = xr.open_dataset(self.basedir + cf_in)
             print('Control file successfully loaded')
         except OSError:
             print('Control file need to be downloaded')
-            server.execute(mars_dict(self.indate, contr = True), self.basedir+self.cffile)
-            cf = xr.open_dataset(self.basedir + self.cffile)
+            server.execute(mars_dict(self.indate, contr = True,
+                                     varres = (comb_out == self.interfile_varres),
+                                     stepbeforeresswitch = self.stepbeforeresswitch), self.basedir + cf_in)
+            cf = xr.open_dataset(self.basedir + cf_in)
         
         cf.coords['number'] = np.array(0, dtype='int16')
         cf = cf.expand_dims('number',-1)
         particular_encoding = {key : for_netcdf_encoding[key] for key in cf.keys()} 
-        xr.concat([cf,pf], dim = 'number').to_netcdf(path = self.basedir + self.interfile, encoding= particular_encoding)
+        xr.concat([cf,pf], dim = 'number').to_netcdf(path = self.basedir + comb_out, encoding= particular_encoding)
     
     def cleanup(self):
         """
-        Remove all files except the processed one.
+        Remove all files except the processed one and the raw ones.
         """
-        for filename in [self.interfile, self.pffile, self.cffile]:
+        for filename in [self.interfile, self.interfile_varres]:
             try:
                 os.remove(self.basedir + filename)
             except OSError:
@@ -243,11 +285,14 @@ class Hindcast(object):
     """
     def __init__(self, hdate = '2015-05-14', prefix = 'hin_', cycle = '41r1'):
         self.cycle = cycle
+        self.stepbeforeresswitch = model_cycles.loc[model_cycles['cycle'] == self.cycle, 'stepbeforeresswitch'][0]
         self.basedir = '/nobackup/users/straaten/EXT/' + cycle + '/'
         self.prefix = prefix
         self.hdate = hdate
         self.pffile = self.prefix + self.hdate + '_ens.grib'
+        self.pffile_varres = self.prefix + self.hdate + '_ens_varres.grib'
         self.cffile = self.prefix + self.hdate + '_contr.grib'
+        self.cffile_varres = self.prefix + self.hdate + '_contr_varres.grib'
         # Initialize one forecast class for each of the 20 runs (one year interval) contained in one reforecast
         # easier arithmetics when in pandas format, then to string for the mars format
         end = pd.to_datetime(self.hdate, format='%Y-%m-%d')
@@ -266,38 +311,42 @@ class Hindcast(object):
                     hindcast.create_processed(prevent_cascade = True)
             except CascadeError:
                 print('Combined files need creation. Do this from the single grib files')
-                self.crunch_gribfiles()
+                self.crunch_gribfiles(pf_in = self.pffile, cf_in = self.cffile, comb_extension = '_comb.nc')
+                self.crunch_gribfiles(pf_in = self.pffile_varres, cf_in = self.cffile_varres, comb_extension = '_comb_varres.nc')
                 for hindcast in self.hindcasts:
                     hindcast.create_processed(prevent_cascade = True)
         
-    def crunch_gribfiles(self):
+    def crunch_gribfiles(self, pf_in, cf_in, comb_extension = '_comb.nc'):
         """
         hdates within a file are extracted and perturbed and control are joined.
         The final files are saved per hdate as netcdf with three variables, 
-        getting the name "_comb.nc" which can afterwards be read by the Forecast class
+        getting the name "_comb.nc" of "_comb_varres.nc" which can afterwards be read by the Forecast class
         """
         try:
-            pf = pygrib.open(self.basedir + self.pffile)
+            pf = pygrib.open(self.basedir + pf_in)
             print('Ensemble file successfully loaded')
         except:
             print('Ensemble file needs to be downloaded')
-            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = False), self.basedir+self.pffile)
-            pf = pygrib.open(self.basedir + self.pffile)
+            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = False), self.basedir + pf_in)
+            pf = pygrib.open(self.basedir + pf_in)
         
         try:
-            cf = pygrib.open(self.basedir + self.cffile)
+            cf = pygrib.open(self.basedir + cf_in)
             print('Control file successfully loaded')
         except:
             print('Control file needs to be downloaded')
-            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = True), self.basedir+self.cffile)
-            cf = pygrib.open(self.basedir + self.cffile)
+            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = True), self.basedir + cf_in)
+            cf = pygrib.open(self.basedir + cf_in)
         
-        params = list(set([x.cfVarName for x in cf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] # Hardcoded for marsParam
-
-        steprange = np.arange(0,1110,6) # Hardcoded as this is too slow: steps = list(set([x.stepRange for x in cf.select()]))
-        beginning = steprange[1:-1].tolist()
-        beginning[0:0] = [0,0]
-        tmaxrange = [ str(b) + '-' + str(e) for b,e in zip(beginning, steprange)] # special hardcoded range for the tmax, whose stepRanges are stored differently
+        params = list(set([x.cfVarName for x in pf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] or "228.230"
+        
+        if ('tpvar' in params):
+            steprange = [self.stepbeforeresswitch] # The variable resolution stream is only downloaded with one step.
+        else:
+            steprange = np.arange(0,1110,6) # Hardcoded as this is too slow: steps = list(set([x.stepRange for x in cf.select()]))
+            beginning = steprange[1:-1].tolist()
+            beginning[0:0] = [0,0]
+            tmaxrange = [ str(b) + '-' + str(e) for b,e in zip(beginning, steprange)] # special hardcoded range for the tmax, whose stepRanges are stored differently
 
         for hd in self.hdates:
             collectparams = dict()
@@ -352,7 +401,7 @@ class Hindcast(object):
                 collectparams.update({param : oneparam})
             # Save the dataset to netcdf under hdate.
             onehdate = xr.Dataset(collectparams)
-            svname = self.prefix + hd + '_comb.nc'
+            svname = self.prefix + hd + comb_extension
             particular_encoding = {key : for_netcdf_encoding[key] for key in onehdate.keys()} # get only encoding of present variables
             onehdate.to_netcdf(path = self.basedir + svname, encoding= particular_encoding)
         pf.close()
