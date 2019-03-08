@@ -99,7 +99,7 @@ class Forecast(object):
         The final usable daily product is 'processedfile'
         """
         self.cycle = cycle
-        self.stepbeforeresswitch = model_cycles.loc[model_cycles['cycle'] == self.cycle, 'stepbeforeresswitch'][0]
+        self.stepbeforeresswitch = model_cycles.loc[model_cycles['cycle'] == self.cycle, 'stepbeforeresswitch'].values[0]
         self.basedir = '/nobackup/users/straaten/EXT/' + cycle + '/'
         self.prefix = prefix
         self.indate = indate
@@ -285,7 +285,7 @@ class Hindcast(object):
     """
     def __init__(self, hdate = '2015-05-14', prefix = 'hin_', cycle = '41r1'):
         self.cycle = cycle
-        self.stepbeforeresswitch = model_cycles.loc[model_cycles['cycle'] == self.cycle, 'stepbeforeresswitch'][0]
+        self.stepbeforeresswitch = model_cycles.loc[model_cycles['cycle'] == self.cycle, 'stepbeforeresswitch'].values[0]
         self.basedir = '/nobackup/users/straaten/EXT/' + cycle + '/'
         self.prefix = prefix
         self.hdate = hdate
@@ -414,4 +414,4 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
-#start_batch(tmin = '2018-06-05', tmax = '2018-07-12')
+#start_batch(tmin = '2018-06-07', tmax = '2018-06-07')

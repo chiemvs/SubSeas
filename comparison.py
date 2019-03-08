@@ -405,20 +405,24 @@ class Comparison(object):
     
     def export(self):
         """
+        Downcast the float 64 columns in self.frame
         Writes one dataframe for self.frame, discarding only the duplicated model coefficients if these are present. Fits are written to a separate entry. 
         """
+        f64cols = self.frame.dtypes.loc[self.frame.dtypes == 'float64',:].index.get_level_values(0)
+        self.frame[f64cols.tolist()] = self.frame[f64cols].astype('float32')
+        
         self.filepath = self.basedir + self.name + '.h5'
         if hasattr(self, 'fits'):
             try:
-                self.frame.drop(self.coefcols + self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table')
+                self.frame.drop(self.coefcols + self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'w'})
             except AttributeError:
-                self.frame.drop(self.coefcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table')
+                self.frame.drop(self.coefcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'w'})
             self.fits.to_hdf(self.filepath, key = 'fits', format = 'table')
         else:
             try:
-                self.frame.drop(self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table')
+                self.frame.drop(self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'w'})
             except AttributeError:
-                self.frame.to_hdf(self.filepath, key = 'scores', format = 'table')
+                self.frame.to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'w'})
         
         return(self.name)
 
@@ -434,7 +438,7 @@ class ScoreAnalysis(object):
         self.filepath = self.basedir + scorefile + '.h5'
         self.frame = dd.read_hdf(self.filepath, key = 'scores')
     
-    def bootstrap_skillscore(self, groupers = ['leadtime']):
+    def bootstrap_meanscore(self, groupers = ['leadtime']):
         """
         Samples the score entries. First grouping and then random number generation. 100% of the sample size with replacement. Average and compute skill score. Return a 1000 skill scores.
         """
@@ -451,6 +455,7 @@ class ScoreAnalysis(object):
 #self.fit_pp_models(pp_model= NGR(), groupers = ['leadtime'])
 #self.make_pp_forecast(pp_model = NGR())
 #self.brierscore()
+#self.export()
 
 #ddpop = ForecastToObsAlignment(season = 'DJF', cycle = '41r1') #dd.read_hdf('/nobackup/users/straaten/match/pop_DJF_41r1_1D_0.25_degrees_8b505d0f2d024bf086054fdf7629e8ed.h5', key = 'intermediate')
 #ddpop.outfiles = ['/nobackup/users/straaten/match/pop_DJF_41r1_1D_0.25_degrees_8b505d0f2d024bf086054fdf7629e8ed.h5']
