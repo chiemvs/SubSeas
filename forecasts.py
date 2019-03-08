@@ -150,15 +150,15 @@ class Forecast(object):
                 comb_varres = xr.open_dataset(self.basedir + self.interfile_varres)
                 
             comb.load()
-            comb_varres.load() # CHECK!! Is this actually a dataset or read as array?
+            comb_varres.load() # Also read as a dataset.
             
             # Precipitation. First resample: right limit is included because rain within a day accumulated till that 00UTC timestamp. Then de-accumulate
             tp = comb.tp.resample(time = 'D', closed = 'right').last()
             rr = tp.diff(dim = 'time', label = 'upper') # This cutoffs the first timestep.
-            # Correction of de-accumulation.
-            coarse_coarse = tp.sel(time = comb_varres.tpvar.time) - comb_varres.tpvar # CHECK!!
+            # Correction of de-accumulation. By subtracting coarse varres 00 UTC field before switch from 00UTC after switch (in tp, but labeled left)
+            coarse_coarse = tp.sel(time = comb_varres.tpvar.time) - comb_varres.tpvar
             coarse_coarse = coarse_coarse.where(coarse_coarse >= 0, 0.0) # removing some very spurious and small negative values
-            rr.loc[comb_varres.tpvar.time,:,:] = coarse_coarse
+            rr.loc[comb_varres.tpvar.time,...] = coarse_coarse
             rr.attrs.update({'long_name':'precipitation', 'units':comb.tp.units})
             # Mean temperature. Resample. Cutoff last timestep because this is no average (only instantaneous 00UTC value)
             tg = comb.t2m.resample(time = 'D').mean('time').isel(time = slice(0,-1))
@@ -176,6 +176,7 @@ class Forecast(object):
             particular_encoding = {key : for_netcdf_encoding[key] for key in result.keys()} 
             result.to_netcdf(path = self.basedir + self.processedfile, encoding = particular_encoding)
             comb.close()
+            comb_varres.close()
             print('Processed forecast successfully created')
             
 
@@ -337,12 +338,15 @@ class Hindcast(object):
             server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = True), self.basedir + cf_in)
             cf = pygrib.open(self.basedir + cf_in)
         
-        params = list(set([x.cfVarName for x in cf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] # Hardcoded for marsParam
-
-        steprange = np.arange(0,1110,6) # Hardcoded as this is too slow: steps = list(set([x.stepRange for x in cf.select()]))
-        beginning = steprange[1:-1].tolist()
-        beginning[0:0] = [0,0]
-        tmaxrange = [ str(b) + '-' + str(e) for b,e in zip(beginning, steprange)] # special hardcoded range for the tmax, whose stepRanges are stored differently
+        params = list(set([x.cfVarName for x in pf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] or "228.230"
+        
+        if ('tpvar' in params):
+            steprange = [self.stepbeforeresswitch] # The variable resolution stream is only downloaded with one step.
+        else:
+            steprange = np.arange(0,1110,6) # Hardcoded as this is too slow: steps = list(set([x.stepRange for x in cf.select()]))
+            beginning = steprange[1:-1].tolist()
+            beginning[0:0] = [0,0]
+            tmaxrange = [ str(b) + '-' + str(e) for b,e in zip(beginning, steprange)] # special hardcoded range for the tmax, whose stepRanges are stored differently
 
         for hd in self.hdates:
             collectparams = dict()
