@@ -52,7 +52,7 @@ class NGR(object):
         """
         res = optimize.minimize(self.crpscostfunc, x0 = [0,1,0.5,0.2], jac = True,
                         args=(train[self.predcols[1]], train[self.predcols[3]], train[self.obscol]), 
-                        method='L-BFGS-B', bounds = [(-20,20),(0,10),(-10,10),(-10,10)])
+                        method='L-BFGS-B', bounds = [(-40,40),(0,10),(-10,10),(-10,10)])
                          
         return(res.x)
     

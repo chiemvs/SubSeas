@@ -12,8 +12,9 @@ import xarray as xr
 import pandas as pd
 import dask.dataframe as dd
 from observations import SurfaceObservations, Climatology, EventClassification
-#from forecasts import Forecast
+from forecasts import Forecast
 from comparison import ForecastToObsAlignment, Comparison, ScoreAnalysis
+from fitting import NGR
 import itertools
 
 class Experiment(object):
@@ -118,12 +119,12 @@ class Experiment(object):
         return(climnames)
             
     
-    def score(self, spaceagg, timeagg):
+    def score(self, spaceagg, timeagg, pp_model = None):
         """
         Read the obs and clim. make a comparison object which computes the scores in the dask dataframe. 
         This dask dataframe is exported.
         Returns a list with intermediate filenames of the raw, climatological and corrected scores.
-        TODO: add post-processing option.
+        Has a post-processing step if the pp_model is supplied
         """
         alignment = ForecastToObsAlignment(season = self.season, cycle=self.cycle)
         alignment.recollect(booksname = self.log.loc[(spaceagg, timeagg),('booksname','')])
@@ -133,6 +134,9 @@ class Experiment(object):
             climatology = Climatology(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('climname', quantile)]})
             climatology.localclim() # loading in this case. Creation was done in the makeclim method.
             comp = Comparison(alignment = alignment, climatology = climatology)
+            if not pp_model is None:
+                comp.fit_pp_models(pp_model= pp_model, groupers = ['leadtime','latitude','longitude'])
+                comp.make_pp_forecast(pp_model = pp_model)
             comp.brierscore()
             scorefile = comp.export()
 
@@ -207,8 +211,8 @@ test2.setuplog()
 
 #test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
 #test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname2'}, overwrite = True) # Replaces with updated books name.
-test2.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
-#test2.iterateaggregations(func = 'score', column = 'scorefiles')
+#test2.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
+#test2.iterateaggregations(func = 'score', column = 'scorefiles', pp_model = NGR())
 #test2.iterateaggregations(func = 'skill', column = 'scores')
 
 #def replace(string, first, later, number = None):

@@ -139,9 +139,9 @@ class Forecast(object):
             
             try:
                 comb_varres = xr.open_dataset(self.basedir + self.interfile_varres)
-                print('Combined file successfully loaded')
+                print('Combined varres file successfully loaded')
             except OSError:
-                print('Combined file needs creation')
+                print('Combined varres file needs creation')
                 if prevent_cascade:
                     raise CascadeError
                 self.join_members(pf_in = self.pffile_varres,
@@ -327,7 +327,9 @@ class Hindcast(object):
             print('Ensemble file successfully loaded')
         except:
             print('Ensemble file needs to be downloaded')
-            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = False), self.basedir + pf_in)
+            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = False,
+                                     varres = (pf_in == self.pffile_varres),
+                                     stepbeforeresswitch = self.stepbeforeresswitch), self.basedir + pf_in)
             pf = pygrib.open(self.basedir + pf_in)
         
         try:
@@ -335,7 +337,9 @@ class Hindcast(object):
             print('Control file successfully loaded')
         except:
             print('Control file needs to be downloaded')
-            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = True), self.basedir + cf_in)
+            server.execute(mars_dict(self.hdate, hdate = self.marshdates, contr = True,
+                                     varres = (cf_in == self.cffile_varres),
+                                     stepbeforeresswitch = self.stepbeforeresswitch), self.basedir + cf_in)
             cf = pygrib.open(self.basedir + cf_in)
         
         params = list(set([x.cfVarName for x in pf.read(100)])) # Enough to get the variables. ["167.128","121.128","228.128"] or "228.230"
@@ -415,3 +419,5 @@ class Hindcast(object):
             hindcast.cleanup()
 
 #start_batch(tmin = '2018-06-07', tmax = '2018-06-07')
+#start_batch(tmin = '2018-06-11', tmax = '2018-06-11')
+#start_batch(tmin = '2018-06-14', tmax = '2018-06-14')
