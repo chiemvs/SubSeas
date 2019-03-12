@@ -15,7 +15,6 @@ def agg_space(array, orlats, orlons, step, skipna = False, method = 'mean', by_d
     In the case of degree grouping the groups might not contain an equal number of cells.
     Returns an adapted array and spacemethod string for documentation.
     TODO: make efficient handling of dask arrays. Ideas for this are commented, problem is that stacking and groupby fuck up the efficiency.
-    TODO: enable minimum number of cells for computation.
     """
     
     # Binning. The rims are added to the closest bin
@@ -80,6 +79,7 @@ def agg_time(array, freq = 'w' , method = 'mean'):
     """
     Uses the pandas frequency indicators. Method can be mean, min, max, std
     Completely lazy when loading is lazy. Returns an adapted array and a timemethod string for documentation.
+    Skipna is false so no non-observations within the period allowed.
     """
     f = getattr(array.resample(time = freq, closed = 'left', label = 'left'), method) # timestamp is left and can be changed with label = 'right'
     array = f('time', keep_attrs=True, skipna = False) 

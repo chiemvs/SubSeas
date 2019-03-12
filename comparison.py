@@ -442,10 +442,22 @@ class ScoreAnalysis(object):
         """
         Samples the score entries. First grouping and then random number generation. 100% of the sample size with replacement. Average and compute skill score. Return a 1000 skill scores.
         """
-        scorecols = [col for col in ['rawbrier', 'climbrier','corbrier'] if (col in self.frame.columns)]
+        potential_cols = ['rawbrier', 'climbrier','corbrier']
+        scorecols = [col for col in potential_cols if (col in self.frame.columns)]
         grouped =  self.frame.groupby(groupers)
-        return(grouped.mean()[scorecols].compute())
+        scores = grouped.mean()[scorecols].compute()
+        try:
+            scores['rawskill'] = 1 - scores['rawbrier'] / scores['climbrier']
+            scores['corskill'] = 1 - scores['corbrier'] / scores['climbrier']
+        except:
+            pass
+        return(scores)
         # DataFrame.sample(frac = 1, replace = True)
+    
+    def skill_score(self):
+        """
+        
+        """
             
 #ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
 #ddtx.recollect(booksname='books_tx_JJA_41r1_3D_max_1.5_degrees_max.csv') #dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')

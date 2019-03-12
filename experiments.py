@@ -124,7 +124,7 @@ class Experiment(object):
         Read the obs and clim. make a comparison object which computes the scores in the dask dataframe. 
         This dask dataframe is exported.
         Returns a list with intermediate filenames of the raw, climatological and corrected scores.
-        Has a post-processing step if the pp_model is supplied
+        Has a post-processing step if the pp_model is supplied. Fit is the same regardless of the quantile, so done only once.
         """
         alignment = ForecastToObsAlignment(season = self.season, cycle=self.cycle)
         alignment.recollect(booksname = self.log.loc[(spaceagg, timeagg),('booksname','')])
@@ -134,8 +134,17 @@ class Experiment(object):
             climatology = Climatology(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('climname', quantile)]})
             climatology.localclim() # loading in this case. Creation was done in the makeclim method.
             comp = Comparison(alignment = alignment, climatology = climatology)
+            # Only in the first instance we are going to fit a model. Attributes are stored in memory and joined to the comp objects for other quantiles.
             if not pp_model is None:
-                comp.fit_pp_models(pp_model= pp_model, groupers = ['leadtime','latitude','longitude'])
+                if self.quantiles.index(quantile) == 0:
+                    comp.fit_pp_models(pp_model= pp_model, groupers = ['leadtime','latitude','longitude'])
+                    firstfit = comp.fits.copy()
+                    firstfitgroupers = comp.fitgroupers
+                    firstfitcoefcols = comp.coefcols
+                else:
+                    comp.fits = firstfit
+                    comp.fitgroupers = firstfitgroupers
+                    comp.coefcols = firstfitcoefcols
                 comp.make_pp_forecast(pp_model = pp_model)
             comp.brierscore()
             scorefile = comp.export()
