@@ -75,16 +75,24 @@ def agg_space(array, orlats, orlons, step, skipna = False, method = 'mean', by_d
     spacemethod = '-'.join([str(step), 'cells', method]) if not by_degree else '-'.join([str(step), 'degrees', method])
     return(array, spacemethod)
 
-def agg_time(array, freq = 'w' , method = 'mean'):
+def agg_time(array, freq = 'w', method = 'mean', ndayagg = None):
     """
-    Uses the pandas frequency indicators. Method can be mean, min, max, std
+    Assumes an input array with a regularly spaced daily time index. Uses the pandas frequency indicators. Method can be mean, min, max, std
     Completely lazy when loading is lazy. Returns an adapted array and a timemethod string for documentation.
     Skipna is false so no non-observations within the period allowed.
+    Returns array with the last (incomplete) interval removed if the input length is not perfectly divisible.
     """
+    input_length = len(array.time)
     f = getattr(array.resample(time = freq, closed = 'left', label = 'left'), method) # timestamp is left and can be changed with label = 'right'
-    array = f('time', keep_attrs=True, skipna = False) 
+    array = f('time', keep_attrs=True, skipna = False)
+    if ndayagg is None:
+        ndayagg = (array.time.values[1] - array.time.values[0]).astype('timedelta64[D]').item().days # infer the interval length.
     timemethod = '-'.join([freq,method])
-    return(array, timemethod)
+    if (input_length % ndayagg) != 0:
+        return(array.isel(time = slice(0,-1,None)), timemethod)
+    else:    
+        return(array, timemethod)
+    
 
 def unitconversionfactors(xunit, yunit):
     """

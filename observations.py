@@ -231,10 +231,8 @@ class Climatology(object):
                 from helper_functions import nanquantile
             
             if (self.ndayagg > 1):
-                try:
-                    doygroups = daily_obs_array.groupby('time.dayofyear')
-                except AttributeError:
-                    raise TypeError('provide a daily_obs_array needed for the climatology of aggregated observations')
+                freq, method = obs.timemethod.split('-')
+                doygroups = daily_obs_array.groupby('time.dayofyear')
             else:
                 doygroups = obs.array.groupby('time.dayofyear')
             
@@ -250,6 +248,16 @@ class Climatology(object):
                 window[ window > maxday ] -= maxday
                 
                 complete = xr.concat([doygroups[str(key)] for key in window if str(key) in doygroups.keys()], dim = 'time')
+                # Call for the same aggregation on the daily complete by slicing up each past sequence of our doy-window, and progressively removing them from the complete set, such that the minimum time can be used for each slice. 
+                if (self.ndayagg > 1):
+                    aggregated_slices = []
+                    while len(complete.time) > 0:
+                        slice_tmin = complete.time.min().values
+                        print(slice_tmin)
+                        slice_arr = complete.sortby('time').sel(time = slice(slice_tmin, slice_tmin + np.timedelta64(len(window), 'D'))) # Soft searching method. Based on the minimum found in the set. Does not crash if certain doys are less present (like 366)
+                        aggregated_slices.append(agg_time(array = slice_arr, freq = freq, method = method, ndayagg = self.ndayagg)[0]) # [0] for only the returned array. not the timemethod             
+                        complete = complete.drop(slice_arr.time.values, dim = 'time') # remove so new minimum can be found.
+                    complete = xr.concat(aggregated_slices, dim = 'time')
     
                 if mean:
                     reduced = complete.mean('time', keep_attrs = True)
@@ -339,7 +347,13 @@ class EventClassification(object):
         self.exceedance = xr.concat(results, dim = 'time')
 
        
-#test1 = SurfaceObservations('rr')
+#test1 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+#test1.load(tmax = '1980-01-01')
+#test2 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+#test2.load(tmax = '1980-01-01')
+#test2.aggregatetime(freq = '3D')
+#self = Climatology(test2.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+#self.localclim(obs = test2, daysbefore = 5, daysafter = 5, daily_obs_array = test1.array, mean = False, quant = 0.9)
 #test1.load(tmax = '1980-01-01', lazychunk={'time':300})
 
 #clas = EventClassification(obs = test1, obsd = test1)
