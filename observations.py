@@ -271,7 +271,12 @@ class Climatology(object):
                 else:
                     raise ValueError('Provide a quantile if mean is set to False')
                 
-                print('computed clim of', doy)
+                # Setting a minimum on the amount of observations that went into the mean and quantile computation.
+                number_nan = reduced.isnull().sum().values
+                reduced = reduced.where(complete.count('time') >= 10, np.nan)
+                number_nan = reduced.isnull().sum().values - number_nan
+                
+                print('computed clim of', doy, ', removed', number_nan, 'locations with < 10 obs.')
                 reduced.coords['doy'] = doy
                 results.append(reduced)
             
@@ -352,7 +357,8 @@ class EventClassification(object):
 #test2 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
 #test2.load(tmax = '1980-01-01')
 #test2.aggregatetime(freq = '3D')
-#self = Climatology(test2.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+#self = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+#self.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = True)
 #self.localclim(obs = test2, daysbefore = 5, daysafter = 5, daily_obs_array = test1.array, mean = False, quant = 0.9)
 #test1.load(tmax = '1980-01-01', lazychunk={'time':300})
 
