@@ -161,7 +161,7 @@ class Experiment(object):
         
         for quantile in self.quantiles:    
             scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)])
-            skillscore = scoreanalysis.bootstrap_skillscore(groupers=['leadtime'])
+            skillscore = scoreanalysis.mean_skill_score(groupers=['leadtime'])
             # rename the columns
             skillscore.columns = skillscore.columns.droplevel(1)
             result[self.quantiles.index(quantile)] = skillscore

@@ -254,7 +254,7 @@ class Climatology(object):
                     while len(complete.time) > 0:
                         slice_tmin = complete.time.min().values
                         print(slice_tmin)
-                        slice_arr = complete.sortby('time').sel(time = slice(slice_tmin, slice_tmin + np.timedelta64(len(window), 'D'))) # Soft searching method. Based on the minimum found in the set. Does not crash if certain doys are less present (like 366)
+                        slice_arr = complete.sortby('time').sel(time = slice(str(slice_tmin), str(slice_tmin + np.timedelta64(len(window), 'D')))) # Soft searching method. Based on the minimum found in the set. Does not crash if certain doys are less present (like 366)
                         aggregated_slices.append(agg_time(array = slice_arr, freq = freq, method = method, ndayagg = self.ndayagg)[0]) # [0] for only the returned array. not the timemethod             
                         complete = complete.drop(slice_arr.time.values, dim = 'time') # remove so new minimum can be found.
                     complete = xr.concat(aggregated_slices, dim = 'time')

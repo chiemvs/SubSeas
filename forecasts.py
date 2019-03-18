@@ -250,7 +250,7 @@ class Forecast(object):
         self.timemethod = '1D'
         self.spacemethod = '0.38-degrees'
         
-    def aggregatetime(self, freq = 'w' , method = 'mean', keep_leadtime = False):
+    def aggregatetime(self, freq = 'w' , method = 'mean', ndayagg = None, keep_leadtime = False):
         """
         Uses the pandas frequency indicators. Method can be mean, min, max, std
         Completely lazy when loading is lazy. Array needs to be already loaded because of variable choice.
@@ -259,10 +259,10 @@ class Forecast(object):
         
         if keep_leadtime:
             lead0 = self.array.coords['leadtime'].isel(time = slice(0,1))
-            self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
+            self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, ndayagg = ndayagg)
             self.array.coords.update({'leadtime':lead0})
         else:
-            self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
+            self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, ndayagg = ndayagg)
     
     def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = True):
         """

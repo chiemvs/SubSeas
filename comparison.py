@@ -97,7 +97,7 @@ class ForecastToObsAlignment(object):
                     except AttributeError:
                         print('Aligning time aggregation')
                         freq, method = obstimemethod.split('-')
-                        forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True)
+                        forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True, ndayagg = self.time_agg)
                 
                 if space:
                     # Check space aggregation
@@ -437,28 +437,58 @@ class ScoreAnalysis(object):
         self.basedir = '/nobackup/users/straaten/scores/'
         self.filepath = self.basedir + scorefile + '.h5'
         self.frame = dd.read_hdf(self.filepath, key = 'scores')
+        self.frame = self.frame.drop('forecast', axis = 1)
+        self.frame.columns = self.frame.columns.droplevel(1)
+        self.scorecols = [col for col in ['rawbrier', 'climbrier','corbrier'] if (col in self.frame.columns)]
     
-    def bootstrap_meanscore(self, groupers = ['leadtime']):
+    def mean_skill_score(self, groupers = ['leadtime']):
         """
-        Samples the score entries. First grouping and then random number generation. 100% of the sample size with replacement. Average and compute skill score. Return a 1000 skill scores.
+        Grouping. Average and compute skill score.
         """
-        potential_cols = ['rawbrier', 'climbrier','corbrier']
-        scorecols = [col for col in potential_cols if (col in self.frame.columns)]
         grouped =  self.frame.groupby(groupers)
-        scores = grouped.mean()[scorecols].compute()
+        scores = grouped.mean()[self.scorecols].compute()
         try:
             scores['rawskill'] = 1 - scores['rawbrier'] / scores['climbrier']
             scores['corskill'] = 1 - scores['corbrier'] / scores['climbrier']
         except:
             pass
         return(scores)
-        # DataFrame.sample(frac = 1, replace = True)
-    
-    def skill_score(self):
+
+    def mean_skill_score2(self, groupers = ['leadtime']):
         """
+        Grouping. Average and compute skill score.
+        """
+        returndict = { col + 'skill':'float64' for col in self.scorecols}
+        grouped =  self.frame.groupby(groupers)
         
+        scores = grouped.apply(self.eval_skillscore, meta = returndict, **{'scorecols':self.scorecols, 'returncols': list(returndict.keys())}).compute()
+        return(scores)       
+    
+    def eval_skillscore(self, data, scorecols, returncols):
         """
-            
+        An isolated data group on which to evaluate skill of mean brierscores. Returns array with same length as scorecols. Climatology obviously has skill 1
+        """
+        meanscore = data[scorecols].mean(axis = 0)
+        for scorecol, returncol in zip(scorecols, returncols):
+            meanscore[returncol] = 1 - meanscore[scorecol]/meanscore['climbrier'] 
+        return(meanscore[returncols].to_frame().T)
+    
+    def bootstrap_skill_score(self, groupers = ['leadtime']):
+        """
+        Samples the score entries. First grouping and then random number generation. 100% of the sample size with replacement.
+        """
+        potential_cols = ['rawbrier', 'climbrier','corbrier']
+        scorecols = [col for col in potential_cols if (col in self.frame.columns)]
+        grouped =  self.frame.groupby(groupers)
+        
+        def bounds_p95(df, scorecols):
+            """
+            returns Skill_score bound for two-tailed 0.05
+            """
+             # DataFrame.sample(frac = 1, replace = True)
+        
+        grouped.apply(bounds_p95, meta = {})
+
 #ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
 #ddtx.recollect(booksname='books_tx_JJA_41r1_3D_max_1.5_degrees_max.csv') #dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
 #climatology = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_3D-max_1.5-degrees-max_5_5_q0.9'})
@@ -481,8 +511,9 @@ class ScoreAnalysis(object):
 #self.brierscore()
 #self.export()
 
-#temp = ScoreAnalysis(scorefile = 'tx_JJA_41r1_3D_max_1.5_degrees_max_tx_clim_1980-05-30_2010-08-31_3D-max_1.5-degrees-max_5_5_q0.9')
-#sc = temp.bootstrap_skillscore()
+self = ScoreAnalysis(scorefile = 'tg_DJF_41r1_4D-mean_2-degrees-mean_tg_clim_1980-05-30_2015-02-28_4D-mean_2-degrees-mean_5_5_q0.33')
+sc = self.mean_skill_score()
+sc2 = self.mean_skill_score2()
 
 #temp2 = ScoreAnalysis(scorefile= 'pop_DJF_41r1_1D_0.25_degrees_pop_clim_1980-01-01_2017-12-31_1D_0.25-degrees_5_5_mean')
 #sc2 = temp2.bootstrap_skillscore()
