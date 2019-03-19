@@ -161,9 +161,7 @@ class Experiment(object):
         
         for quantile in self.quantiles:    
             scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)])
-            skillscore = scoreanalysis.mean_skill_score(groupers=['leadtime'])
-            # rename the columns
-            skillscore.columns = skillscore.columns.droplevel(1)
+            skillscore = scoreanalysis.mean_skill_score(groupers=['leadtime']) # Uses the old scoring. Apply bootstrapping later on.
             result[self.quantiles.index(quantile)] = skillscore
         
         return(result)
@@ -211,9 +209,9 @@ Mean temperature benchmarks. Observations split into two decades. Otherwise pote
 """
 
 # Calling of the class        
-test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
-                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66])
-test2.setuplog()
+#test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
+#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66])
+#test2.setuplog()
 #test2.log = test2.log.assign(**{'obsname2':None}) # Extra observation column.
 #test2.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1995-11-30','tmax':'2005-02-28'})
 #test2.iterateaggregations(func = 'prepareobs', column = 'obsname2', kwargs = {'tmin':'2005-03-01','tmax':'2015-02-28'})
@@ -232,30 +230,6 @@ test2.setuplog()
 
 #test2.log['obsname'] = test2.log['obsname'].apply(replace, args = ('_','-'))
 #test2.log['obsname'] = test2.log['obsname'].apply(replace, args = ('.','_', 4))
-
-"""
-4 years summer temperatures 1995-1998. In Forecast domain. 
-match forecasts on .38 with obs on .25. Climatology of +- 5days of 30 years.
-"""
-#quantile = 0.9
-#obs1day = SurfaceObservations('tg')
-#obs1day.load(tmin = '1970-05-30', tmax = '2000-05-30', llcrnr = (25,-30), rucrnr = (75,75))
-#windowed = EventClassification(obs=obs1day)
-#windowed.localclim(daysbefore=5, daysafter=5, mean = False, quant=quantile)
-
-#alignment = ForecastToObsAlignment(season = 'JJA', observations=obs1day)
-# alignment.force_resolution(time = True, space = False)
-#alignment.recollect(booksname='books_tg_JJA.csv')
-#subset = dd.read_hdf('/nobackup/users/straaten/match/tg_JJA_badf363636004a808a701f250175131d.h5', key = 'intermediate')
-#temp = xr.open_dataarray('/nobackup/users/straaten/E-OBS/climatologyQ09.nc')
-#self = Comparison(alignedobject=alignment.alignedobject, climatology= temp)
-#test = self.brierscore(exceedquantile=True, groupers=['leadtime', 'latitude', 'longitude'])
-
-# self.frame.groupby(self.frame['time'].dt.dayofyear)
-# subset.compute()['time'].dt.dayofyear
-# self.frame['time'].dt.dayofyear
-#tg_JJA_badf363636004a808a701f250175131d.h5
-
 
 """
 Probability of precipitation matching.

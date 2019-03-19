@@ -453,41 +453,60 @@ class ScoreAnalysis(object):
         except:
             pass
         return(scores)
+    
+    def eval_skillscore(self, data, scorecols, returncols):
+        """
+        Is supplied an isolated data group on which to evaluate skill of mean brierscores.
+        These relevant columns are given as the scorecols.
+        Returns a series with same length as scorecols. Climatology obviously has skill 1
+        """
+        meanscore = data[scorecols].mean(axis = 0)
 
+        for scorecol, returncol in zip(scorecols, returncols):
+            meanscore[returncol] = 1 - meanscore[scorecol]/meanscore['climbrier'] 
+
+        return(meanscore[returncols])
+        
     def mean_skill_score2(self, groupers = ['leadtime']):
         """
         Grouping. Average and compute skill score.
         """
-        returndict = { col + 'skill':'float64' for col in self.scorecols}
+        returncols = [ col + 'skill' for col in self.scorecols]
         grouped =  self.frame.groupby(groupers)
         
-        scores = grouped.apply(self.eval_skillscore, meta = returndict, **{'scorecols':self.scorecols, 'returncols': list(returndict.keys())}).compute()
-        return(scores)       
-    
-    def eval_skillscore(self, data, scorecols, returncols):
-        """
-        An isolated data group on which to evaluate skill of mean brierscores. Returns array with same length as scorecols. Climatology obviously has skill 1
-        """
-        meanscore = data[scorecols].mean(axis = 0)
-        for scorecol, returncol in zip(scorecols, returncols):
-            meanscore[returncol] = 1 - meanscore[scorecol]/meanscore['climbrier'] 
-        return(meanscore[returncols].to_frame().T)
+        scores = grouped.apply(self.eval_skillscore, 
+                               meta = pd.DataFrame(dtype='float64', columns = returncols, index=['bss']), 
+                               **{'scorecols':self.scorecols, 'returncols': returncols}).compute()
+        return(scores)
     
     def bootstrap_skill_score(self, groupers = ['leadtime']):
         """
-        Samples the score entries. First grouping and then random number generation. 100% of the sample size with replacement.
+        Samples the score entries. First grouping and then random number generation in the bootstrapping.
+        Quantiles for the confidence intervals (also for plots) are defined here.
         """
-        potential_cols = ['rawbrier', 'climbrier','corbrier']
-        scorecols = [col for col in potential_cols if (col in self.frame.columns)]
+        returncols = [ col + 'skill' for col in self.scorecols]
+        quantiles = [0.025,0.5,0.975]
         grouped =  self.frame.groupby(groupers)
         
-        def bounds_p95(df, scorecols):
+        def bootstrap_quantiles(df, returncols, n_samples, quantiles):
             """
-            returns Skill_score bound for two-tailed 0.05
+            Acts per group. Creates n samples (with replacement) of the dataframe.
+            For each of these it calls the evaluate skill-scores method, whose output is collected.
+            From the sized n collection it distills and returns the desired quantiles.
+            NOTE: worry about decorrelation time and block-bootstrapping?
             """
-             # DataFrame.sample(frac = 1, replace = True)
+            collect = pd.DataFrame(dtype = 'float64', columns = returncols, index = pd.RangeIndex(stop = n_samples))
+            
+            for i in range(n_samples):
+                collect.iloc[i,:] = self.eval_skillscore(df[self.scorecols].sample(frac = 1, replace = True), scorecols = self.scorecols, returncols = returncols)
+                
+            return(collect.quantile(q = quantiles, axis = 0))
         
-        grouped.apply(bounds_p95, meta = {})
+        bounds = grouped.apply(bootstrap_quantiles,
+                               meta = pd.DataFrame(dtype='float64', columns = returncols, index=quantiles),
+                               **{'returncols':returncols, 'n_samples':200, 'quantiles':quantiles}).compute()
+        return(bounds)
+        
 
 #ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
 #ddtx.recollect(booksname='books_tx_JJA_41r1_3D_max_1.5_degrees_max.csv') #dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
@@ -511,9 +530,7 @@ class ScoreAnalysis(object):
 #self.brierscore()
 #self.export()
 
-self = ScoreAnalysis(scorefile = 'tg_DJF_41r1_4D-mean_2-degrees-mean_tg_clim_1980-05-30_2015-02-28_4D-mean_2-degrees-mean_5_5_q0.33')
-sc = self.mean_skill_score()
-sc2 = self.mean_skill_score2()
-
-#temp2 = ScoreAnalysis(scorefile= 'pop_DJF_41r1_1D_0.25_degrees_pop_clim_1980-01-01_2017-12-31_1D_0.25-degrees_5_5_mean')
-#sc2 = temp2.bootstrap_skillscore()
+#self = ScoreAnalysis(scorefile = 'tests/tg_DJF_41r1_4D-mean_2-degrees-mean_tg_clim_1980-05-30_2015-02-28_4D-mean_2-degrees-mean_5_5_q0.33')
+#sc = self.mean_skill_score()
+#sc2 = self.mean_skill_score2()
+#bs = self.bootstrap_skill_score()
