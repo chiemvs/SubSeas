@@ -331,6 +331,7 @@ class Comparison(object):
         self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 'fitfunc':fitfunc, 'modelcoefs':pp_model.model_coefs}).compute()
         self.fits.reset_index(inplace = True)
         self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']])
+        print('models fitted for all groups')
         # Store some information
         self.fitgroupers = groupers
         self.coefcols = pp_model.model_coefs
@@ -341,6 +342,7 @@ class Comparison(object):
         """
         self.frame['doy'] = self.frame['time'].dt.dayofyear
         self.frame = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
+        print('climatology lazily merged with frame')
         
         
     def make_pp_forecast(self, pp_model):
@@ -384,6 +386,7 @@ class Comparison(object):
             self.frame['climbrier'] = (self.frame['climatology'] - self.frame[obscolname])**2
         else: # In this case quantile scoring. and pi needs creation
             # Boolean comparison cannot be made in one go. because it does not now how to compare N*members agains the climatology of N
+            print('lazy boolcol (pi) construction')
             self.boolcols = list()
             for member in self.frame['forecast'].columns:
                 name = '_'.join(['bool',str(member)])
@@ -403,28 +406,25 @@ class Comparison(object):
         #grouped = delayed.groupby(groupers)
         #return(grouped.mean()[['rawbrier','climbrier']].compute())
     
-    def export(self):
+    def export(self, fits = True, frame = False):
         """
-        Downcast the float 64 columns in self.frame
-        Writes one dataframe for self.frame, discarding only the duplicated model coefficients if these are present. Fits are written to a separate entry. 
+        Put both in the same hdf file, but different key. So append mode. If frame than writes one dataframe for self.frame
+        float 64 columns are then downcasted and duplicated model coefficients are dropped if these are present. 
         """
-        f64cols = self.frame.dtypes.loc[self.frame.dtypes == 'float64',:].index.get_level_values(0)
-        self.frame[f64cols.tolist()] = self.frame[f64cols].astype('float32')
-        
+
         self.filepath = self.basedir + self.name + '.h5'
-        if hasattr(self, 'fits'):
+        if fits:
+            self.fits.to_hdf(self.filepath, key = 'fits', format = 'table', **{'mode':'a'})
+        if frame:
+            f64cols = self.frame.dtypes.loc[self.frame.dtypes == 'float64',:].index.get_level_values(0)
+            self.frame[f64cols.tolist()] = self.frame[f64cols].astype('float32')
             try:
-                self.frame.drop(self.coefcols + self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'w'})
+                self.frame.drop(self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'a'})
             except AttributeError:
-                self.frame.drop(self.coefcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'w'})
-            self.fits.to_hdf(self.filepath, key = 'fits', format = 'table')
-        else:
-            try:
-                self.frame.drop(self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'w'})
-            except AttributeError:
-                self.frame.to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'w'})
+                self.frame.to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'a'})
         
         return(self.name)
+        
 
 class ScoreAnalysis(object):
     """

@@ -11,6 +11,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import dask.dataframe as dd
+import dask.config
 from observations import SurfaceObservations, Climatology, EventClassification
 from forecasts import Forecast
 from comparison import ForecastToObsAlignment, Comparison, ScoreAnalysis
@@ -138,16 +139,17 @@ class Experiment(object):
             if not pp_model is None:
                 if self.quantiles.index(quantile) == 0:
                     comp.fit_pp_models(pp_model= pp_model, groupers = ['leadtime','latitude','longitude'])
-                    firstfit = comp.fits.copy()
+                    firstfitname = comp.export(fits = True, frame = False)
                     firstfitgroupers = comp.fitgroupers
                     firstfitcoefcols = comp.coefcols
                 else:
-                    comp.fits = firstfit
+                    comp.fits = pd.read_hdf(comp.basedir + firstfitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
                     comp.fitgroupers = firstfitgroupers
                     comp.coefcols = firstfitcoefcols
+                    comp.export(fits = True, frame = False)
                 comp.make_pp_forecast(pp_model = pp_model)
             comp.brierscore()
-            scorefile = comp.export()
+            scorefile = comp.export(fits=False, frame = True)
 
             result[self.quantiles.index(quantile)] = scorefile
         
@@ -208,10 +210,12 @@ Max temperature benchmarks.
 Mean temperature benchmarks. Observations split into two decades. Otherwise potential memory error in matching.
 """
 
+#dask.config.set(temporary_directory='/nobackup/users/straaten/')
+
 # Calling of the class        
-#test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
-#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66])
-#test2.setuplog()
+test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
+                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66])
+test2.setuplog()
 #test2.log = test2.log.assign(**{'obsname2':None}) # Extra observation column.
 #test2.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1995-11-30','tmax':'2005-02-28'})
 #test2.iterateaggregations(func = 'prepareobs', column = 'obsname2', kwargs = {'tmin':'2005-03-01','tmax':'2015-02-28'})
@@ -219,7 +223,7 @@ Mean temperature benchmarks. Observations split into two decades. Otherwise pote
 #test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
 #test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname2'}, overwrite = True) # Replaces with updated books name.
 #test2.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
-#test2.iterateaggregations(func = 'score', column = 'scorefiles', pp_model = NGR())
+#test2.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
 #test2.iterateaggregations(func = 'skill', column = 'scores')
 
 #def replace(string, first, later, number = None):
