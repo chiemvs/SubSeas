@@ -279,8 +279,8 @@ class Comparison(object):
         In this apply a model fitting function is called which uses the predictor columns and the observation column.
         pp_model is an object from the fitting script. It has a fit method, returning parameters and a predict method.
         """
-        
-        def cv_fit(data, nfolds, fitfunc, modelcoefs):
+
+        def cv_fit(data, nfolds, fitfunc, modelcoefs, uniquetimes = False):
             """
             Acts per group (predictors should already be constructed). Calls a fitting function 
             in a time-cross-validation fashion. Supplies data as (nfolds - 1)/nfolds for training, 
@@ -292,31 +292,31 @@ class Comparison(object):
             nperfold = len(data) // nfolds
             foldindex = range(1,nfolds+1)
             
-            # Pre-allocating a structure for the dataframe.
-            coefs = pd.DataFrame(data = np.nan, index = data['time'], columns = modelcoefs)
+            # Pre-allocating a full size array structure for the eventual dataframe.
+            coefs = np.zeros((len(data), len(modelcoefs)))
                         
-            # Need inverse of the data test index to select train. For loc is done through np.setdiff1d
-            # Stored by increasing time enables the cv to be done by integer location. (assuming equal group size). 
+            # Need inverse of the data test index to select train.
+            # Stored by increasing time enables the cv to be done by location. (assuming equal group size). 
             # Times are ppossibly non-unique when also fitting to a spatial pool
-            # Later we remove duplicate times (if present)
-            full_ind = np.arange(len(coefs))
-            
+            # Later we remove duplicate times (if present and we gave uniquetimes = False)
+                        
             for fold in foldindex:
+                test_ind = np.full((len(data),), False) # indexer to all data
                 if (fold == foldindex[-1]):
-                    test_ind = np.arange((fold - 1)*nperfold, len(coefs))
+                    test_ind[slice((fold - 1)*nperfold, None, None)] = True
                 else:
-                    test_ind = np.arange(((fold - 1)*nperfold),(fold*nperfold))
-
-                train_ind = np.setdiff1d(full_ind, test_ind)
+                    test_ind[slice((fold - 1)*nperfold, (fold*nperfold), None)] = True
                 
-                # Calling of the fitting function on the training Should return an 1d array with the indices (same size as modelcoefs)
-                fitted_coef = fitfunc(data.iloc[train_ind,:])
-                
-                # Write to the frame with time index. Should the fold be prepended as extra level in a multi-index?
-                coefs.iloc[test_ind,:] = fitted_coef
+                # Calling of the fitting function on the training Should return an 1d array with the indices (same size as modelcoefs)           
+                # Write into the full sized array.
+                coefs[test_ind] = fitfunc(data[~test_ind])
             
             # Returning only the unique time indices but this eases the wrapping and joining of the grouped results later on.
-            return(coefs[~coefs.index.duplicated(keep='first')])
+            if uniquetimes:
+                return(pd.DataFrame(data = coefs, index = data['time'], columns = modelcoefs))
+            else:
+                duplicated = data['time'].duplicated(keep = 'first')
+                return(pd.DataFrame(data = coefs[~duplicated], index = data['time'][~duplicated], columns = modelcoefs))
         
         # Computation of predictands for the models.
         self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
@@ -325,16 +325,21 @@ class Comparison(object):
         
         fitfunc = getattr(pp_model, 'fit')
         fitreturns = dict(itertools.product(pp_model.model_coefs, ['float32']))
-        
-        grouped = self.frame.groupby(groupers)
-        
-        self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 'fitfunc':fitfunc, 'modelcoefs':pp_model.model_coefs}).compute()
-        self.fits.reset_index(inplace = True)
-        self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']])
-        print('models fitted for all groups')
         # Store some information
         self.fitgroupers = groupers
         self.coefcols = pp_model.model_coefs
+        
+        # Actual computation. Passing information to cv_fit.
+        grouped = self.frame.groupby(groupers)        
+        self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 
+                                                                'fitfunc':fitfunc, 
+                                                                'modelcoefs':pp_model.model_coefs,
+                                                                'uniquetimes':(groupers == ['leadtime','latitude','longitude'])}).compute()
+        
+        self.fits.reset_index(inplace = True)
+        self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']])
+        print('models fitted for all groups')
+
     
     def merge_to_clim(self):
         """
@@ -507,6 +512,11 @@ class ScoreAnalysis(object):
                                **{'returncols':returncols, 'n_samples':200, 'quantiles':quantiles}).compute()
         return(bounds)
         
+#ddtg = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
+#ddtg.recollect(booksname= 'books_tg_DJF_41r1_7D-mean_3-degrees-mean.csv')
+#climatology = Climatology('tg', **{'name':'tg_clim_1980-05-30_2015-02-28_7D-mean_3-degrees-mean_5_5_q0.1'})
+#climatology.localclim()
+#self = Comparison(alignment=ddtg, climatology = climatology)
 
 #ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
 #ddtx.recollect(booksname='books_tx_JJA_41r1_3D_max_1.5_degrees_max.csv') #dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')

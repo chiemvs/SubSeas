@@ -60,7 +60,7 @@ class Experiment(object):
         """
         Wrapper that calls the function with a specific spaceagg and timeagg and writes the returns of the function to the column if a name was given
         """
-        for spaceagg, timeagg in itertools.product(self.spaceaggregations,self.timeaggregations):
+        for spaceagg, timeagg in itertools.product(self.spaceaggregations[::-1],self.timeaggregations[::-1]):
             if self.log.loc[(spaceagg, timeagg),column].isna().any() or overwrite:
                 f = getattr(self, func)
                 ret = f(spaceagg, timeagg, **kwargs)
@@ -210,7 +210,7 @@ Max temperature benchmarks.
 Mean temperature benchmarks. Observations split into two decades. Otherwise potential memory error in matching.
 """
 
-#dask.config.set(temporary_directory='/nobackup/users/straaten/')
+dask.config.set(temporary_directory='/nobackup/users/straaten/')
 
 # Calling of the class        
 test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
@@ -223,7 +223,7 @@ test2.setuplog()
 #test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
 #test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname2'}, overwrite = True) # Replaces with updated books name.
 #test2.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
-#test2.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
+test2.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
 #test2.iterateaggregations(func = 'skill', column = 'scores')
 
 #def replace(string, first, later, number = None):
