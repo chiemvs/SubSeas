@@ -319,9 +319,7 @@ class Comparison(object):
                 return(pd.DataFrame(data = coefs[~duplicated], index = data['time'][~duplicated], columns = modelcoefs))
         
         # Computation of predictands for the models.
-        self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
-        if pp_model.need_std:
-            self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
+        self.compute_predictors(pp_model = pp_model)
         
         fitfunc = getattr(pp_model, 'fit')
         fitreturns = dict(itertools.product(pp_model.model_coefs, ['float32']))
@@ -348,7 +346,15 @@ class Comparison(object):
         self.frame['doy'] = self.frame['time'].dt.dayofyear
         self.frame = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
         print('climatology lazily merged with frame')
-        
+    
+    def compute_predictors(self, pp_model):
+        """
+        Currently adds ensmean and ensstd to the frame if they are not yet present as columns
+        """
+        if not 'ensmean' in self.frame.columns:
+            self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
+        if pp_model.need_std and (not 'ensstd' in self.frame.columns):
+            self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
         
     def make_pp_forecast(self, pp_model):
         """
@@ -359,6 +365,8 @@ class Comparison(object):
         """
         
         joincolumns = ['time'] + self.fitgroupers
+        
+        self.compute_predictors(pp_model = pp_model) # computation if not present yet (fit was loaded, fitted somewhere else)
         
         self.frame = self.frame.merge(self.fits, on = joincolumns, how = 'left')
         
@@ -419,6 +427,9 @@ class Comparison(object):
 
         self.filepath = self.basedir + self.name + '.h5'
         if fits:
+            # Temporary column fix Not sure if it works.
+            f64cols = self.fits.dtypes.loc[self.fits.dtypes == 'float64',:].index.get_level_values(0)
+            self.fits[f64cols.tolist()] = self.fits[f64cols].astype('float32')
             self.fits.to_hdf(self.filepath, key = 'fits', format = 'table', **{'mode':'a'})
         if frame:
             f64cols = self.frame.dtypes.loc[self.frame.dtypes == 'float64',:].index.get_level_values(0)

@@ -163,7 +163,8 @@ class Experiment(object):
         
         for quantile in self.quantiles:    
             scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)])
-            skillscore = scoreanalysis.mean_skill_score(groupers=['leadtime']) # Uses the old scoring. Apply bootstrapping later on.
+            skillscore = scoreanalysis.bootstrap_skill_score(groupers=['leadtime'])
+            #skillscore = scoreanalysis.mean_skill_score2(groupers=['leadtime']) # Uses the new scoring. Apply bootstrapping later on.
             result[self.quantiles.index(quantile)] = skillscore
         
         return(result)
