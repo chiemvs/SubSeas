@@ -259,12 +259,15 @@ class Comparison(object):
         self.frame = alignment.alignedobject
         self.basedir = '/nobackup/users/straaten/scores/'
         self.name = alignment.books_name[6:-4] + '_' + climatology.name
+        self.grouperdowncasting = {'leadtime':'integer','latitude':'float','longitude':'float'}
         
+        # Construction of climatology
         climatology.clim.name = 'climatology'
         self.clim = climatology.clim.to_dataframe().dropna(axis = 0, how = 'any')
         # Some formatting to make merging with the two-level aligned object easier
         self.clim.reset_index(inplace = True)
         self.clim[['latitude','longitude','climatology']] = self.clim[['latitude','longitude','climatology']].apply(pd.to_numeric, downcast = 'float')
+        self.clim['doy'] = pd.to_numeric(self.clim['doy'], downcast = 'integer')
         self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']])
         try:
             self.quantile = climatology.clim.attrs['quantile']
@@ -293,7 +296,7 @@ class Comparison(object):
             foldindex = range(1,nfolds+1)
             
             # Pre-allocating a full size array structure for the eventual dataframe.
-            coefs = np.zeros((len(data), len(modelcoefs)))
+            coefs = np.zeros((len(data), len(modelcoefs)), dtype = 'float32')
                         
             # Need inverse of the data test index to select train.
             # Stored by increasing time enables the cv to be done by location. (assuming equal group size). 
@@ -308,7 +311,7 @@ class Comparison(object):
                     test_ind[slice((fold - 1)*nperfold, (fold*nperfold), None)] = True
                 
                 # Calling of the fitting function on the training Should return an 1d array with the indices (same size as modelcoefs)           
-                # Write into the full sized array.
+                # Write into the full sized array, this converts 64-bit fitting result to float32
                 coefs[test_ind] = fitfunc(data[~test_ind])
             
             # Returning only the unique time indices but this eases the wrapping and joining of the grouped results later on.
@@ -323,8 +326,9 @@ class Comparison(object):
         
         fitfunc = getattr(pp_model, 'fit')
         fitreturns = dict(itertools.product(pp_model.model_coefs, ['float32']))
-        # Store some information
+        # Store some information. We have unique times when all possible groupers are provided, and there is no pooling.
         self.fitgroupers = groupers
+        uniquetimes = all([(group in groupers) for group in list(self.grouperdowncasting.keys())])
         self.coefcols = pp_model.model_coefs
         
         # Actual computation. Passing information to cv_fit.
@@ -332,10 +336,17 @@ class Comparison(object):
         self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 
                                                                 'fitfunc':fitfunc, 
                                                                 'modelcoefs':pp_model.model_coefs,
-                                                                'uniquetimes':(groupers == ['leadtime','latitude','longitude'])}).compute()
+                                                                'uniquetimes':uniquetimes}).compute()
         
+        # Reset the multiindex created by the grouping to columns so that the fits can be stored in hdf table format.
+        # The created index has 64 bits. we want to downcast leadtime to int8, latitude and longitude to float32
         self.fits.reset_index(inplace = True)
-        self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']])
+        for group in list(self.grouperdowncasting.keys()):
+            try:
+                self.fits[group] = pd.to_numeric(self.fits[group], downcast = self.grouperdowncasting[group])
+            except KeyError:
+                pass
+        self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']]) # To be able to merge with self.frame
         print('models fitted for all groups')
 
     
@@ -343,7 +354,7 @@ class Comparison(object):
         """
         Based on day-of-year, writes an extra column to the dataframe with 'climatology', either a numeric quantile, or a climatological probability of occurrence.
         """
-        self.frame['doy'] = self.frame['time'].dt.dayofyear
+        self.frame['doy'] = self.frame['time'].dt.dayofyear.astype('int16')
         self.frame = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
         print('climatology lazily merged with frame')
     
@@ -405,10 +416,10 @@ class Comparison(object):
                 name = '_'.join(['bool',str(member)])
                 self.frame[name] = self.frame[('forecast',member)] > self.frame['climatology']
                 self.boolcols.append(name)
-            self.frame['pi'] = self.frame[self.boolcols].sum(axis = 1) / len(self.frame['forecast'].columns) # or use .count(axis = 1) if members might be NA
+            self.frame['pi'] = (self.frame[self.boolcols].sum(axis = 1) / len(self.frame['forecast'].columns)).astype('float32') # or use .count(axis = 1) if members might be NA
             self.frame['oi'] = self.frame['observation'] > self.frame['climatology']
             obscolname = 'oi'
-            self.frame['climbrier'] = ((1 - self.quantile) - self.frame[obscolname])**2 # Add the climatological score. use self.quantile.
+            self.frame['climbrier'] = (np.array(1 - self.quantile, dtype = 'float32') - self.frame[obscolname])**2 # Add the climatological score. use self.quantile.
             
         self.frame['rawbrier'] = (self.frame['pi'] - self.frame[obscolname])**2
         
@@ -422,18 +433,13 @@ class Comparison(object):
     def export(self, fits = True, frame = False):
         """
         Put both in the same hdf file, but different key. So append mode. If frame than writes one dataframe for self.frame
-        float 64 columns are then downcasted and duplicated model coefficients are dropped if these are present. 
+        float 64 columns from the brierscoring are then downcasted and duplicated model coefficients are dropped if these are present. 
         """
 
         self.filepath = self.basedir + self.name + '.h5'
         if fits:
-            # Temporary column fix Not sure if it works.
-            f64cols = self.fits.dtypes.loc[self.fits.dtypes == 'float64',:].index.get_level_values(0)
-            self.fits[f64cols.tolist()] = self.fits[f64cols].astype('float32')
             self.fits.to_hdf(self.filepath, key = 'fits', format = 'table', **{'mode':'a'})
         if frame:
-            f64cols = self.frame.dtypes.loc[self.frame.dtypes == 'float64',:].index.get_level_values(0)
-            self.frame[f64cols.tolist()] = self.frame[f64cols].astype('float32')
             try:
                 self.frame.drop(self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'a'})
             except AttributeError:

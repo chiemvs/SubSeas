@@ -47,7 +47,7 @@ class NGR(object):
     def fit(self, train):
         """
         Uses CRPS-minimization for the fitting to the train dataframe.
-        Returns an array with 4 model coefs. 
+        Returns an array with 4 model coefs. Internal conversion to float64 for more precise optimization.
         """
         res = optimize.minimize(self.crpscostfunc, x0 = [0,1,0.5,0.2], jac = True,
                         args=(train[self.predcols[0]].values.astype('float64'),
@@ -68,7 +68,7 @@ class NGR(object):
         except KeyError:
             mu_cor = parameters[0] + parameters[1] * test[self.predcols[0]]
             std_cor = np.exp(parameters[2] + parameters[3] * test[self.predcols[1]])
-        return(norm.sf(x = test[quant_col], loc = mu_cor, scale = std_cor))
+        return(norm.sf(x = test[quant_col], loc = mu_cor, scale = std_cor).astype('float32'))
     
 class Logistic(object):
     """
