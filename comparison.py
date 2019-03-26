@@ -483,11 +483,12 @@ class ScoreAnalysis(object):
         Returns a series with same length as scorecols. Climatology obviously has skill 1
         """
         meanscore = data[scorecols].mean(axis = 0)
+        returns = np.zeros((len(returncols),), dtype = 'float32')
 
         for scorecol, returncol in zip(scorecols, returncols):
-            meanscore[returncol] = 1 - meanscore[scorecol]/meanscore['climbrier'] 
+            returns[returncols.index(returncol)] = np.array(1, dtype = 'float32') - meanscore[scorecol]/meanscore['climbrier'] 
 
-        return(meanscore[returncols])
+        return(pd.Series(returns, index = returncols, name = 'bss'))
         
     def mean_skill_score2(self, groupers = ['leadtime']):
         """
@@ -497,7 +498,7 @@ class ScoreAnalysis(object):
         grouped =  self.frame.groupby(groupers)
         
         scores = grouped.apply(self.eval_skillscore, 
-                               meta = pd.DataFrame(dtype='float64', columns = returncols, index=['bss']), 
+                               meta = pd.DataFrame(dtype='float32', columns = returncols, index=['bss']), 
                                **{'scorecols':self.scorecols, 'returncols': returncols}).compute()
         return(scores)
     
@@ -517,15 +518,15 @@ class ScoreAnalysis(object):
             From the sized n collection it distills and returns the desired quantiles.
             NOTE: worry about decorrelation time and block-bootstrapping?
             """
-            collect = pd.DataFrame(dtype = 'float64', columns = returncols, index = pd.RangeIndex(stop = n_samples))
+            collect = pd.DataFrame(dtype = 'float32', columns = returncols, index = pd.RangeIndex(stop = n_samples))
             
             for i in range(n_samples):
                 collect.iloc[i,:] = self.eval_skillscore(df[self.scorecols].sample(frac = 1, replace = True), scorecols = self.scorecols, returncols = returncols)
                 
-            return(collect.quantile(q = quantiles, axis = 0))
+            return(collect.quantile(q = quantiles, axis = 0).astype('float32'))
         
         bounds = grouped.apply(bootstrap_quantiles,
-                               meta = pd.DataFrame(dtype='float64', columns = returncols, index=quantiles),
+                               meta = pd.DataFrame(dtype='float32', columns = returncols, index=quantiles),
                                **{'returncols':returncols, 'n_samples':200, 'quantiles':quantiles}).compute()
         return(bounds)
         
