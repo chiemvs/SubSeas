@@ -537,9 +537,18 @@ class ScoreAnalysis(object):
 #self = Comparison(alignment=ddtg, climatology = climatology)
 
 #ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
-#ddtx.recollect(booksname='books_tx_JJA_41r1_3D_max_1.5_degrees_max.csv') #dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
-#climatology = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_3D-max_1.5-degrees-max_5_5_q0.9'})
-#climatology.localclim()
+pp_model = NGR()
+climatology = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_3D-max_1.5-degrees-max_5_5_q0.9'})
+climatology.localclim()
+ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
+ddtx.alignedobject = dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
+ddtx.books_name = 'test'
+comp = Comparison(ddtx, climatology = climatology)
+comp.compute_predictors(pp_model = NGR())
+df = comp.frame.compute()
+data = df.loc[df['leadtime'] == 2]
+fit1 = pp_model.fit(train = data)
+fit2 = pp_model.fit2(train = data)
 #self = Comparison(alignment=ddtx, climatology = climatology)
 #self.fit_pp_models(pp_model= NGR(), groupers = ['leadtime'])
 #self.make_pp_forecast(pp_model = NGR())
