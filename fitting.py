@@ -117,10 +117,10 @@ class NGR2(object):
         """
         try:
             mu_cor = test['a0'] + test['a1'] * test[self.predcols[0]]
-            std_cor = np.exp(test['b0'] + test['b1'] * test[self.predcols[1]])
+            std_cor = np.exp(test['b0']) * test[self.predcols[1]]**test['b1']
         except KeyError:
             mu_cor = parameters[0] + parameters[1] * test[self.predcols[0]]
-            std_cor = np.exp(parameters[2] + parameters[3] * test[self.predcols[1]])
+            std_cor = np.exp(parameters[2]) * test[self.predcols[1]]**parameters[3]
         return(norm.sf(x = test[quant_col], loc = mu_cor, scale = std_cor).astype('float32'))
    
     

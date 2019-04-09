@@ -15,7 +15,7 @@ import itertools
 from observations import SurfaceObservations, Climatology, EventClassification
 from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
-from fitting import NGR, Logistic
+from fitting import NGR, NGR2, Logistic
 
 class ForecastToObsAlignment(object):
     """
@@ -536,17 +536,15 @@ class ScoreAnalysis(object):
 #climatology.localclim()
 #self = Comparison(alignment=ddtg, climatology = climatology)
 
-##ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
-#pp_model = NGR()
 #climatology = Climatology('tg', **{'name':'tg_clim_1980-05-30_2015-02-28_2D-mean_3-degrees-mean_5_5_q0.1'})
 #climatology.localclim()
 #ddtx = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
 ##ddtx.alignedobject = dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
 #ddtx.recollect(booksname='books_tg_DJF_41r1_2D-mean_3-degrees-mean.csv')
 #comp = Comparison(ddtx, climatology = climatology)
-#comp.compute_predictors(pp_model = pp_model)
-#comp.fit_pp_models(pp_model= pp_model)
-#comp.make_pp_forecast(pp_model = pp_model)
+#comp.compute_predictors(pp_model = NGR())
+#comp.fit_pp_models(pp_model= NGR())
+#comp.make_pp_forecast(pp_model = NGR())
 #comp.brierscore()
 #case1 = comp.frame.compute()
 #
@@ -558,10 +556,13 @@ class ScoreAnalysis(object):
 #case2 = comp2.frame.compute()
 #
 ##domain wide
-#globalbs1 = case1.groupby(['leadtime']).median()['corbrier']
-#globalbs2 = case2.groupby(['leadtime']).median()['corbrier']
-#globalbs2.name = 'corbrier_logtransform'
-#pd.DataFrame([globalbs1, globalbs2]).T.plot()
+#globalbs1 = case1.groupby(['leadtime']).quantile(0.95)
+#globalbs1['corbss'] = 1 - globalbs1['corbrier'] / globalbs1['climbrier']
+#globalbs2 = case2.groupby(['leadtime']).quantile(0.95)
+#globalbs2['cor_transformbss'] = 1 - globalbs2['corbrier'] / globalbs2['climbrier']
+#pd.DataFrame([globalbs1['corbss'], globalbs2['cor_transformbss']]).T.plot()
+#
+#(globalbs2['corbrier'] - globalbs1['corbrier']).plot()
 #
 ##local
 #globalbs1 = case1.groupby(['leadtime', 'latitude','longitude']).mean()['corbrier']
@@ -572,8 +573,8 @@ class ScoreAnalysis(object):
 #bsfields = bsframe.to_xarray()
 #
 ## Check the fits at location: lon 16.5, lat 50.75
-#fits1 = comp.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),pp_model.model_coefs + ['leadtime']].drop_duplicates()
-#fits2 = comp2.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),pp_model.model_coefs + ['leadtime']].drop_duplicates()
+#fits1 = comp.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),comp.coefcols + ['leadtime']].drop_duplicates()
+#fits2 = comp2.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),comp.coefcols + ['leadtime']].drop_duplicates()
 
 #df = comp.frame.compute()
 #data = df.loc[df['leadtime'] == 2]
