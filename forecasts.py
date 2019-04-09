@@ -406,7 +406,7 @@ class Hindcast(object):
             # Save the dataset to netcdf under hdate.
             onehdate = xr.Dataset(collectparams)
             svname = self.prefix + hd + comb_extension
-            particular_encoding = {key : for_netcdf_encoding[key] for key in onehdate.keys()} # get only encoding of present variables
+            particular_encoding = {key : for_netcdf_encoding[key] for key in onehdate.variables.keys()} # get only encoding of present variables
             onehdate.to_netcdf(path = self.basedir + svname, encoding= particular_encoding)
         pf.close()
         cf.close()
@@ -418,6 +418,6 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
-#start_batch(tmin = '2018-06-18', tmax = '2018-06-30')
-#start_batch(tmin = '2018-07-01', tmax = '2018-07-14')
+#start_batch(tmin = '2018-06-21', tmax = '2018-06-21')
+#start_batch(tmin = '2018-07-05', tmax = '2018-07-05')
 #start_batch(tmin = '2018-07-15', tmax = '2018-08-01')
