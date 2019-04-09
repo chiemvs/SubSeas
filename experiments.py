@@ -146,7 +146,7 @@ class Experiment(object):
                     comp.fits = pd.read_hdf(comp.basedir + firstfitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
                     comp.fitgroupers = firstfitgroupers
                     comp.coefcols = firstfitcoefcols
-                    comp.export(fits = True, frame = False)
+                    #comp.export(fits = True, frame = False) # Uses only excess disk space
                 comp.make_pp_forecast(pp_model = pp_model)
             comp.brierscore()
             scorefile = comp.export(fits=False, frame = True)

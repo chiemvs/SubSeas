@@ -536,19 +536,49 @@ class ScoreAnalysis(object):
 #climatology.localclim()
 #self = Comparison(alignment=ddtg, climatology = climatology)
 
-#ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
-pp_model = NGR()
-climatology = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_3D-max_1.5-degrees-max_5_5_q0.9'})
-climatology.localclim()
-ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
-ddtx.alignedobject = dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
-ddtx.books_name = 'test'
-comp = Comparison(ddtx, climatology = climatology)
-comp.compute_predictors(pp_model = NGR())
-df = comp.frame.compute()
-data = df.loc[df['leadtime'] == 2]
-fit1 = pp_model.fit(train = data)
-fit2 = pp_model.fit2(train = data)
+##ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
+#pp_model = NGR()
+#climatology = Climatology('tg', **{'name':'tg_clim_1980-05-30_2015-02-28_2D-mean_3-degrees-mean_5_5_q0.1'})
+#climatology.localclim()
+#ddtx = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
+##ddtx.alignedobject = dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
+#ddtx.recollect(booksname='books_tg_DJF_41r1_2D-mean_3-degrees-mean.csv')
+#comp = Comparison(ddtx, climatology = climatology)
+#comp.compute_predictors(pp_model = pp_model)
+#comp.fit_pp_models(pp_model= pp_model)
+#comp.make_pp_forecast(pp_model = pp_model)
+#comp.brierscore()
+#case1 = comp.frame.compute()
+#
+#comp2 = Comparison(ddtx, climatology = climatology)
+#comp2.compute_predictors(pp_model = NGR2())
+#comp2.fit_pp_models(pp_model = NGR2())
+#comp2.make_pp_forecast(pp_model = NGR2())
+#comp2.brierscore()
+#case2 = comp2.frame.compute()
+#
+##domain wide
+#globalbs1 = case1.groupby(['leadtime']).median()['corbrier']
+#globalbs2 = case2.groupby(['leadtime']).median()['corbrier']
+#globalbs2.name = 'corbrier_logtransform'
+#pd.DataFrame([globalbs1, globalbs2]).T.plot()
+#
+##local
+#globalbs1 = case1.groupby(['leadtime', 'latitude','longitude']).mean()['corbrier']
+#globalbs2 = case2.groupby(['leadtime', 'latitude','longitude']).mean()['corbrier']
+#globalbs2.name = 'corbrier_logtransform'
+#
+#bsframe = pd.DataFrame([globalbs1, globalbs2]).T
+#bsfields = bsframe.to_xarray()
+#
+## Check the fits at location: lon 16.5, lat 50.75
+#fits1 = comp.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),pp_model.model_coefs + ['leadtime']].drop_duplicates()
+#fits2 = comp2.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),pp_model.model_coefs + ['leadtime']].drop_duplicates()
+
+#df = comp.frame.compute()
+#data = df.loc[df['leadtime'] == 2]
+#fit1 = pp_model.fit(train = data)
+#fit2 = pp_model.fit2(train = data)
 #self = Comparison(alignment=ddtx, climatology = climatology)
 #self.fit_pp_models(pp_model= NGR(), groupers = ['leadtime'])
 #self.make_pp_forecast(pp_model = NGR())
