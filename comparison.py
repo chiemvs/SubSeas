@@ -15,7 +15,7 @@ import itertools
 from observations import SurfaceObservations, Climatology, EventClassification
 from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
-from fitting import NGR, Logistic
+from fitting import NGR, NGR2, Logistic
 
 class ForecastToObsAlignment(object):
     """
@@ -259,12 +259,15 @@ class Comparison(object):
         self.frame = alignment.alignedobject
         self.basedir = '/nobackup/users/straaten/scores/'
         self.name = alignment.books_name[6:-4] + '_' + climatology.name
+        self.grouperdowncasting = {'leadtime':'integer','latitude':'float','longitude':'float'}
         
+        # Construction of climatology
         climatology.clim.name = 'climatology'
         self.clim = climatology.clim.to_dataframe().dropna(axis = 0, how = 'any')
         # Some formatting to make merging with the two-level aligned object easier
         self.clim.reset_index(inplace = True)
         self.clim[['latitude','longitude','climatology']] = self.clim[['latitude','longitude','climatology']].apply(pd.to_numeric, downcast = 'float')
+        self.clim['doy'] = pd.to_numeric(self.clim['doy'], downcast = 'integer')
         self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']])
         try:
             self.quantile = climatology.clim.attrs['quantile']
@@ -279,8 +282,8 @@ class Comparison(object):
         In this apply a model fitting function is called which uses the predictor columns and the observation column.
         pp_model is an object from the fitting script. It has a fit method, returning parameters and a predict method.
         """
-        
-        def cv_fit(data, nfolds, fitfunc, modelcoefs):
+
+        def cv_fit(data, nfolds, fitfunc, modelcoefs, uniquetimes = False):
             """
             Acts per group (predictors should already be constructed). Calls a fitting function 
             in a time-cross-validation fashion. Supplies data as (nfolds - 1)/nfolds for training, 
@@ -292,58 +295,77 @@ class Comparison(object):
             nperfold = len(data) // nfolds
             foldindex = range(1,nfolds+1)
             
-            # Pre-allocating a structure for the dataframe.
-            coefs = pd.DataFrame(data = np.nan, index = data['time'], columns = modelcoefs)
+            # Pre-allocating a full size array structure for the eventual dataframe.
+            coefs = np.zeros((len(data), len(modelcoefs)), dtype = 'float32')
                         
-            # Need inverse of the data test index to select train. For loc is done through np.setdiff1d
-            # Stored by increasing time enables the cv to be done by integer location. (assuming equal group size). 
+            # Need inverse of the data test index to select train.
+            # Stored by increasing time enables the cv to be done by location. (assuming equal group size). 
             # Times are ppossibly non-unique when also fitting to a spatial pool
-            # Later we remove duplicate times (if present)
-            full_ind = np.arange(len(coefs))
-            
+            # Later we remove duplicate times (if present and we gave uniquetimes = False)
+                        
             for fold in foldindex:
+                test_ind = np.full((len(data),), False) # indexer to all data
                 if (fold == foldindex[-1]):
-                    test_ind = np.arange((fold - 1)*nperfold, len(coefs))
+                    test_ind[slice((fold - 1)*nperfold, None, None)] = True
                 else:
-                    test_ind = np.arange(((fold - 1)*nperfold),(fold*nperfold))
-
-                train_ind = np.setdiff1d(full_ind, test_ind)
+                    test_ind[slice((fold - 1)*nperfold, (fold*nperfold), None)] = True
                 
-                # Calling of the fitting function on the training Should return an 1d array with the indices (same size as modelcoefs)
-                fitted_coef = fitfunc(data.iloc[train_ind,:])
-                
-                # Write to the frame with time index. Should the fold be prepended as extra level in a multi-index?
-                coefs.iloc[test_ind,:] = fitted_coef
+                # Calling of the fitting function on the training Should return an 1d array with the indices (same size as modelcoefs)           
+                # Write into the full sized array, this converts 64-bit fitting result to float32
+                coefs[test_ind] = fitfunc(data[~test_ind])
             
             # Returning only the unique time indices but this eases the wrapping and joining of the grouped results later on.
-            return(coefs[~coefs.index.duplicated(keep='first')])
+            if uniquetimes:
+                return(pd.DataFrame(data = coefs, index = data['time'], columns = modelcoefs))
+            else:
+                duplicated = data['time'].duplicated(keep = 'first')
+                return(pd.DataFrame(data = coefs[~duplicated], index = data['time'][~duplicated], columns = modelcoefs))
         
         # Computation of predictands for the models.
-        self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
-        if pp_model.need_std:
-            self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
+        self.compute_predictors(pp_model = pp_model)
         
         fitfunc = getattr(pp_model, 'fit')
         fitreturns = dict(itertools.product(pp_model.model_coefs, ['float32']))
-        
-        grouped = self.frame.groupby(groupers)
-        
-        self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 'fitfunc':fitfunc, 'modelcoefs':pp_model.model_coefs}).compute()
-        self.fits.reset_index(inplace = True)
-        self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']])
-        print('models fitted for all groups')
-        # Store some information
+        # Store some information. We have unique times when all possible groupers are provided, and there is no pooling.
         self.fitgroupers = groupers
+        uniquetimes = all([(group in groupers) for group in list(self.grouperdowncasting.keys())])
         self.coefcols = pp_model.model_coefs
+        
+        # Actual computation. Passing information to cv_fit.
+        grouped = self.frame.groupby(groupers)        
+        self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 
+                                                                'fitfunc':fitfunc, 
+                                                                'modelcoefs':pp_model.model_coefs,
+                                                                'uniquetimes':uniquetimes}).compute()
+        
+        # Reset the multiindex created by the grouping to columns so that the fits can be stored in hdf table format.
+        # The created index has 64 bits. we want to downcast leadtime to int8, latitude and longitude to float32
+        self.fits.reset_index(inplace = True)
+        for group in list(self.grouperdowncasting.keys()):
+            try:
+                self.fits[group] = pd.to_numeric(self.fits[group], downcast = self.grouperdowncasting[group])
+            except KeyError:
+                pass
+        self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']]) # To be able to merge with self.frame
+        print('models fitted for all groups')
+
     
     def merge_to_clim(self):
         """
         Based on day-of-year, writes an extra column to the dataframe with 'climatology', either a numeric quantile, or a climatological probability of occurrence.
         """
-        self.frame['doy'] = self.frame['time'].dt.dayofyear
+        self.frame['doy'] = self.frame['time'].dt.dayofyear.astype('int16')
         self.frame = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
         print('climatology lazily merged with frame')
-        
+    
+    def compute_predictors(self, pp_model):
+        """
+        Currently adds ensmean and ensstd to the frame if they are not yet present as columns
+        """
+        if not 'ensmean' in self.frame.columns:
+            self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
+        if pp_model.need_std and (not 'ensstd' in self.frame.columns):
+            self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
         
     def make_pp_forecast(self, pp_model):
         """
@@ -354,6 +376,8 @@ class Comparison(object):
         """
         
         joincolumns = ['time'] + self.fitgroupers
+        
+        self.compute_predictors(pp_model = pp_model) # computation if not present yet (fit was loaded, fitted somewhere else)
         
         self.frame = self.frame.merge(self.fits, on = joincolumns, how = 'left')
         
@@ -392,10 +416,10 @@ class Comparison(object):
                 name = '_'.join(['bool',str(member)])
                 self.frame[name] = self.frame[('forecast',member)] > self.frame['climatology']
                 self.boolcols.append(name)
-            self.frame['pi'] = self.frame[self.boolcols].sum(axis = 1) / len(self.frame['forecast'].columns) # or use .count(axis = 1) if members might be NA
+            self.frame['pi'] = (self.frame[self.boolcols].sum(axis = 1) / len(self.frame['forecast'].columns)).astype('float32') # or use .count(axis = 1) if members might be NA
             self.frame['oi'] = self.frame['observation'] > self.frame['climatology']
             obscolname = 'oi'
-            self.frame['climbrier'] = ((1 - self.quantile) - self.frame[obscolname])**2 # Add the climatological score. use self.quantile.
+            self.frame['climbrier'] = (np.array(1 - self.quantile, dtype = 'float32') - self.frame[obscolname])**2 # Add the climatological score. use self.quantile.
             
         self.frame['rawbrier'] = (self.frame['pi'] - self.frame[obscolname])**2
         
@@ -409,15 +433,13 @@ class Comparison(object):
     def export(self, fits = True, frame = False):
         """
         Put both in the same hdf file, but different key. So append mode. If frame than writes one dataframe for self.frame
-        float 64 columns are then downcasted and duplicated model coefficients are dropped if these are present. 
+        float 64 columns from the brierscoring are then downcasted and duplicated model coefficients are dropped if these are present. 
         """
 
         self.filepath = self.basedir + self.name + '.h5'
         if fits:
             self.fits.to_hdf(self.filepath, key = 'fits', format = 'table', **{'mode':'a'})
         if frame:
-            f64cols = self.frame.dtypes.loc[self.frame.dtypes == 'float64',:].index.get_level_values(0)
-            self.frame[f64cols.tolist()] = self.frame[f64cols].astype('float32')
             try:
                 self.frame.drop(self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'a'})
             except AttributeError:
@@ -461,11 +483,12 @@ class ScoreAnalysis(object):
         Returns a series with same length as scorecols. Climatology obviously has skill 1
         """
         meanscore = data[scorecols].mean(axis = 0)
+        returns = np.zeros((len(returncols),), dtype = 'float32')
 
         for scorecol, returncol in zip(scorecols, returncols):
-            meanscore[returncol] = 1 - meanscore[scorecol]/meanscore['climbrier'] 
+            returns[returncols.index(returncol)] = np.array(1, dtype = 'float32') - meanscore[scorecol]/meanscore['climbrier'] 
 
-        return(meanscore[returncols])
+        return(pd.Series(returns, index = returncols, name = 'bss'))
         
     def mean_skill_score2(self, groupers = ['leadtime']):
         """
@@ -475,7 +498,7 @@ class ScoreAnalysis(object):
         grouped =  self.frame.groupby(groupers)
         
         scores = grouped.apply(self.eval_skillscore, 
-                               meta = pd.DataFrame(dtype='float64', columns = returncols, index=['bss']), 
+                               meta = pd.DataFrame(dtype='float32', columns = returncols, index=['bss']), 
                                **{'scorecols':self.scorecols, 'returncols': returncols}).compute()
         return(scores)
     
@@ -495,23 +518,68 @@ class ScoreAnalysis(object):
             From the sized n collection it distills and returns the desired quantiles.
             NOTE: worry about decorrelation time and block-bootstrapping?
             """
-            collect = pd.DataFrame(dtype = 'float64', columns = returncols, index = pd.RangeIndex(stop = n_samples))
+            collect = pd.DataFrame(dtype = 'float32', columns = returncols, index = pd.RangeIndex(stop = n_samples))
             
             for i in range(n_samples):
                 collect.iloc[i,:] = self.eval_skillscore(df[self.scorecols].sample(frac = 1, replace = True), scorecols = self.scorecols, returncols = returncols)
                 
-            return(collect.quantile(q = quantiles, axis = 0))
+            return(collect.quantile(q = quantiles, axis = 0).astype('float32'))
         
         bounds = grouped.apply(bootstrap_quantiles,
-                               meta = pd.DataFrame(dtype='float64', columns = returncols, index=quantiles),
+                               meta = pd.DataFrame(dtype='float32', columns = returncols, index=quantiles),
                                **{'returncols':returncols, 'n_samples':200, 'quantiles':quantiles}).compute()
         return(bounds)
         
-
-#ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
-#ddtx.recollect(booksname='books_tx_JJA_41r1_3D_max_1.5_degrees_max.csv') #dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
-#climatology = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_3D-max_1.5-degrees-max_5_5_q0.9'})
+#ddtg = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
+#ddtg.recollect(booksname= 'books_tg_DJF_41r1_7D-mean_3-degrees-mean.csv')
+#climatology = Climatology('tg', **{'name':'tg_clim_1980-05-30_2015-02-28_7D-mean_3-degrees-mean_5_5_q0.1'})
 #climatology.localclim()
+#self = Comparison(alignment=ddtg, climatology = climatology)
+
+#climatology = Climatology('tg', **{'name':'tg_clim_1980-05-30_2015-02-28_2D-mean_3-degrees-mean_5_5_q0.1'})
+#climatology.localclim()
+#ddtx = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
+##ddtx.alignedobject = dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
+#ddtx.recollect(booksname='books_tg_DJF_41r1_2D-mean_3-degrees-mean.csv')
+#comp = Comparison(ddtx, climatology = climatology)
+#comp.compute_predictors(pp_model = NGR())
+#comp.fit_pp_models(pp_model= NGR())
+#comp.make_pp_forecast(pp_model = NGR())
+#comp.brierscore()
+#case1 = comp.frame.compute()
+#
+#comp2 = Comparison(ddtx, climatology = climatology)
+#comp2.compute_predictors(pp_model = NGR2())
+#comp2.fit_pp_models(pp_model = NGR2())
+#comp2.make_pp_forecast(pp_model = NGR2())
+#comp2.brierscore()
+#case2 = comp2.frame.compute()
+#
+##domain wide
+#globalbs1 = case1.groupby(['leadtime']).quantile(0.95)
+#globalbs1['corbss'] = 1 - globalbs1['corbrier'] / globalbs1['climbrier']
+#globalbs2 = case2.groupby(['leadtime']).quantile(0.95)
+#globalbs2['cor_transformbss'] = 1 - globalbs2['corbrier'] / globalbs2['climbrier']
+#pd.DataFrame([globalbs1['corbss'], globalbs2['cor_transformbss']]).T.plot()
+#
+#(globalbs2['corbrier'] - globalbs1['corbrier']).plot()
+#
+##local
+#globalbs1 = case1.groupby(['leadtime', 'latitude','longitude']).mean()['corbrier']
+#globalbs2 = case2.groupby(['leadtime', 'latitude','longitude']).mean()['corbrier']
+#globalbs2.name = 'corbrier_logtransform'
+#
+#bsframe = pd.DataFrame([globalbs1, globalbs2]).T
+#bsfields = bsframe.to_xarray()
+#
+## Check the fits at location: lon 16.5, lat 50.75
+#fits1 = comp.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),comp.coefcols + ['leadtime']].drop_duplicates()
+#fits2 = comp2.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),comp.coefcols + ['leadtime']].drop_duplicates()
+
+#df = comp.frame.compute()
+#data = df.loc[df['leadtime'] == 2]
+#fit1 = pp_model.fit(train = data)
+#fit2 = pp_model.fit2(train = data)
 #self = Comparison(alignment=ddtx, climatology = climatology)
 #self.fit_pp_models(pp_model= NGR(), groupers = ['leadtime'])
 #self.make_pp_forecast(pp_model = NGR())

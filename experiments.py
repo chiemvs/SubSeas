@@ -60,7 +60,7 @@ class Experiment(object):
         """
         Wrapper that calls the function with a specific spaceagg and timeagg and writes the returns of the function to the column if a name was given
         """
-        for spaceagg, timeagg in itertools.product(self.spaceaggregations,self.timeaggregations):
+        for spaceagg, timeagg in itertools.product(self.spaceaggregations[::-1],self.timeaggregations[::-1]):
             if self.log.loc[(spaceagg, timeagg),column].isna().any() or overwrite:
                 f = getattr(self, func)
                 ret = f(spaceagg, timeagg, **kwargs)
@@ -146,7 +146,7 @@ class Experiment(object):
                     comp.fits = pd.read_hdf(comp.basedir + firstfitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
                     comp.fitgroupers = firstfitgroupers
                     comp.coefcols = firstfitcoefcols
-                    comp.export(fits = True, frame = False)
+                    #comp.export(fits = True, frame = False) # Uses only excess disk space
                 comp.make_pp_forecast(pp_model = pp_model)
             comp.brierscore()
             scorefile = comp.export(fits=False, frame = True)
@@ -163,7 +163,8 @@ class Experiment(object):
         
         for quantile in self.quantiles:    
             scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)])
-            skillscore = scoreanalysis.mean_skill_score(groupers=['leadtime']) # Uses the old scoring. Apply bootstrapping later on.
+            #skillscore = scoreanalysis.bootstrap_skill_score(groupers=['leadtime'])
+            skillscore = scoreanalysis.mean_skill_score2(groupers=['leadtime','latitude','longitude']) # Uses the new scoring. Apply bootstrapping later on.
             result[self.quantiles.index(quantile)] = skillscore
         
         return(result)
@@ -190,27 +191,13 @@ Max temperature benchmarks.
 #skill.loc[(0.75,slice(None), 0.9)].unstack(level = [0,1,2]).plot()
 #skill.xs(0.5, level = 'quantile', drop_level = False).unstack(level = [0,1,2]).plot()
 #
-## Small test as a forecast horizon
-#def lastconsecutiveabovezero(series):
-#    gtzero = series.gt(0)
-#    if not gtzero.any():
-#        leadtime = 0
-#    elif gtzero.all():
-#        leadtime = gtzero.index.get_level_values(level = -1)[-1]
-#    else:
-#        tupfirst = gtzero.idxmin()
-#        locfirst = gtzero.index.get_loc(tupfirst)
-#        tup = gtzero.index.get_values()[locfirst - 1]
-#        leadtime = tup[-1]
-#    return(leadtime)
-#
-#zeroskillleadtime = skill.groupby(['spaceagg', 'timeagg', 'quantile']).apply(func = lastconsecutiveabovezero)
+
 
 """
 Mean temperature benchmarks. Observations split into two decades. Otherwise potential memory error in matching.
 """
 
-#dask.config.set(temporary_directory='/nobackup/users/straaten/')
+dask.config.set(temporary_directory='/nobackup/users/straaten/')
 
 # Calling of the class        
 test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
@@ -224,16 +211,29 @@ test2.setuplog()
 #test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname2'}, overwrite = True) # Replaces with updated books name.
 #test2.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
 #test2.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
-#test2.iterateaggregations(func = 'skill', column = 'scores')
+#test2.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
 
-#def replace(string, first, later, number = None):
-#    if not number is None:
-#        return(string.replace(first, later, number))
-#    else:
-#        return(string.replace(first, later))
+# Get all the scores for up to 0.75
+#scoreseries = test2.log.loc[(slice(0.75,None,None),slice(None)),('scores', slice(None))].stack(level = -1)['scores']
+#skillframe = pd.concat(scoreseries.tolist(), keys = scoreseries.index)
+#skillframe.index.set_names(scoreseries.index.names, level = [0,1,2], inplace=True)
+# Change the time aggregation index to integer days.
+#renamedict = {a:int(a[0]) for a in np.unique(skillframe.index.get_level_values(1).to_numpy())}
+#skillframe.rename(renamedict, index = 1, inplace = True)
+# skillframe.sort_index()[['rawbrierskill','corbrierskill']].to_hdf('/nobackup/users/straaten/results/exp2_skill.h5', key = 'all_europe_mean')
 
-#test2.log['obsname'] = test2.log['obsname'].apply(replace, args = ('_','-'))
-#test2.log['obsname'] = test2.log['obsname'].apply(replace, args = ('.','_', 4))
+# Get all the scores for up to 0.75
+#scoreseries = test2.log.loc[(slice(0.75,None,None),slice(None)),('scores', slice(None))].stack(level = -1)['scores']
+#skillframe = pd.concat(scoreseries.tolist(), keys = scoreseries.index)
+#skillframe.index.set_names(scoreseries.index.names, level = [0,1,2], inplace=True)
+# Change the time aggregation index to integer days.
+#renamedict = {a:int(a[0]) for a in np.unique(skillframe.index.get_level_values(1).to_numpy())}
+#skillframe.rename(renamedict, index = 1, inplace = True)
+#skillframe['rawbrierskill'] = pd.to_numeric(skillframe['rawbrierskill'], downcast = 'float')
+#skillframe['corbrierskill'] = pd.to_numeric(skillframe['corbrierskill'], downcast = 'float')
+#skillframe.sort_index()[['rawbrierskill','corbrierskill']].to_hdf('/nobackup/users/straaten/results/exp2_skill.h5', key = 'local_mean')
+
+    
 
 """
 Probability of precipitation matching.
