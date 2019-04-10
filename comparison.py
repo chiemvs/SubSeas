@@ -12,6 +12,7 @@ import xarray as xr
 import pandas as pd
 import dask.dataframe as dd
 import itertools
+import properscoring as ps
 from observations import SurfaceObservations, Climatology, EventClassification
 from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
@@ -367,12 +368,14 @@ class Comparison(object):
         if pp_model.need_std and (not 'ensstd' in self.frame.columns):
             self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
         
-    def make_pp_forecast(self, pp_model):
+    def make_pp_forecast(self, pp_model, n_members = None):
         """
         Makes a probabilistic forecast based on already fitted models. 
         Works by joining the fitted parameters (indexed by the fitting groupers and time) to the dask frame.
-        The event for which we forecast is already present as an observed event variable. Or it is the exceedence of the quantile beloning to the climatology.
-        The forecast is made with the parametric model for the logistic regression, or a scipy implementation of the normal model, both contained in the fitting classes
+        If n_members is not None, then we are forecasting n random members from the fitted distribution.
+        If n_members is None then there are two options: 1) The event for which we forecast is already present as an observed binary variable and we use the Logistic model for the probability of 1. 2) The event is the exceedence of the quantile beloning to the climatology in this object and we employ scipy implementation of the normal model.
+        The prediction function is contained in the pp_model classes themselves.
+        All corrected forecasts appear as extra columns in the self.frame
         """
         
         joincolumns = ['time'] + self.fitgroupers
@@ -383,13 +386,18 @@ class Comparison(object):
         
         predfunc = getattr(pp_model, 'predict')
         
-        if isinstance(pp_model, Logistic):
-            # In this case we have an event variable and fitted a logistic model. And predict with that parametric model.
-            self.frame['pi_cor'] = self.frame.map_partitions(predfunc, meta = ('pi_cor','float32'))
+        if n_members is not None:
+            # Creates multiple columns. Supply n_members to the predfunc, given to here in the experiment class. Or read this from the climatology??
+            self.frame['corrected'] = self.frame.map_partitions(predfunc, meta = ('corrected','float32')) # Check if multiple columns can be generated.
+            
         else:
-            # in this case continuous and we predict exceedence, of the climatological quantile. So we need an extra merge.
-            self.merge_to_clim()
-            self.frame['pi_cor'] = self.frame.map_partitions(predfunc, **{'quant_col':'climatology'}, meta = ('pi_cor','float32'))
+            if isinstance(pp_model, Logistic):
+                # In this case we have an event variable and fitted a logistic model. And predict with that parametric model.
+                self.frame['pi_cor'] = self.frame.map_partitions(predfunc, meta = ('pi_cor','float32'))
+            else:
+                # in this case continuous and we predict exceedence, of the climatological quantile. So we need an extra merge.
+                self.merge_to_clim()
+                self.frame['pi_cor'] = self.frame.map_partitions(predfunc, **{'quant_col':'climatology'}, meta = ('pi_cor','float32'))
 
     def add_custom_groups(self):
         """
@@ -426,9 +434,26 @@ class Comparison(object):
         if 'pi_cor' in self.frame.columns:
             self.frame['corbrier'] = (self.frame['pi_cor'] - self.frame[obscolname])**2
         
-        # No grouping and averaging yet.
-        #grouped = delayed.groupby(groupers)
-        #return(grouped.mean()[['rawbrier','climbrier']].compute())
+        # No grouping and averaging here. This is done in ScoreAnalysis objects that also allows bootstrapping.
+    
+    def crpsscore(self):
+        """
+        Discrete crps scoring. Nr of members. 
+        """
+        def crps_wrap(frame, forecasttype):
+            """
+            Wrapper for discrete ensemble crps scoring. Finds observations and forecasts to supply to the properscoring function
+            """
+            return(ps.crps_ensemble(observations = frame['observation'], forecasts = frame[forecasttype])) # Not sure if this will provide the needed array type to ps
+            
+        for forecasttype in ['forecast','climatology','corrected']: 
+            if forecasttype in self.frame.columns: # Only score the corrected when present.
+                scorename = forecasttype + '_crps' # TODO: Implement this generic naming also for the brier scoring. Perhaps even such that they can be treated equally in the ScoreAnalysis.
+                self.frame[scorename] = self.frame.map_partitions(crps_wrap, **{'forecasttype':forecasttype}, meta = (scorename,'float32'))
+        
+        # Score the 'forecast' for the raw score
+        # Score the multimember joined climatology for climatological score.
+        
     
     def export(self, fits = True, frame = False):
         """

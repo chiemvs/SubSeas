@@ -3,7 +3,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import dask.array as da
-from helper_functions import agg_space, agg_time
+from helper_functions import agg_space, agg_time, monthtoseasonlookup
 
 obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
                    'tx': {'dtype': 'int16', 'scale_factor': 0.0015, '_FillValue': -32767},
@@ -123,6 +123,16 @@ class SurfaceObservations(object):
         self.tmin = pd.Series(self.array.time).min().strftime('%Y-%m-%d')
         self.tmax = pd.Series(self.array.time).max().strftime('%Y-%m-%d')
 
+    def filter(self, season, n_min_per_seas = 40):
+        """
+        Requires on average a minimum amount of daily observations per season of interest (91 days). Assigns NaN all year round when this is not the case.
+        """
+        seasonindex = self.array.time.dt.season == season
+        n_seasons = np.diff(seasonindex).sum() / 2 # Number of transitions between season and non-season divided by 2 
+        seasononly = self.array.sel(time = seasonindex)
+        
+        self.array = self.array.where(seasononly.count('time') >= n_seasons * n_min_per_seas, np.nan)
+        
     def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = False):
         """
         Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
@@ -151,6 +161,8 @@ class SurfaceObservations(object):
 
         # To access days of week: self.array.time.dt.timeofday
         # Also possible is self.array.time.dt.floor('D')
+    
+
     
     def savechanges(self):
         """
@@ -352,8 +364,8 @@ class EventClassification(object):
         self.exceedance = xr.concat(results, dim = 'time')
 
        
-#test1 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-#test1.load(tmax = '1980-01-01')
+self = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+self.load(tmax = '1960-01-01', llcrnr = (36.0, None))
 #test2 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
 #test2.load(tmax = '1980-01-01')
 #test2.aggregatetime(freq = '3D')
