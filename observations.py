@@ -12,7 +12,8 @@ obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValu
                    'time': {'dtype': 'int64'},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
-                   'doy': {'dtype': 'int16'}}
+                   'doy': {'dtype': 'int16'},
+                   'number': {'dtype': 'int16'}}
 
 class SurfaceObservations(object):
     
@@ -207,11 +208,11 @@ class Climatology(object):
         
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
         
-    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, daily_obs_array = None):
+    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, n_draws = None, daily_obs_array = None):
         """
         Load a local clim if one with corresponding basevar, tmin, tmax and method is found, or if name given at initialization is found.
         Construct local climatological distribution within a rolling window, but with pooled years. 
-        Extracts mean (giving probabilities if you have a binary variable) 
+        Extracts mean (giving probabilities if you have a binary variable). Or a random number of draws if these are given.
         It can also compute a quantile on a continuous variables. Returns fields of this for all supplied day-of-year (doy) and space.
         Daysbefore and daysafter are inclusive.
         For non-daily aggregations the procedure is the same, as the climatology needs to be still derived from daily values. 
@@ -227,8 +228,10 @@ class Climatology(object):
 
         if mean:
             self.climmethod = 'mean'
-        else:
+        elif quant is not None:
             self.climmethod = 'q' + str(quant)
+        else:
+            self.climmethod = 'rand'
         
         # Overwrites possible nonsense attributes
         self.construct_name(force = False)
@@ -281,12 +284,19 @@ class Climatology(object):
                     reduced.attrs = complete.attrs
                     reduced.attrs['quantile'] = quant
                 else:
-                    raise ValueError('Provide a quantile if mean is set to False')
+                    # Random sampling with replacement if not enough fields in the complete array
+                    try:
+                        draws = complete.sel(time = np.random.choice(complete.time, size = n_draws, replace = False))
+                    except ValueError:
+                        draws = complete.sel(time = np.random.choice(complete.time, size = n_draws, replace = True))
+                    # Assign a number dimension to the draws.
+                    reduced = xr.DataArray(data = draws, coords = [np.arange(n_draws), complete.coords['latitude'], complete.coords['longitude']], dims = ['number','latitude','longitude'], name = self.var)
                 
-                # Setting a minimum on the amount of observations that went into the mean and quantile computation.
-                number_nan = reduced.isnull().sum().values
+                # Setting a minimum on the amount of observations that went into the mean and quantile computation, and report the number of locations that went to NaN
+                number_nan = reduced.isnull().sum(['latitude','longitude']).values
                 reduced = reduced.where(complete.count('time') >= 10, np.nan)
-                number_nan = reduced.isnull().sum().values - number_nan
+                number_nan = reduced.isnull().sum(['latitude','longitude']).values - number_nan
+                
                 
                 print('computed clim of', doy, ', removed', number_nan, 'locations with < 10 obs.')
                 reduced.coords['doy'] = doy
@@ -298,7 +308,7 @@ class Climatology(object):
     def savelocalclim(self):
         
         self.construct_name(force = True)
-        particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clim.to_dataset().keys()} 
+        particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clim.to_dataset().variables.keys()} 
         self.clim.to_netcdf(self.filepath, encoding = particular_encoding)
         
         
@@ -364,13 +374,18 @@ class EventClassification(object):
         self.exceedance = xr.concat(results, dim = 'time')
 
        
-self = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-self.load(tmax = '1960-01-01', llcrnr = (36.0, None))
+test1 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+test1.load(tmax = '1960-01-01', llcrnr = (36.0, None))
 #test2 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
 #test2.load(tmax = '1980-01-01')
 #test2.aggregatetime(freq = '3D')
-#self = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-#self.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = True)
+self = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+self.localclim(obs = test1, daysbefore = 3, daysafter = 3, mean = False, n_draws = 4)
+climatology2 = self.clim
+clim1 = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+clim1.localclim(obs = test1, daysbefore = 3, daysafter = 3, mean = True)
+#climatology1 = clim1.clim
+#self.savelocalclim()
 #self.localclim(obs = test2, daysbefore = 5, daysafter = 5, daily_obs_array = test1.array, mean = False, quant = 0.9)
 #test1.load(tmax = '1980-01-01', lazychunk={'time':300})
 

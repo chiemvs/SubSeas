@@ -255,7 +255,7 @@ class Comparison(object):
         """
         The aligned object has Observation | members |
         Potentially an external observed climatology object can be supplied that takes advantage of the full observed dataset. It has to have a location and dayofyear timestamp. Is it already aggregated?
-        This climatology can be a quantile (used as the threshold for brier scoring) of it is a climatological probability if we have an aligned event predictor like POP.
+        This climatology can be a quantile (used as the threshold for brier scoring) of it is a climatological probability if we have an aligned event predictor like POP. Or it is a random draw used for CRPS scoring. which means that multiple 'numbers' will be present.
         """
         self.frame = alignment.alignedobject
         self.basedir = '/nobackup/users/straaten/scores/'
@@ -266,10 +266,14 @@ class Comparison(object):
         climatology.clim.name = 'climatology'
         self.clim = climatology.clim.to_dataframe().dropna(axis = 0, how = 'any')
         # Some formatting to make merging with the two-level aligned object easier
+        if 'number' in self.clim.index.names: # If we are dealing with random draws. We are automatically creating a two level column index
+            self.clim = self.clim.unstack('number')
+        else: # Otherwise we have to create one manually
+            self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']], names = [None,'number'])
         self.clim.reset_index(inplace = True)
         self.clim[['latitude','longitude','climatology']] = self.clim[['latitude','longitude','climatology']].apply(pd.to_numeric, downcast = 'float')
         self.clim['doy'] = pd.to_numeric(self.clim['doy'], downcast = 'integer')
-        self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']])
+        
         try:
             self.quantile = climatology.clim.attrs['quantile']
         except KeyError:
