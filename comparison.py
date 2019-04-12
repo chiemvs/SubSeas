@@ -14,7 +14,7 @@ import dask.dataframe as dd
 import itertools
 import properscoring as ps
 from observations import SurfaceObservations, Climatology, EventClassification
-from forecasts import Forecast
+#from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
 from fitting import NGR, NGR2, Logistic
 
@@ -271,7 +271,7 @@ class Comparison(object):
         else: # Otherwise we have to create one manually
             self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']], names = [None,'number'])
         self.clim.reset_index(inplace = True)
-        self.clim[['latitude','longitude','climatology']] = self.clim[['latitude','longitude','climatology']].apply(pd.to_numeric, downcast = 'float')
+        self.clim.loc[:,['latitude','longitude','climatology']] = self.clim[['latitude','longitude','climatology']].apply(pd.to_numeric, downcast = 'float')
         self.clim['doy'] = pd.to_numeric(self.clim['doy'], downcast = 'integer')
         
         try:
@@ -391,7 +391,8 @@ class Comparison(object):
         predfunc = getattr(pp_model, 'predict')
         
         if n_members is not None:
-            # Creates multiple columns. Supply n_members to the predfunc, given to here in the experiment class. Or read this from the climatology??
+            # Creates multiple columns. Supply n_members to the predfunc, given to here in the experiment class.
+            pd.DataFrame(np.zeros(n_members, dtype = 'float32'), columns = pd.MultiIndex.from_product([['corrected'],np.arange(n_members)]), index = pd.RangeIndex(1)) # Needs a meta dataframe.
             self.frame['corrected'] = self.frame.map_partitions(predfunc, meta = ('corrected','float32')) # Check if multiple columns can be generated.
             
         else:
@@ -444,6 +445,9 @@ class Comparison(object):
         """
         Discrete crps scoring. Nr of members. 
         """
+        if not ('climatology' in self.frame.columns):
+            self.merge_to_clim()
+        
         def crps_wrap(frame, forecasttype):
             """
             Wrapper for discrete ensemble crps scoring. Finds observations and forecasts to supply to the properscoring function
@@ -558,6 +562,24 @@ class ScoreAnalysis(object):
                                meta = pd.DataFrame(dtype='float32', columns = returncols, index=quantiles),
                                **{'returncols':returncols, 'n_samples':200, 'quantiles':quantiles}).compute()
         return(bounds)
+
+test1 = SurfaceObservations('tx', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+test1.load(tmax = '1970-01-01', llcrnr = (36.0, None))
+test2 = SurfaceObservations('tx', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+test2.load(tmax = '1970-01-01', llcrnr = (36.0, None))
+test1.aggregatetime(freq = '4D', method = 'max')
+test1.aggregatespace(step = 3, method = 'max', by_degree = True)
+#test2.aggregatespace(step = 3, method = 'max', by_degree = True)
+clim1 = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = False, n_draws = 5, daily_obs_array = test2.array)
+#clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = True, daily_obs_array = test2.array)
+
+
+ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
+ddtx.alignedobject = dd.read_hdf('/home/jsn295/Documents/climtestdir/tx_JJA_41r1_4D_max_3_degrees_max.h5', key = 'intermediate')
+ddtx.books_name = 'blahblahblahblah'
+
+self = Comparison(ddtx, climatology = clim1)
         
 #ddtg = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
 #ddtg.recollect(booksname= 'books_tg_DJF_41r1_7D-mean_3-degrees-mean.csv')

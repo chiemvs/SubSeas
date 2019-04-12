@@ -374,16 +374,16 @@ class EventClassification(object):
         self.exceedance = xr.concat(results, dim = 'time')
 
        
-test1 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-test1.load(tmax = '1960-01-01', llcrnr = (36.0, None))
+#test1 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+#test1.load(tmax = '1960-01-01', llcrnr = (36.0, None))
 #test2 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
 #test2.load(tmax = '1980-01-01')
 #test2.aggregatetime(freq = '3D')
-self = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-self.localclim(obs = test1, daysbefore = 3, daysafter = 3, mean = False, n_draws = 4)
-climatology2 = self.clim
-clim1 = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-clim1.localclim(obs = test1, daysbefore = 3, daysafter = 3, mean = True)
+#clim1 = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+#clim1.localclim(obs = test1, daysbefore = 3, daysafter = 3, mean = False, n_draws = 4)
+#clim1.savelocalclim()
+#clim1 = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
+#clim1.localclim(obs = test1, daysbefore = 3, daysafter = 3, mean = True)
 #climatology1 = clim1.clim
 #self.savelocalclim()
 #self.localclim(obs = test2, daysbefore = 5, daysafter = 5, daily_obs_array = test1.array, mean = False, quant = 0.9)
