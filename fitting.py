@@ -11,6 +11,7 @@ from scipy.stats import norm
 from sklearn.linear_model import LogisticRegression
 import properscoring as ps
 import numpy as np
+import pandas as pd
 
 
 class NGR(object):
@@ -110,10 +111,10 @@ class NGR2(object):
                          
         return(res.x)
 
-    def predict(self, test, quant_col = 'climatology', parameters = None):
+    def predict(self, test, quant_col = 'climatology', n_draws = None, parameters = None):
         """
         Test dataframe should contain columns with the model_coefs parameters. Otherwise a (4,) array should be supplied
-        Predicts climatological quantile exceedence
+        Predicts climatological quantile exceedence. Or a random draw from the normal distribution if number of members is supplied.
         """
         try:
             mu_cor = test['a0'] + test['a1'] * test[self.predcols[0]]
@@ -121,7 +122,14 @@ class NGR2(object):
         except KeyError:
             mu_cor = parameters[0] + parameters[1] * test[self.predcols[0]]
             std_cor = np.exp(parameters[2]) * test[self.predcols[1]]**parameters[3]
-        return(norm.sf(x = test[quant_col], loc = mu_cor, scale = std_cor).astype('float32'))
+        if n_draws is not None:
+            if n_draws == 1:
+                return(pd.Series(norm.rvs(loc=mu_cor, scale=std_cor), dtype = 'float32'))
+            else:
+                return(pd.DataFrame(norm.rvs(loc=mu_cor, scale=std_cor, size=(n_draws, len(mu_cor))).T, dtype = 'float32'))
+                #return(norm.rvs(loc=mu_cor, scale=std_cor, size=(n_draws, len(mu_cor))).T.astype('float32')) # Returning an array.            
+        else:
+            return(norm.sf(x = test[quant_col], loc = mu_cor, scale = std_cor).astype('float32')) # Returning a scalar vector.
    
     
 class Logistic(object):

@@ -391,9 +391,25 @@ class Comparison(object):
         predfunc = getattr(pp_model, 'predict')
         
         if n_members is not None:
+            """
+            This is going to be ugly because of two limitations: I cannot assign multiple columns at once, so there is no way
+            to get an array with all draws from the predfunc. So we have to go draw by draw, and here we cannot assign to a multi-index
+            So this needs to be created afterwards.
+            """
             # Creates multiple columns. Supply n_members to the predfunc, given to here in the experiment class.
-            pd.DataFrame(np.zeros(n_members, dtype = 'float32'), columns = pd.MultiIndex.from_product([['corrected'],np.arange(n_members)]), index = pd.RangeIndex(1)) # Needs a meta dataframe.
-            self.frame['corrected'] = self.frame.map_partitions(predfunc, meta = ('corrected','float32')) # Check if multiple columns can be generated.
+            #returnmeta = pd.DataFrame(np.zeros((1,n_members), dtype = 'float32'), columns = pd.MultiIndex.from_product([['corrected'],np.arange(n_members)], names = ['','number'])) # Needs a meta dataframe.
+            #returndict =  dict(itertools.product(np.arange(n_members), ['float32']))
+            
+            # Dask array way. #Accessing multiple members self.frame[[('forecast',1),('forecast',2)]]
+            #self.frame.map_partitions(predfunc, **{'n_draws':n_members}) # Multiple columns can be generated. But not assigned.
+            levelzero = self.frame.columns.get_level_values(0).tolist()
+            levelone = self.frame.columns.get_level_values(1).tolist()
+            for m in range(n_members):
+                corcol = 'corrected' + str(m)
+                self.frame[corcol] = self.frame.map_partitions(predfunc, **{'n_draws':1})
+                levelzero.append('corrected')
+                levelone.append(m)
+            self.frame.columns = pd.MultiIndex.from_arrays([levelzero,levelone], names = self.frame.columns.names)
             
         else:
             if isinstance(pp_model, Logistic):
@@ -563,23 +579,28 @@ class ScoreAnalysis(object):
                                **{'returncols':returncols, 'n_samples':200, 'quantiles':quantiles}).compute()
         return(bounds)
 
-test1 = SurfaceObservations('tx', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-test1.load(tmax = '1970-01-01', llcrnr = (36.0, None))
-test2 = SurfaceObservations('tx', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-test2.load(tmax = '1970-01-01', llcrnr = (36.0, None))
-test1.aggregatetime(freq = '4D', method = 'max')
-test1.aggregatespace(step = 3, method = 'max', by_degree = True)
+basedir = '/net/pc160104/nobackup/users/straaten/E-OBS/' # '/home/jsn295/Documents/climtestdir/'
+#test1 = SurfaceObservations('tx', **{'basedir':basedir})
+#test1.load(tmax = '1970-01-01', llcrnr = (36.0, None))
+#test2 = SurfaceObservations('tx', **{'basedir':basedir})
+#test2.load(tmax = '1970-01-01', llcrnr = (36.0, None))
+#test1.aggregatetime(freq = '4D', method = 'max')
+#test1.aggregatespace(step = 3, method = 'max', by_degree = True)
 #test2.aggregatespace(step = 3, method = 'max', by_degree = True)
-clim1 = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = False, n_draws = 5, daily_obs_array = test2.array)
+#clim1 = Climatology(test1.basevar, **{'basedir':'/net/pc160104/nobackup/users/straaten/climatology/'}) # '/home/jsn295/Documents/climtestdir/'
+#clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = False, n_draws = 5, daily_obs_array = test2.array)
 #clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = True, daily_obs_array = test2.array)
 
+clim1 = Climatology('tx', **{'basedir':'/net/pc160104/nobackup/users/straaten/climatology/', 'name':'tx_clim_1980-05-30_2010-08-31_7D-max_3-degrees-max_5_5_q0.5'})
+clim1.localclim()
 
+matchobject = '/usr/people/straaten/Downloads/tx_JJA_41r1_4D_max_3_degrees_max.h5' # '/home/jsn295/Documents/climtestdir/tx_JJA_41r1_4D_max_3_degrees_max.h5'
 ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
-ddtx.alignedobject = dd.read_hdf('/home/jsn295/Documents/climtestdir/tx_JJA_41r1_4D_max_3_degrees_max.h5', key = 'intermediate')
+ddtx.alignedobject = dd.read_hdf(matchobject, key = 'intermediate')
 ddtx.books_name = 'blahblahblahblah'
 
 self = Comparison(ddtx, climatology = clim1)
+#self.merge_to_clim()
         
 #ddtg = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
 #ddtg.recollect(booksname= 'books_tg_DJF_41r1_7D-mean_3-degrees-mean.csv')
@@ -626,30 +647,3 @@ self = Comparison(ddtx, climatology = clim1)
 ## Check the fits at location: lon 16.5, lat 50.75
 #fits1 = comp.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),comp.coefcols + ['leadtime']].drop_duplicates()
 #fits2 = comp2.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),comp.coefcols + ['leadtime']].drop_duplicates()
-
-#df = comp.frame.compute()
-#data = df.loc[df['leadtime'] == 2]
-#fit1 = pp_model.fit(train = data)
-#fit2 = pp_model.fit2(train = data)
-#self = Comparison(alignment=ddtx, climatology = climatology)
-#self.fit_pp_models(pp_model= NGR(), groupers = ['leadtime'])
-#self.make_pp_forecast(pp_model = NGR())
-#self.brierscore()
-#self.export()
-
-#ddpop = ForecastToObsAlignment(season = 'DJF', cycle = '41r1') #dd.read_hdf('/nobackup/users/straaten/match/pop_DJF_41r1_1D_0.25_degrees_8b505d0f2d024bf086054fdf7629e8ed.h5', key = 'intermediate')
-#ddpop.outfiles = ['/nobackup/users/straaten/match/pop_DJF_41r1_1D_0.25_degrees_8b505d0f2d024bf086054fdf7629e8ed.h5']
-#ddpop.recollect()
-#ddpop.books_name = 'books_pop_DJF_41r1_1D_0.25_degrees.csv'
-#climatology = Climatology('pop', **{'name':'pop_clim_1980-01-01_2017-12-31_1D_0.25-degrees_5_5_mean'})
-#climatology.localclim()
-#self = Comparison(alignment=ddpop, climatology = climatology)
-#self.fit_pp_models(pp_model = Logistic(), groupers = ['leadtime'])
-#self.make_pp_forecast(pp_model = Logistic())
-#self.brierscore()
-#self.export()
-
-#self = ScoreAnalysis(scorefile = 'tests/tg_DJF_41r1_4D-mean_2-degrees-mean_tg_clim_1980-05-30_2015-02-28_4D-mean_2-degrees-mean_5_5_q0.33')
-#sc = self.mean_skill_score()
-#sc2 = self.mean_skill_score2()
-#bs = self.bootstrap_skill_score()
