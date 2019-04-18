@@ -157,11 +157,11 @@ class ForecastToObsAlignment(object):
             dataset = pd.concat(basket)
             dataset.to_hdf(filepath, key = 'intermediate', format = 'table')
             
-            books = pd.DataFrame({'write_date':[datetime.now().strftime('%Y-%m-%d_%H:%M:%S')],
-                                  'file':[filepath],
-                                  'tmin':[dataset.time.min().strftime('%Y-%m-%d')],
+            books = pd.DataFrame({'file':[filepath],
                                   'tmax':[dataset.time.max().strftime('%Y-%m-%d')],
-                                  'unit':[self.obs.array.units]})
+                                  'tmin':[dataset.time.min().strftime('%Y-%m-%d')],
+                                  'unit':[self.obs.array.units],
+                                  'write_date':[datetime.now().strftime('%Y-%m-%d_%H:%M:%S')]})
             
             try:
                 with open(books_path, 'x') as f:
@@ -579,27 +579,27 @@ class ScoreAnalysis(object):
                                **{'returncols':returncols, 'n_samples':200, 'quantiles':quantiles}).compute()
         return(bounds)
 
-#basedir = '/net/pc160104/nobackup/users/straaten/E-OBS/' # '/home/jsn295/Documents/climtestdir/'
-#test1 = SurfaceObservations('tx', **{'basedir':basedir})
-#test1.load(tmax = '1970-01-01', llcrnr = (36.0, None))
-#test2 = SurfaceObservations('tx', **{'basedir':basedir})
-#test2.load(tmax = '1970-01-01', llcrnr = (36.0, None))
-#test1.aggregatetime(freq = '4D', method = 'max')
-#test1.aggregatespace(step = 3, method = 'max', by_degree = True)
-#test2.aggregatespace(step = 3, method = 'max', by_degree = True)
-#clim1 = Climatology(test1.basevar, **{'basedir':'/net/pc160104/nobackup/users/straaten/climatology/'}) # '/home/jsn295/Documents/climtestdir/'
-#clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = False, n_draws = 5, daily_obs_array = test2.array)
+basedir = '/nobackup/users/straaten/E-OBS/' # '/home/jsn295/Documents/climtestdir/'
+test1 = SurfaceObservations('tx', **{'basedir':basedir})
+test1.load(tmax = '1970-01-01', llcrnr = (25,-30), rucrnr = (75,75)) # llcrnr = (36.0, None))
+test2 = SurfaceObservations('tx', **{'basedir':basedir})
+test2.load(tmax = '1970-01-01', llcrnr = (25,-30), rucrnr = (75,75)) # llcrnr = (36.0, None))
+test1.aggregatetime(freq = '4D', method = 'max')
+test1.aggregatespace(step = 3, method = 'max', by_degree = True)
+test2.aggregatespace(step = 3, method = 'max', by_degree = True)
+clim1 = Climatology(test1.basevar) # '/home/jsn295/Documents/climtestdir/'
+clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = False, n_draws = 11, daily_obs_array = test2.array)
 #clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = True, daily_obs_array = test2.array)
 
 #clim1 = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_7D-max_3-degrees-max_5_5_q0.5'})
 #clim1.localclim()
 #
-#matchobject = '/usr/people/straaten/Downloads/tx_JJA_41r1_4D_max_3_degrees_max.h5' # '/home/jsn295/Documents/climtestdir/tx_JJA_41r1_4D_max_3_degrees_max.h5'
-#ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
-#ddtx.alignedobject = dd.read_hdf(matchobject, key = 'intermediate')
-#ddtx.books_name = 'blahblahblahblah'
+matchobject = '/usr/people/straaten/Downloads/tx_JJA_41r1_4D_max_3_degrees_max.h5' # '/home/jsn295/Documents/climtestdir/tx_JJA_41r1_4D_max_3_degrees_max.h5'
+ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
+ddtx.alignedobject = dd.read_hdf(matchobject, key = 'intermediate')
+ddtx.books_name = 'blahblahblahblah'
 #
-#self = Comparison(ddtx, climatology = clim1)
+self = Comparison(ddtx, climatology = clim1)
 #self.merge_to_clim()
         
 #ddtg = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
