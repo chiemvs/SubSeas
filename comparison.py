@@ -394,7 +394,7 @@ class Comparison(object):
             """
             This is going to be ugly because of two limitations: I cannot assign multiple columns at once, so there is no way
             to get an array with all draws from the predfunc. So we have to go draw by draw, and here we cannot assign to a multi-index
-            So this needs to be created afterwards.
+            So this needs to be cr      eated afterwards.
             """
             # Creates multiple columns. Supply n_members to the predfunc, given to here in the experiment class.
             #returnmeta = pd.DataFrame(np.zeros((1,n_members), dtype = 'float32'), columns = pd.MultiIndex.from_product([['corrected'],np.arange(n_members)], names = ['','number'])) # Needs a meta dataframe.
@@ -414,11 +414,11 @@ class Comparison(object):
         else:
             if isinstance(pp_model, Logistic):
                 # In this case we have an event variable and fitted a logistic model. And predict with that parametric model.
-                self.frame['pi_cor'] = self.frame.map_partitions(predfunc, meta = ('pi_cor','float32'))
+                self.frame['corrected'] = self.frame.map_partitions(predfunc, meta = ('corrected','float32'))
             else:
                 # in this case continuous and we predict exceedence, of the climatological quantile. So we need an extra merge.
                 self.merge_to_clim()
-                self.frame['pi_cor'] = self.frame.map_partitions(predfunc, **{'quant_col':'climatology'}, meta = ('pi_cor','float32'))
+                self.frame['corrected'] = self.frame.map_partitions(predfunc, **{'quant_col':'climatology'}, meta = ('corrected','float32'))
 
     def add_custom_groups(self):
         """
@@ -427,16 +427,16 @@ class Comparison(object):
     
     def brierscore(self):
         """
-        Asks a list of groupers, could use custom groupers. Computes the climatological and raw scores.
-        Also computes the score of the predictions from the post-processed model if this column (pi_cor) is present in the dataframe
+        Computes the climatological and raw scores.
+        Also computes the score of the predictions from the post-processed model if this column ('corrected') is present in the dataframe
         """
         # Merging with climatological file. In case of quantile scoring for the exceeding quantiles. In case of an already e.g. pop for the climatological probability.
         if not ('climatology' in self.frame.columns):
             self.merge_to_clim()
-        
+                    
         if 'pi' in self.frame.columns: # This column comes from the match-and-write, when it is present we are dealing with an already binary observation.
             obscolname = 'observation'
-            self.frame['climbrier'] = (self.frame['climatology'] - self.frame[obscolname])**2
+            self.frame['climatology_bs'] = (self.frame['climatology'] - self.frame[obscolname])**2
         else: # In this case quantile scoring. and pi needs creation
             # Boolean comparison cannot be made in one go. because it does not now how to compare N*members agains the climatology of N
             print('lazy boolcol (pi) construction')
@@ -448,12 +448,12 @@ class Comparison(object):
             self.frame['pi'] = (self.frame[self.boolcols].sum(axis = 1) / len(self.frame['forecast'].columns)).astype('float32') # or use .count(axis = 1) if members might be NA
             self.frame['oi'] = self.frame['observation'] > self.frame['climatology']
             obscolname = 'oi'
-            self.frame['climbrier'] = (np.array(1 - self.quantile, dtype = 'float32') - self.frame[obscolname])**2 # Add the climatological score. use self.quantile.
+            self.frame['climatology_bs'] = (np.array(1 - self.quantile, dtype = 'float32') - self.frame[obscolname])**2 # Add the climatological score. use self.quantile.
             
-        self.frame['rawbrier'] = (self.frame['pi'] - self.frame[obscolname])**2
+        self.frame['forecast_bs'] = (self.frame['pi'] - self.frame[obscolname])**2
         
-        if 'pi_cor' in self.frame.columns:
-            self.frame['corbrier'] = (self.frame['pi_cor'] - self.frame[obscolname])**2
+        if 'corrected' in self.frame.columns:
+            self.frame['corrected_bs'] = (self.frame['corrected'] - self.frame[obscolname])**2
         
         # No grouping and averaging here. This is done in ScoreAnalysis objects that also allows bootstrapping.
     
@@ -503,29 +503,23 @@ class ScoreAnalysis(object):
     """
     def __init__(self, scorefile):
         """
-        Provide the name of the exported file with Brier scores.
+        Provide the name of the exported file with the scores.
+        Searches for relevant columns to load. Should find either _bs in certain columns or _crps
         """
         self.basedir = '/nobackup/users/straaten/scores/'
         self.filepath = self.basedir + scorefile + '.h5'
-        self.frame = dd.read_hdf(self.filepath, key = 'scores')
-        self.frame = self.frame.drop('forecast', axis = 1)
+        with pd.HDFStore(path=self.filepath, mode='r') as hdf:
+            allcolslevelzero = pd.Index([ tup[0] for tup in  hdf.get_storer('intermediate').non_index_axes[0][1] ])
+        if allcolslevelzero.str.contains('_bs').any():
+            self.scorecols = allcolslevelzero[allcolslevelzero.str.contains('_bs')].tolist()
+            self.output = '_bss'
+        elif allcolslevelzero.str.contains('_crps').any():
+            self.scorecols = allcolslevelzero[allcolslevelzero.str.contains('_crps')].tolist()
+            self.output = '_crpss'
+        self.frame = dd.read_hdf(self.filepath, key = 'scores', columns = self.scorecols)
         self.frame.columns = self.frame.columns.droplevel(1)
-        self.scorecols = [col for col in ['rawbrier', 'climbrier','corbrier'] if (col in self.frame.columns)]
     
-    def mean_skill_score(self, groupers = ['leadtime']):
-        """
-        Grouping. Average and compute skill score.
-        """
-        grouped =  self.frame.groupby(groupers)
-        scores = grouped.mean()[self.scorecols].compute()
-        try:
-            scores['rawskill'] = 1 - scores['rawbrier'] / scores['climbrier']
-            scores['corskill'] = 1 - scores['corbrier'] / scores['climbrier']
-        except:
-            pass
-        return(scores)
-    
-    def eval_skillscore(self, data, scorecols, returncols):
+    def eval_skillscore(self, data, scorecols, returncols, climcol):
         """
         Is supplied an isolated data group on which to evaluate skill of mean brierscores.
         These relevant columns are given as the scorecols.
@@ -535,20 +529,21 @@ class ScoreAnalysis(object):
         returns = np.zeros((len(returncols),), dtype = 'float32')
 
         for scorecol, returncol in zip(scorecols, returncols):
-            returns[returncols.index(returncol)] = np.array(1, dtype = 'float32') - meanscore[scorecol]/meanscore['climbrier'] 
+            returns[returncols.index(returncol)] = np.array(1, dtype = 'float32') - meanscore[scorecol]/meanscore[climcol] 
 
-        return(pd.Series(returns, index = returncols, name = 'bss'))
+        return(pd.Series(returns, index = returncols, name = self.output))
         
-    def mean_skill_score2(self, groupers = ['leadtime']):
+    def mean_skill_score(self, groupers = ['leadtime']):
         """
         Grouping. Average and compute skill score.
         """
-        returncols = [ col + 'skill' for col in self.scorecols]
+        returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
+        climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
         grouped =  self.frame.groupby(groupers)
         
         scores = grouped.apply(self.eval_skillscore, 
-                               meta = pd.DataFrame(dtype='float32', columns = returncols, index=['bss']), 
-                               **{'scorecols':self.scorecols, 'returncols': returncols}).compute()
+                               meta = pd.DataFrame(dtype='float32', columns = returncols, index=[self.output]), 
+                               **{'scorecols':self.scorecols, 'returncols': returncols, 'climcol':climcol}).compute()
         return(scores)
     
     def bootstrap_skill_score(self, groupers = ['leadtime']):
@@ -558,9 +553,10 @@ class ScoreAnalysis(object):
         """
         returncols = [ col + 'skill' for col in self.scorecols]
         quantiles = [0.025,0.5,0.975]
+        climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
         grouped =  self.frame.groupby(groupers)
         
-        def bootstrap_quantiles(df, returncols, n_samples, quantiles):
+        def bootstrap_quantiles(df, returncols, climcol, n_samples, quantiles):
             """
             Acts per group. Creates n samples (with replacement) of the dataframe.
             For each of these it calls the evaluate skill-scores method, whose output is collected.
@@ -570,13 +566,13 @@ class ScoreAnalysis(object):
             collect = pd.DataFrame(dtype = 'float32', columns = returncols, index = pd.RangeIndex(stop = n_samples))
             
             for i in range(n_samples):
-                collect.iloc[i,:] = self.eval_skillscore(df[self.scorecols].sample(frac = 1, replace = True), scorecols = self.scorecols, returncols = returncols)
+                collect.iloc[i,:] = self.eval_skillscore(df[self.scorecols].sample(frac = 1, replace = True), scorecols = self.scorecols, returncols = returncols, climcol = climcol)
                 
             return(collect.quantile(q = quantiles, axis = 0).astype('float32'))
         
         bounds = grouped.apply(bootstrap_quantiles,
                                meta = pd.DataFrame(dtype='float32', columns = returncols, index=quantiles),
-                               **{'returncols':returncols, 'n_samples':200, 'quantiles':quantiles}).compute()
+                               **{'returncols':returncols, 'climcol':climcol, 'n_samples':200, 'quantiles':quantiles}).compute()
         return(bounds)
 
 basedir = '/nobackup/users/straaten/E-OBS/' # '/home/jsn295/Documents/climtestdir/'
