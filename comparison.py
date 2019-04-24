@@ -394,7 +394,7 @@ class Comparison(object):
             """
             This is going to be ugly because of two limitations: I cannot assign multiple columns at once, so there is no way
             to get an array with all draws from the predfunc. So we have to go draw by draw, and here we cannot assign to a multi-index
-            So this needs to be cr      eated afterwards.
+            So this needs to be created afterwards.
             """
             # Creates multiple columns. Supply n_members to the predfunc, given to here in the experiment class.
             #returnmeta = pd.DataFrame(np.zeros((1,n_members), dtype = 'float32'), columns = pd.MultiIndex.from_product([['corrected'],np.arange(n_members)], names = ['','number'])) # Needs a meta dataframe.
@@ -509,14 +509,14 @@ class ScoreAnalysis(object):
         self.basedir = '/nobackup/users/straaten/scores/'
         self.filepath = self.basedir + scorefile + '.h5'
         with pd.HDFStore(path=self.filepath, mode='r') as hdf:
-            allcolslevelzero = pd.Index([ tup[0] for tup in  hdf.get_storer('intermediate').non_index_axes[0][1] ])
+            allcolslevelzero = pd.Index([ tup[0] for tup in  hdf.get_storer('scores').non_index_axes[0][1] ])
         if allcolslevelzero.str.contains('_bs').any():
             self.scorecols = allcolslevelzero[allcolslevelzero.str.contains('_bs')].tolist()
             self.output = '_bss'
         elif allcolslevelzero.str.contains('_crps').any():
             self.scorecols = allcolslevelzero[allcolslevelzero.str.contains('_crps')].tolist()
             self.output = '_crpss'
-        self.frame = dd.read_hdf(self.filepath, key = 'scores', columns = self.scorecols)
+        self.frame = dd.read_hdf(self.filepath, key = 'scores', columns = self.scorecols + ['leadtime','latitude','longitude'])
         self.frame.columns = self.frame.columns.droplevel(1)
     
     def eval_skillscore(self, data, scorecols, returncols, climcol):
@@ -551,7 +551,7 @@ class ScoreAnalysis(object):
         Samples the score entries. First grouping and then random number generation in the bootstrapping.
         Quantiles for the confidence intervals (also for plots) are defined here.
         """
-        returncols = [ col + 'skill' for col in self.scorecols]
+        returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
         quantiles = [0.025,0.5,0.975]
         climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
         grouped =  self.frame.groupby(groupers)
@@ -571,32 +571,34 @@ class ScoreAnalysis(object):
             return(collect.quantile(q = quantiles, axis = 0).astype('float32'))
         
         bounds = grouped.apply(bootstrap_quantiles,
-                               meta = pd.DataFrame(dtype='float32', columns = returncols, index=quantiles),
+                               meta = pd.DataFrame(dtype='float32', columns = returncols, index = pd.Index(quantiles, name = 'quantile')),
                                **{'returncols':returncols, 'climcol':climcol, 'n_samples':200, 'quantiles':quantiles}).compute()
         return(bounds)
 
-basedir = '/nobackup/users/straaten/E-OBS/' # '/home/jsn295/Documents/climtestdir/'
-test1 = SurfaceObservations('tx', **{'basedir':basedir})
-test1.load(tmax = '1970-01-01', llcrnr = (25,-30), rucrnr = (75,75)) # llcrnr = (36.0, None))
-test2 = SurfaceObservations('tx', **{'basedir':basedir})
-test2.load(tmax = '1970-01-01', llcrnr = (25,-30), rucrnr = (75,75)) # llcrnr = (36.0, None))
-test1.aggregatetime(freq = '4D', method = 'max')
-test1.aggregatespace(step = 3, method = 'max', by_degree = True)
-test2.aggregatespace(step = 3, method = 'max', by_degree = True)
-clim1 = Climatology(test1.basevar) # '/home/jsn295/Documents/climtestdir/'
-clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = False, n_draws = 11, daily_obs_array = test2.array)
+#basedir = '/nobackup/users/straaten/E-OBS/' # '/home/jsn295/Documents/climtestdir/'
+#test1 = SurfaceObservations('tx', **{'basedir':basedir})
+#test1.load(tmax = '1970-01-01', llcrnr = (25,-30), rucrnr = (75,75)) # llcrnr = (36.0, None))
+#test2 = SurfaceObservations('tx', **{'basedir':basedir})
+#test2.load(tmax = '1970-01-01', llcrnr = (25,-30), rucrnr = (75,75)) # llcrnr = (36.0, None))
+#test1.aggregatetime(freq = '4D', method = 'max')
+#test1.aggregatespace(step = 3, method = 'max', by_degree = True)
+#test2.aggregatespace(step = 3, method = 'max', by_degree = True)
+#clim1 = Climatology(test1.basevar) # '/home/jsn295/Documents/climtestdir/'
+#clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = False, n_draws = 11, daily_obs_array = test2.array)
 #clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = True, daily_obs_array = test2.array)
 
-#clim1 = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_7D-max_3-degrees-max_5_5_q0.5'})
+#clim1 = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_4D-max_3-degrees-max_5_5_q0.5'})
 #clim1.localclim()
 #
-matchobject = '/usr/people/straaten/Downloads/tx_JJA_41r1_4D_max_3_degrees_max.h5' # '/home/jsn295/Documents/climtestdir/tx_JJA_41r1_4D_max_3_degrees_max.h5'
-ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
-ddtx.alignedobject = dd.read_hdf(matchobject, key = 'intermediate')
-ddtx.books_name = 'blahblahblahblah'
+#matchobject = '/usr/people/straaten/Downloads/tx_JJA_41r1_4D_max_3_degrees_max.h5' # '/home/jsn295/Documents/climtestdir/tx_JJA_41r1_4D_max_3_degrees_max.h5'
+#ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
+#ddtx.alignedobject = dd.read_hdf(matchobject, key = 'intermediate')
+#ddtx.books_name = 'blahblahblahblah'
 #
-self = Comparison(ddtx, climatology = clim1)
+#self = Comparison(ddtx, climatology = clim1)
 #self.merge_to_clim()
+
+#self = ScoreAnalysis('ahblah_tx_clim_1980-05-30_2010-08-31_4D-max_3-degrees-max_5_5_q0.5')
         
 #ddtg = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
 #ddtg.recollect(booksname= 'books_tg_DJF_41r1_7D-mean_3-degrees-mean.csv')

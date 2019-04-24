@@ -418,6 +418,9 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
-#start_batch(tmin = '2018-06-21', tmax = '2018-06-21')
-#start_batch(tmin = '2018-07-05', tmax = '2018-07-05')
-#start_batch(tmin = '2018-07-15', tmax = '2018-08-01')
+#start_batch(tmin = '2018-08-02', tmax = '2018-08-08')
+#start_batch(tmin = '2018-08-13', tmax = '2018-08-31')
+#start_batch(tmin = '2018-06-05', tmax = '2018-07-31')
+#start_batch(tmin = '2018-11-01', tmax = '2018-11-05')
+#start_batch(tmin = '2018-11-06', tmax = '2018-11-11')
+#start_batch(tmin = '2018-11-12', tmax = '2018-11-18')
