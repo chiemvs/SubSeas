@@ -6,8 +6,8 @@ import dask.array as da
 from helper_functions import agg_space, agg_time, monthtoseasonlookup
 
 obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
-                   'tx': {'dtype': 'int16', 'scale_factor': 0.0015, '_FillValue': -32767},
-                   'tg': {'dtype': 'int16', 'scale_factor': 0.0015, '_FillValue': -32767},
+                   'tx': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
+                   'tg': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'pop': {'dtype': 'int16', 'scale_factor': 0.0001, '_FillValue': -32767},
                    'time': {'dtype': 'int64'},
                    'latitude': {'dtype': 'float32'},
