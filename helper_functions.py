@@ -170,3 +170,22 @@ def _zvalue_from_index(arr, ind):
     # get linear indices and extract elements with np.take()
     idx = nC*nR*ind + np.arange(nC*nR).reshape((nC,nR))
     return np.take(arr, idx)
+
+def auto_cor(df, column, cutofflag = 15, return_lag_last_abovezero = False, return_char_length = False):
+    """
+    Computes the lagged autocorrelation in df[column] starting at lag one till cutofflag.
+    It is assumed that the rows in the dataframe are unique and sorted by time.
+    For the scoresets written in experiment 2 this is a correct assumption.
+    """
+    res = np.zeros((cutofflag,), dtype = 'float32')
+    for i in range(cutofflag):
+        res[i] = df.loc[:,column].autocorr(lag = i + 1)
+        if return_lag_last_abovezero and (res[i] <= 0): # Will return previous lag if this is the first lag (i+1) below zero
+            return(i)
+            
+    if return_lag_last_abovezero: # If not returned previously in the loop.
+        return(cutofflag)
+    elif return_char_length: # Formula by Leith 1973, referenced in Feng (2011)
+        return(((1 - np.arange(1, cutofflag + 1)/cutofflag) * res * 2).sum() + 1)
+    else:
+        return(res)

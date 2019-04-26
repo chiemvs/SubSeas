@@ -501,7 +501,7 @@ class ScoreAnalysis(object):
     """
     Contains several ways to analyse an exported file with scores. 
     """
-    def __init__(self, scorefile):
+    def __init__(self, scorefile, timeagg):
         """
         Provide the name of the exported file with the scores.
         Searches for relevant columns to load. Should find either _bs in certain columns or _crps
@@ -517,7 +517,9 @@ class ScoreAnalysis(object):
             self.scorecols = allcolslevelzero[allcolslevelzero.str.contains('_crps')].tolist()
             self.output = '_crpss'
         self.frame = dd.read_hdf(self.filepath, key = 'scores', columns = self.scorecols + ['leadtime','latitude','longitude'])
+        # self.frame = dd.read_hdf(self.filepath, key = 'scores', columns = self.scorecols + ['leadtime','latitude','longitude', 'observation','time'])
         self.frame.columns = self.frame.columns.droplevel(1)
+        self.timeagg = timeagg
     
     def eval_skillscore(self, data, scorecols, returncols, climcol):
         """
@@ -548,8 +550,11 @@ class ScoreAnalysis(object):
     
     def bootstrap_skill_score(self, groupers = ['leadtime']):
         """
-        Samples the score entries. First grouping and then random number generation in the bootstrapping.
-        Quantiles for the confidence intervals (also for plots) are defined here.
+        Samples the score entries. First grouping and then per (local) group multiple 
+        random samples are taken and their quantiles are outputted per group.
+        Quantiles for the confidence intervals (also for plots) are defined in this function.
+        NOTE: decorrelation time and block-bootstrapping cannot be incorporated
+        here as it is only easy for local in time.
         """
         returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
         quantiles = [0.025,0.5,0.975]
@@ -561,7 +566,7 @@ class ScoreAnalysis(object):
             Acts per group. Creates n samples (with replacement) of the dataframe.
             For each of these it calls the evaluate skill-scores method, whose output is collected.
             From the sized n collection it distills and returns the desired quantiles.
-            NOTE: worry about decorrelation time and block-bootstrapping?
+            
             """
             collect = pd.DataFrame(dtype = 'float32', columns = returncols, index = pd.RangeIndex(stop = n_samples))
             
@@ -574,7 +579,79 @@ class ScoreAnalysis(object):
                                meta = pd.DataFrame(dtype='float32', columns = returncols, index = pd.Index(quantiles, name = 'quantile')),
                                **{'returncols':returncols, 'climcol':climcol, 'n_samples':200, 'quantiles':quantiles}).compute()
         return(bounds)
-
+    
+    def characteristiclength(self):
+        """
+        Computes a characteristic length per location to use as bootstrapping block length.
+        According the formula of Leith 1973 which is reference in Feng (2011)
+        T_0 = 1 + 2 * \sum_{\tau= 1}^D (1 - \tau/D) * \rho_\tau
+        The number is in the unit of the time-aggregation of the variable. (nr days if daily values)
+        """
+        def auto_cor(df, freq, cutofflag = 20, return_char_length = True):
+            """
+            Computes the lagged autocorrelation in df['observation'] starting at lag one till cutofflag.
+            It is assumed that the rows in the dataframe are unique timesteps
+            For the scoresets written in experiment 2 this is a correct assumption.
+            Uses the time column to make the correct shifts, with the native freq of the variable (difficult to infer)
+            """
+            res = np.zeros((cutofflag,), dtype = 'float32')
+            for i in range(cutofflag):
+                series = df[['observation','time']].drop_duplicates().set_index('time')['observation']
+                # Use pd.Series capabilities.
+                res[i] = series.corr(series.shift(periods = i + 1, freq = freq).reindex(series.index))
+                    
+            if return_char_length: # Formula by Leith 1973, referenced in Feng (2011)
+                return(((1 - np.arange(1, cutofflag + 1)/cutofflag) * res * 2).sum() + 1)
+            else:
+                return(res)
+        
+        
+        # Read an extra column. Namely the observed column on which we want to compute the length.
+        tempframe = dd.read_hdf(self.filepath, key = 'scores', columns = ['observation','time','latitude','longitude'])
+        tempframe.columns = tempframe.columns.droplevel(1)
+        # Do stuff per location
+        self.charlengths = tempframe.groupby(['latitude','longitude']).apply(auto_cor, meta = ('charlength','float64'), **{'freq':self.timeagg,'cutofflag':20}).compute()
+            
+    def block_bootstrap_mean_of_local_skills(self, n_samples = 200, efolding = True):
+        """
+        At each random instance picks a local time-block-bootstraped sample and computes local skill for each location.
+        These are reworked to the areal mean. This process is repeated n_samples times and quantiles are returned.
+        """
+        returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
+        quantiles = [0.025,0.5,0.975]
+        climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
+        
+        grouped =  self.frame.groupby(['leadtime'])
+        
+        """
+        IDEAS: With bootstrapping you take the whole block. It is actually that you want to retain the correlation structure.
+        And keep on taking blocks untile you have the fraction of 1. These cannot go into the next year. ?smart structure for this?
+        We have local block lengths.
+        The use of the charlengths has to be adapted for the small datasets? Cannot be 7 weeks or something.
+        """
+        
+        def block_bootstrap(data):
+            """
+            Assumes that all rows in the supplied data are unique timesteps.
+            """
+        
+        def per_leadtime(df, n_samples, kwargs):
+            """
+            Function so we can apply the procedure per leadtime in the dask-framework.
+            Kwargs are for the bootstrapping function
+            """
+            localgroups = df.groupby(['latitude','longitude']) # Pandas grouping.
+            collect = pd.DataFrame(dtype = 'float32', columns = returncols, index = pd.RangeIndex(stop = n_samples))
+            
+            # Compute the local decorrelation time?
+            
+            for i in range(n_samples):
+                localgroups.apply(self.eval_skillscore)
+            
+#self = ScoreAnalysis('tg_DJF_41r1_7D-mean_3-degrees-mean_tg_clim_2000-11-30_2005-02-28_7D-mean_3-degrees-mean_5_5_rand',timeagg = '1D')
+#self.filepath = self.basedir + 'tg_DJF_41r1_1D_2-degrees-mean_tg_clim_1980-05-30_2015-02-28_1D_2-degrees-mean_5_5_q0.66.h5'
+#self.characteristiclength()
+    
 #basedir = '/nobackup/users/straaten/E-OBS/' # '/home/jsn295/Documents/climtestdir/'
 #test1 = SurfaceObservations('tx', **{'basedir':basedir})
 #test1.load(tmax = '1970-01-01', llcrnr = (25,-30), rucrnr = (75,75)) # llcrnr = (36.0, None))

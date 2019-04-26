@@ -182,14 +182,18 @@ class Experiment(object):
         """
         Reads the exported file and calls upon several possible methods to compute (bootstrapped) skill scores
         """
-        result = np.repeat(None,len(self.quantiles))
-        
-        for quantile in self.quantiles:    
-            scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)])
-            #skillscore = scoreanalysis.bootstrap_skill_score(groupers=['leadtime'])
-            skillscore = scoreanalysis.mean_skill_score2(groupers=['leadtime','latitude','longitude']) # Uses the new scoring. Apply bootstrapping later on.
-            result[self.quantiles.index(quantile)] = skillscore
-        
+        if self.quantiles is not None:
+            result = np.repeat(None,len(self.quantiles))
+            
+            for quantile in self.quantiles:    
+                scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
+                #skillscore = scoreanalysis.bootstrap_skill_score(groupers=['leadtime'])
+                skillscore = scoreanalysis.mean_skill_score(groupers=['leadtime','latitude','longitude']) # Uses the new scoring. Apply bootstrapping later on.
+                result[self.quantiles.index(quantile)] = skillscore
+        else:
+            result = np.repeat(None,1)
+            scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', '')], timeagg = timeagg)
+            result[0] = scoreanalysis.mean_skill_score(groupers=['leadtime','latitude','longitude'])
         return(result)
         
 
@@ -223,11 +227,11 @@ Mean temperature benchmarks. Observations split into two decades. Otherwise pote
 #dask.config.set(temporary_directory='/nobackup/users/straaten/')
 
 # Calling of the class        
-#test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
-#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66])
-#test2.setuplog()
+test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
+                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66])
+test2.setuplog()
 #test2.log = test2.log.assign(**{'obsname2':None}) # Extra observation column.
-#test2.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1995-11-30','tmax':'2005-02-28'})
+#test2.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1995-11-30','tmax':'2005-02-28'}) 
 #test2.iterateaggregations(func = 'prepareobs', column = 'obsname2', kwargs = {'tmin':'2005-03-01','tmax':'2015-02-28'})
 
 #test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
@@ -259,12 +263,16 @@ Mean temperature benchmarks. Observations split into two decades. Otherwise pote
 """
 Experiment 3 setup. Same climatology period. Make sure it does not append to bookfiles of experiment 2. Actually the same matchfiles can be used.
 """    
-#test3 = Experiment(expname = 'test3', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
-#                   timeaggregations = ['7D'], spaceaggregations = [3], quantiles = None)
-#test3.setuplog()
-#test3.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'2000-11-30','tmax':'2005-02-28'})
+test3 = Experiment(expname = 'test3', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
+                   timeaggregations = ['7D'], spaceaggregations = [3], quantiles = None)
+test3.setuplog()
+# Assigned the same matchfiles.
+#test3.log.loc[:,('booksname','')] = test2.log.loc[(3,'7D'),('booksname','')]
+#test3.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'2000-11-30','tmax':'2005-02-28'}) TODO: do not forget the filter step
 #test3.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'2000-11-30','climtmax':'2005-02-28'})
 #test3.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
+#test3.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
+#test3.iterateaggregations(func = 'skill', column = 'scores')
 
 """
 Probability of precipitation matching.
