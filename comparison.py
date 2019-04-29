@@ -459,7 +459,9 @@ class Comparison(object):
     
     def crpsscore(self):
         """
-        Discrete crps scoring. Nr of members. 
+        Discrete crps scoring by use of the properscoring package. For a small number of members (11),
+        the overestimation compared to the gaussian analytical form is about 20%. 
+        Therefore both climatology, the forecast, and corrected should be scored with the same number of members.
         """
         if not ('climatology' in self.frame.columns):
             self.merge_to_clim()
@@ -472,11 +474,8 @@ class Comparison(object):
             
         for forecasttype in ['forecast','climatology','corrected']: 
             if forecasttype in self.frame.columns: # Only score the corrected when present.
-                scorename = forecasttype + '_crps' # TODO: Implement this generic naming also for the brier scoring. Perhaps even such that they can be treated equally in the ScoreAnalysis.
+                scorename = forecasttype + '_crps' 
                 self.frame[scorename] = self.frame.map_partitions(crps_wrap, **{'forecasttype':forecasttype}, meta = (scorename,'float32'))
-        
-        # Score the 'forecast' for the raw score
-        # Score the multimember joined climatology for climatological score.
         
     
     def export(self, fits = True, frame = False):
@@ -601,7 +600,7 @@ class ScoreAnalysis(object):
                 res[i] = series.corr(series.shift(periods = i + 1, freq = freq).reindex(series.index))
                     
             if return_char_length: # Formula by Leith 1973, referenced in Feng (2011)
-                return(((1 - np.arange(1, cutofflag + 1)/cutofflag) * res * 2).sum() + 1)
+                return(np.nansum(((1 - np.arange(1, cutofflag + 1)/cutofflag) * res * 2)) + 1)
             else:
                 return(res)
         
@@ -610,47 +609,75 @@ class ScoreAnalysis(object):
         tempframe = dd.read_hdf(self.filepath, key = 'scores', columns = ['observation','time','latitude','longitude'])
         tempframe.columns = tempframe.columns.droplevel(1)
         # Do stuff per location
-        self.charlengths = tempframe.groupby(['latitude','longitude']).apply(auto_cor, meta = ('charlength','float64'), **{'freq':self.timeagg,'cutofflag':20}).compute()
+        self.charlengths = tempframe.groupby(['latitude','longitude']).apply(auto_cor, meta = ('charlength','float32'), **{'freq':self.timeagg,'cutofflag':20}).compute()
+        
+        # Quality control needed. Values below 1 are set to 1 (reduces later to normal bootstrapping)
+        self.charlengths[self.charlengths < 1] = 1
             
-    def block_bootstrap_mean_of_local_skills(self, n_samples = 200, efolding = True):
+    def block_bootstrap_mean_of_local_skills(self, n_samples = 200):
         """
         At each random instance picks a local time-block-bootstraped sample and computes local skill for each location.
-        These are reworked to the areal mean. This process is repeated n_samples times and quantiles are returned.
+        These are reworked to the areal mean. This process is repeated n_samples times 
+        and quantiles of the generated skillsare returned. The procedure loads the whole dataset
+        per leadtime (dask based), and does local (pandas based) grouping to get local block lengths and a local random set.
+        Note: should the use of the charlengths have to be adapted for the small datasets? Cannot be 7 weeks or something.
         """
-        returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
-        quantiles = [0.025,0.5,0.975]
-        climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
+
+        if not hasattr(self, 'charlengths'):
+            self.characteristiclength()
         
-        grouped =  self.frame.groupby(['leadtime'])
-        
-        """
-        IDEAS: With bootstrapping you take the whole block. It is actually that you want to retain the correlation structure.
-        And keep on taking blocks untile you have the fraction of 1. These cannot go into the next year. ?smart structure for this?
-        We have local block lengths.
-        The use of the charlengths has to be adapted for the small datasets? Cannot be 7 weeks or something.
-        """
-        
-        def block_bootstrap(data):
+        def block_sample(dflocation, fraction, kwargs):
             """
             Assumes that all rows in the supplied data are unique timesteps.
+            Kwargs are for the eval_skillscore function
+            It splits the sets of rows in a non-overlapping sense in blocks with the local blocklength.
+            These splits currently might jump into the new season. Otherwise it will be more expensive to track consequtive months
+            with local records of uneven length.
+            The local blocklength is read from the self.charlengths attribute.
             """
-        
-        def per_leadtime(df, n_samples, kwargs):
+            blocklength = self.charlengths.loc[(dflocation['latitude'].iloc[0],dflocation['longitude'].iloc[0])]
+            blocklength = int(np.ceil(blocklength))
+            #print(blocklength)
+            setlength = len(dflocation)
+            
+            if blocklength == 1:
+                return(self.eval_skillscore(dflocation[self.scorecols].sample(frac = fraction, replace = True), **kwargs))
+            else:
+                rowsets = pd.Series(np.array_split(np.arange(setlength), np.arange(blocklength,setlength,blocklength))) # produces a list of arrays
+                choice = rowsets.sample(frac = fraction, replace = True)
+                choice = np.concatenate(choice.values) # Glue the chosen sets back to a list
+                return(self.eval_skillscore(dflocation.iloc[choice,:], **kwargs)) # Duplicate indices are allowed in iloc.
+            
+        def per_leadtime(df, n_samples, quantiles, kwargs):
             """
             Function so we can apply the procedure per leadtime in the dask-framework.
-            Kwargs are for the bootstrapping function
+            Kwargs are for the eval_skillscore function. The overall score is computed n_samples times. Only quantiles are returned.
             """
             localgroups = df.groupby(['latitude','longitude']) # Pandas grouping.
             collect = pd.DataFrame(dtype = 'float32', columns = returncols, index = pd.RangeIndex(stop = n_samples))
             
-            # Compute the local decorrelation time?
-            
             for i in range(n_samples):
-                localgroups.apply(self.eval_skillscore)
-            
-#self = ScoreAnalysis('tg_DJF_41r1_7D-mean_3-degrees-mean_tg_clim_2000-11-30_2005-02-28_7D-mean_3-degrees-mean_5_5_rand',timeagg = '1D')
+                localscores = localgroups.apply(block_sample, **{'fraction':1, 'kwargs':kwargs})
+                spacemean = localscores.mean(axis = 0, skipna = True) # mean of local scores.
+                collect.iloc[i,:] = spacemean
+                
+            return(collect.quantile(q = quantiles, axis = 0).astype('float32'))
+        
+        returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
+        quantiles = [0.025,0.5,0.975]
+        climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
+        kwargs = {'scorecols':self.scorecols, 'returncols':returncols,'climcol':climcol}
+        grouped =  self.frame.groupby(['leadtime']) # Dask grouping
+        bounds = grouped.apply(per_leadtime,
+                               meta = pd.DataFrame(dtype='float32', columns = returncols, index = pd.Index(quantiles, name = 'quantile')),
+                               **{'n_samples':n_samples, 'quantiles':quantiles, 'kwargs':kwargs}).compute()
+        
+        return(bounds)
+        
+#self = ScoreAnalysis('tg_DJF_41r1_7D-mean_3-degrees-mean_tg_clim_2000-11-30_2005-02-28_7D-mean_3-degrees-mean_5_5_rand',timeagg = '7D')
 #self.filepath = self.basedir + 'tg_DJF_41r1_1D_2-degrees-mean_tg_clim_1980-05-30_2015-02-28_1D_2-degrees-mean_5_5_q0.66.h5'
 #self.characteristiclength()
+#test = self.block_bootstrap_mean_of_local_skills(n_samples = 200)
     
 #basedir = '/nobackup/users/straaten/E-OBS/' # '/home/jsn295/Documents/climtestdir/'
 #test1 = SurfaceObservations('tx', **{'basedir':basedir})
