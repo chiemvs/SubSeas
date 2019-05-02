@@ -109,8 +109,10 @@ class Experiment(object):
         """
         obs = SurfaceObservations(self.basevar)
         obs.load(tmin = climtmin, tmax = climtmax, llcrnr = (25,-30), rucrnr = (75,75))
+        obs.minfilter(season = self.season)
         dailyobs = SurfaceObservations(self.basevar)
         dailyobs.load(tmin = climtmin, tmax = climtmax, llcrnr = (25,-30), rucrnr = (75,75))
+        dailyobs.minfilter(season = self.season)
         if timeagg != '1D':
             obs.aggregatetime(freq = timeagg, method = self.method)
         if spaceagg != 0.25:
@@ -193,7 +195,8 @@ class Experiment(object):
         else:
             result = np.repeat(None,1)
             scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', '')], timeagg = timeagg)
-            result[0] = scoreanalysis.mean_skill_score(groupers=['leadtime','latitude','longitude'])
+            #result[0] = scoreanalysis.mean_skill_score(groupers=['leadtime','latitude','longitude'])
+            result[0] = scoreanalysis.block_bootstrap_mean_of_local_skills(n_samples = 200)
         return(result)
         
 
@@ -224,12 +227,12 @@ Max temperature benchmarks.
 Mean temperature benchmarks. Observations split into two decades. Otherwise potential memory error in matching.
 """
 
-#dask.config.set(temporary_directory='/nobackup/users/straaten/')
+dask.config.set(temporary_directory='/nobackup/users/straaten/')
 
 # Calling of the class        
-test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
-                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66])
-test2.setuplog()
+#test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
+#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66])
+#test2.setuplog()
 #test2.log = test2.log.assign(**{'obsname2':None}) # Extra observation column.
 #test2.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1995-11-30','tmax':'2005-02-28'}) 
 #test2.iterateaggregations(func = 'prepareobs', column = 'obsname2', kwargs = {'tmin':'2005-03-01','tmax':'2015-02-28'})
@@ -264,15 +267,15 @@ test2.setuplog()
 Experiment 3 setup. Same climatology period. Make sure it does not append to bookfiles of experiment 2. Actually the same matchfiles can be used.
 """    
 test3 = Experiment(expname = 'test3', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
-                   timeaggregations = ['7D'], spaceaggregations = [3], quantiles = None)
+                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = None)
 test3.setuplog()
 # Assigned the same matchfiles.
-#test3.log.loc[:,('booksname','')] = test2.log.loc[(3,'7D'),('booksname','')]
-#test3.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'2000-11-30','tmax':'2005-02-28'}) TODO: do not forget the filter step
-#test3.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'2000-11-30','climtmax':'2005-02-28'})
-#test3.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
+###test3.log.loc[:,('booksname','')] = test2.log.loc[:,('booksname','')]
+###test3.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1995-11-30','tmax':'2005-02-28'}) TODO: do not forget the filter step
+#test3.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
+###test3.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
 #test3.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
-#test3.iterateaggregations(func = 'skill', column = 'scores')
+test3.iterateaggregations(func = 'skill', column = 'scores')
 
 """
 Probability of precipitation matching.

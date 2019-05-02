@@ -124,7 +124,7 @@ class SurfaceObservations(object):
         self.tmin = pd.Series(self.array.time).min().strftime('%Y-%m-%d')
         self.tmax = pd.Series(self.array.time).max().strftime('%Y-%m-%d')
 
-    def filter(self, season, n_min_per_seas = 40):
+    def minfilter(self, season, n_min_per_seas = 40):
         """
         Requires on average a minimum amount of daily observations per season of interest (91 days). Assigns NaN all year round when this is not the case.
         """

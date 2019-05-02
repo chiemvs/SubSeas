@@ -673,11 +673,13 @@ class ScoreAnalysis(object):
                                **{'n_samples':n_samples, 'quantiles':quantiles, 'kwargs':kwargs}).compute()
         
         return(bounds)
-        
-#self = ScoreAnalysis('tg_DJF_41r1_7D-mean_3-degrees-mean_tg_clim_2000-11-30_2005-02-28_7D-mean_3-degrees-mean_5_5_rand',timeagg = '7D')
+
+#from dask.distributed import Client
+#client = Client(silence_logs=False)        
+#self = ScoreAnalysis('tg_DJF_41r1_1D_0.75-degrees-mean_tg_clim_1980-05-30_2015-02-28_1D_0.75-degrees-mean_5_5_rand',timeagg = '1D')
 #self.filepath = self.basedir + 'tg_DJF_41r1_1D_2-degrees-mean_tg_clim_1980-05-30_2015-02-28_1D_2-degrees-mean_5_5_q0.66.h5'
 #self.characteristiclength()
-#test = self.block_bootstrap_mean_of_local_skills(n_samples = 200)
+#test = self.block_bootstrap_mean_of_local_skills(n_samples = 5)
     
 #basedir = '/nobackup/users/straaten/E-OBS/' # '/home/jsn295/Documents/climtestdir/'
 #test1 = SurfaceObservations('tx', **{'basedir':basedir})
