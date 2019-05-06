@@ -673,7 +673,34 @@ class ScoreAnalysis(object):
                                **{'n_samples':n_samples, 'quantiles':quantiles, 'kwargs':kwargs}).compute()
         
         return(bounds)
-
+    
+    def block_bootstrap_local_skills(self, n_samples = 200):
+        """
+        Full grouping. returns 200 samples per group.
+        """
+        pass
+    
+    def fixed_mean(self, fix = 'min'):
+        
+        returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
+        climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
+        kwargs = {'scorecols':self.scorecols, 'returncols':returncols,'climcol':climcol}
+        
+        counts = self.frame.groupby(['leadtime']).count().compute()
+        
+        func = getattr(counts[climcol], fix)
+        limit = func()
+        print(limit)
+        def get_lim_samples_and_score(frame, limit, kwargs):
+            return(self.eval_skillscore(frame.sample(n = limit), **kwargs))
+        
+        grouped = self.frame.groupby(['leadtime'])
+        scores = grouped.apply(get_lim_samples_and_score, 
+                               meta = pd.DataFrame(dtype='float32', columns = returncols, index=[self.output]), 
+                               **{'limit':limit,'kwargs':kwargs}).compute()
+        return(scores)
+        
+    
 #from dask.distributed import Client
 #client = Client(silence_logs=False)        
 #self = ScoreAnalysis('tg_DJF_41r1_1D_0.75-degrees-mean_tg_clim_1980-05-30_2015-02-28_1D_0.75-degrees-mean_5_5_rand',timeagg = '1D')

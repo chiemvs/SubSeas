@@ -275,7 +275,7 @@ test3.setuplog()
 #test3.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
 ###test3.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
 #test3.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
-test3.iterateaggregations(func = 'skill', column = 'scores')
+#test3.iterateaggregations(func = 'skill', column = 'scores')
 
 """
 Probability of precipitation matching.
