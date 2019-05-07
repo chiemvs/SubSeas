@@ -14,7 +14,7 @@ import dask.dataframe as dd
 import itertools
 import properscoring as ps
 from observations import SurfaceObservations, Climatology, EventClassification
-from forecasts import Forecast
+#from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
 from fitting import NGR, Logistic
 
@@ -503,10 +503,18 @@ class ScoreAnalysis(object):
     def __init__(self, scorefile, timeagg):
         """
         Provide the name of the exported file with the scores.
-        Searches for relevant columns to load. Should find either _bs in certain columns or _crps
+        Change here the quantiles that are exported by bootstrapping procedures.
         """
         self.basedir = '/nobackup/users/straaten/scores/'
-        self.filepath = self.basedir + scorefile + '.h5'
+        self.scorefile = scorefile
+        self.filepath = self.basedir + self.scorefile + '.h5'
+        self.timeagg = timeagg
+        self.quantiles = [0.025,0.5,0.975]
+        
+    def load(self):
+        """
+        Searches for relevant columns to load. Should find either _bs in certain columns or _crps
+        """
         with pd.HDFStore(path=self.filepath, mode='r') as hdf:
             allcolslevelzero = pd.Index([ tup[0] for tup in  hdf.get_storer('scores').non_index_axes[0][1] ])
         if allcolslevelzero.str.contains('_bs').any():
@@ -516,38 +524,37 @@ class ScoreAnalysis(object):
             self.scorecols = allcolslevelzero[allcolslevelzero.str.contains('_crps')].tolist()
             self.output = '_crpss'
         self.frame = dd.read_hdf(self.filepath, key = 'scores', columns = self.scorecols + ['leadtime','latitude','longitude'])
-        # self.frame = dd.read_hdf(self.filepath, key = 'scores', columns = self.scorecols + ['leadtime','latitude','longitude', 'observation','time'])
         self.frame.columns = self.frame.columns.droplevel(1)
-        self.timeagg = timeagg
+        
+        # Some preparation for computing and returning scores in the methods below.
+        self.returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
+        self.climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
     
-    def eval_skillscore(self, data, scorecols, returncols, climcol):
+    def eval_skillscore(self, data):
         """
         Is supplied an isolated data group on which to evaluate skill of mean brierscores.
         These relevant columns are given as the scorecols.
         Returns a series with same length as scorecols. Climatology obviously has skill 1
         """
-        meanscore = data[scorecols].mean(axis = 0)
-        returns = np.zeros((len(returncols),), dtype = 'float32')
+        meanscore = data[self.scorecols].mean(axis = 0)
+        returns = np.zeros((len(self.returncols),), dtype = 'float32')
 
-        for scorecol, returncol in zip(scorecols, returncols):
-            returns[returncols.index(returncol)] = np.array(1, dtype = 'float32') - meanscore[scorecol]/meanscore[climcol] 
+        for scorecol, returncol in zip(self.scorecols, self.returncols):
+            returns[self.returncols.index(returncol)] = np.array(1, dtype = 'float32') - meanscore[scorecol]/meanscore[self.climcol] 
 
-        return(pd.Series(returns, index = returncols, name = self.output))
+        return(pd.Series(returns, index = self.returncols, name = self.output))
         
     def mean_skill_score(self, groupers = ['leadtime']):
         """
         Grouping. Average and compute skill score.
         """
-        returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
-        climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
         grouped =  self.frame.groupby(groupers)
         
         scores = grouped.apply(self.eval_skillscore, 
-                               meta = pd.DataFrame(dtype='float32', columns = returncols, index=[self.output]), 
-                               **{'scorecols':self.scorecols, 'returncols': returncols, 'climcol':climcol}).compute()
+                               meta = pd.DataFrame(dtype='float32', columns = self.returncols, index=[self.output])).compute()
         return(scores)
     
-    def bootstrap_skill_score(self, groupers = ['leadtime']):
+    def bootstrap_skill_score(self, groupers = ['leadtime'], n_samples = 200):
         """
         Samples the score entries. First grouping and then per (local) group multiple 
         random samples are taken and their quantiles are outputted per group.
@@ -555,28 +562,25 @@ class ScoreAnalysis(object):
         NOTE: decorrelation time and block-bootstrapping cannot be incorporated
         here as it is only easy for local in time.
         """
-        returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
-        quantiles = [0.025,0.5,0.975]
-        climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
         grouped =  self.frame.groupby(groupers)
         
-        def bootstrap_quantiles(df, returncols, climcol, n_samples, quantiles):
+        def bootstrap_quantiles(df, n_samples, quantiles):
             """
             Acts per group. Creates n samples (with replacement) of the dataframe.
             For each of these it calls the evaluate skill-scores method, whose output is collected.
             From the sized n collection it distills and returns the desired quantiles.
             
             """
-            collect = pd.DataFrame(dtype = 'float32', columns = returncols, index = pd.RangeIndex(stop = n_samples))
+            collect = pd.DataFrame(dtype = 'float32', columns = self.returncols, index = pd.RangeIndex(stop = n_samples))
             
             for i in range(n_samples):
-                collect.iloc[i,:] = self.eval_skillscore(df[self.scorecols].sample(frac = 1, replace = True), scorecols = self.scorecols, returncols = returncols, climcol = climcol)
+                collect.iloc[i,:] = self.eval_skillscore(df[self.scorecols].sample(frac = 1, replace = True))
                 
             return(collect.quantile(q = quantiles, axis = 0).astype('float32'))
         
         bounds = grouped.apply(bootstrap_quantiles,
-                               meta = pd.DataFrame(dtype='float32', columns = returncols, index = pd.Index(quantiles, name = 'quantile')),
-                               **{'returncols':returncols, 'climcol':climcol, 'n_samples':200, 'quantiles':quantiles}).compute()
+                               meta = pd.DataFrame(dtype='float32', columns = self.returncols, index = pd.Index(self.quantiles, name = 'quantile')),
+                               **{'n_samples':n_samples, 'quantiles':self.quantiles}).compute()
         return(bounds)
     
     def characteristiclength(self):
@@ -603,8 +607,7 @@ class ScoreAnalysis(object):
                 return(np.nansum(((1 - np.arange(1, cutofflag + 1)/cutofflag) * res * 2)) + 1)
             else:
                 return(res)
-        
-        
+                
         # Read an extra column. Namely the observed column on which we want to compute the length.
         tempframe = dd.read_hdf(self.filepath, key = 'scores', columns = ['observation','time','latitude','longitude'])
         tempframe.columns = tempframe.columns.droplevel(1)
@@ -626,10 +629,9 @@ class ScoreAnalysis(object):
         if not hasattr(self, 'charlengths'):
             self.characteristiclength()
         
-        def block_sample(dflocation, fraction, kwargs):
+        def block_sample(dflocation, fraction):
             """
             Assumes that all rows in the supplied data are unique timesteps.
-            Kwargs are for the eval_skillscore function
             It splits the sets of rows in a non-overlapping sense in blocks with the local blocklength.
             These splits currently might jump into the new season. Otherwise it will be more expensive to track consequtive months
             with local records of uneven length.
@@ -641,140 +643,96 @@ class ScoreAnalysis(object):
             setlength = len(dflocation)
             
             if blocklength == 1:
-                return(self.eval_skillscore(dflocation[self.scorecols].sample(frac = fraction, replace = True), **kwargs))
+                return(self.eval_skillscore(dflocation[self.scorecols].sample(frac = fraction, replace = True)))
             else:
                 rowsets = pd.Series(np.array_split(np.arange(setlength), np.arange(blocklength,setlength,blocklength))) # produces a list of arrays
                 choice = rowsets.sample(frac = fraction, replace = True)
                 choice = np.concatenate(choice.values) # Glue the chosen sets back to a list
-                return(self.eval_skillscore(dflocation.iloc[choice,:], **kwargs)) # Duplicate indices are allowed in iloc.
+                return(self.eval_skillscore(dflocation.iloc[choice,:])) # Duplicate indices are allowed in iloc.
             
-        def per_leadtime(df, n_samples, quantiles, kwargs):
+        def per_leadtime(df, n_samples, quantiles):
             """
             Function so we can apply the procedure per leadtime in the dask-framework.
-            Kwargs are for the eval_skillscore function. The overall score is computed n_samples times. Only quantiles are returned.
+            The overall score is computed n_samples times. Only quantiles are returned.
             """
             localgroups = df.groupby(['latitude','longitude']) # Pandas grouping.
-            collect = pd.DataFrame(dtype = 'float32', columns = returncols, index = pd.RangeIndex(stop = n_samples))
+            collect = pd.DataFrame(dtype = 'float32', columns = self.returncols, index = pd.RangeIndex(stop = n_samples))
             
             for i in range(n_samples):
-                localscores = localgroups.apply(block_sample, **{'fraction':1, 'kwargs':kwargs})
+                localscores = localgroups.apply(block_sample, **{'fraction':1})
                 spacemean = localscores.mean(axis = 0, skipna = True) # mean of local scores.
                 collect.iloc[i,:] = spacemean
                 
             return(collect.quantile(q = quantiles, axis = 0).astype('float32'))
         
-        returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
-        quantiles = [0.025,0.5,0.975]
-        climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
-        kwargs = {'scorecols':self.scorecols, 'returncols':returncols,'climcol':climcol}
         grouped =  self.frame.groupby(['leadtime']) # Dask grouping
         bounds = grouped.apply(per_leadtime,
-                               meta = pd.DataFrame(dtype='float32', columns = returncols, index = pd.Index(quantiles, name = 'quantile')),
-                               **{'n_samples':n_samples, 'quantiles':quantiles, 'kwargs':kwargs}).compute()
+                               meta = pd.DataFrame(dtype='float32', columns = self.returncols, index = pd.Index(self.quantiles, name = 'quantile')),
+                               **{'n_samples':n_samples, 'quantiles':self.quantiles}).compute()
         
         return(bounds)
     
     def block_bootstrap_local_skills(self, n_samples = 200):
         """
-        Full grouping. returns 200 samples per group.
+        Full grouping. returns 200 samples per group. Fix the sample size according to the maximum availabilities.
         """
-        pass
-    
-    def fixed_mean(self, fix = 'min'):
+        if not hasattr(self, 'charlengths'):
+            self.characteristiclength()
         
-        returncols = [ col.split('_')[0] + self.output for col in self.scorecols]
-        climcol = [col for col in self.scorecols if col.startswith('climatology')][0]
-        kwargs = {'scorecols':self.scorecols, 'returncols':returncols,'climcol':climcol}
+        # Get the maximum count. The goal is to equalize this accross leadtimes.
+        maxcount = self.frame.groupby(['leadtime','latitude','longitude'])[self.climcol].count().max().compute()
+        print(maxcount)
         
-        counts = self.frame.groupby(['leadtime']).count().compute()
+        def fix_sample_score(df, n_samples, fixed_size):
+            """
+            Acts per location/leadtime group. 
+            Assumes that all rows in the supplied data are unique timesteps.
+            Returns a dataframe of 3 cols and n_samples rows.
+            Block bootstrapping splits the sets of rows in a non-overlapping sense in blocks with the local blocklength.
+            These splits currently might jump into the new season. Otherwise it will be more expensive to track consequtive months
+            with local records of uneven length.
+            The local blocklength is read from the self.charlengths attribute.
+            """
+            blocklength = self.charlengths.loc[(df['latitude'].iloc[0],df['longitude'].iloc[0])]
+            blocklength = int(np.ceil(blocklength))
+            #print(blocklength)
+            setlength = len(df)
+            rowsets = pd.Series(np.array_split(np.arange(setlength), np.arange(blocklength,setlength,blocklength))) # produces a list of arrays
+            
+            local_result = [None] * n_samples            
+            for i in range(n_samples):
+                if blocklength == 1:
+                    sample = df[self.scorecols].sample(n = fixed_size, replace = True)
+                else:
+                    choice = rowsets.sample(n = fixed_size // blocklength, replace = True)
+                    choice = np.concatenate(choice.values) # Glue the chosen sets back to a listchoice = np.concatenate(choice.values)
+                    sample = df.iloc[choice,:] # Duplicate indices are allowed in iloc.
+                
+                local_result[i] = self.eval_skillscore(sample)
+            
+            return(pd.DataFrame(local_result, index = pd.RangeIndex(n_samples, name = 'samples')))
         
-        func = getattr(counts[climcol], fix)
-        limit = func()
-        print(limit)
-        def get_lim_samples_and_score(frame, limit, kwargs):
-            return(self.eval_skillscore(frame.sample(n = limit), **kwargs))
+        grouped =  self.frame.groupby(['leadtime','latitude','longitude']) # Dask grouping
+        sample_scores = grouped.apply(fix_sample_score,
+                               meta = pd.DataFrame(dtype='float32', columns = self.returncols, index = pd.RangeIndex(n_samples)),
+                               **{'n_samples':n_samples, 'fixed_size':maxcount})
         
-        grouped = self.frame.groupby(['leadtime'])
-        scores = grouped.apply(get_lim_samples_and_score, 
-                               meta = pd.DataFrame(dtype='float32', columns = returncols, index=[self.output]), 
-                               **{'limit':limit,'kwargs':kwargs}).compute()
-        return(scores)
+        sample_scores.to_hdf(self.filepath, key = 'bootstrap',  format = 'table', **{'mode':'a'})
         
-    
-#from dask.distributed import Client
-#client = Client(silence_logs=False)        
-#self = ScoreAnalysis('tg_DJF_41r1_1D_0.75-degrees-mean_tg_clim_1980-05-30_2015-02-28_1D_0.75-degrees-mean_5_5_rand',timeagg = '1D')
-#self.filepath = self.basedir + 'tg_DJF_41r1_1D_2-degrees-mean_tg_clim_1980-05-30_2015-02-28_1D_2-degrees-mean_5_5_q0.66.h5'
-#self.characteristiclength()
-#test = self.block_bootstrap_mean_of_local_skills(n_samples = 5)
-    
-#basedir = '/nobackup/users/straaten/E-OBS/' # '/home/jsn295/Documents/climtestdir/'
-#test1 = SurfaceObservations('tx', **{'basedir':basedir})
-#test1.load(tmax = '1970-01-01', llcrnr = (25,-30), rucrnr = (75,75)) # llcrnr = (36.0, None))
-#test2 = SurfaceObservations('tx', **{'basedir':basedir})
-#test2.load(tmax = '1970-01-01', llcrnr = (25,-30), rucrnr = (75,75)) # llcrnr = (36.0, None))
-#test1.aggregatetime(freq = '4D', method = 'max')
-#test1.aggregatespace(step = 3, method = 'max', by_degree = True)
-#test2.aggregatespace(step = 3, method = 'max', by_degree = True)
-#clim1 = Climatology(test1.basevar) # '/home/jsn295/Documents/climtestdir/'
-#clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = False, n_draws = 11, daily_obs_array = test2.array)
-#clim1.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = True, daily_obs_array = test2.array)
+        # Do the europe mean computation.
+        res = dd.read_hdf(self.filepath, key = 'bootstrap')
+        
+        #return(sample_scores)
+        eurmean = res.groupby(['leadtime','samples']).mean().compute()
+        return(eurmean.groupby('leadtime').quantile(self.quantiles))
+        
+# Laptop test setup for new dask bootstrapping
+#self = ScoreAnalysis(scorefile = 'we', timeagg = '7D')
+#self.basedir = '/home/jsn295/Downloads/'
+#self.filepath = self.basedir + 'tg_DJF_41r1_7D-mean_3-degrees-mean_tg_clim_1980-05-30_2015-02-28_7D-mean_3-degrees-mean_5_5_rand.h5'
+#self.load()
+#res = self.block_bootstrap_local_skills(n_samples = 2)
 
-#clim1 = Climatology('tx', **{'name':'tx_clim_1980-05-30_2010-08-31_4D-max_3-degrees-max_5_5_q0.5'})
-#clim1.localclim()
-#
-#matchobject = '/usr/people/straaten/Downloads/tx_JJA_41r1_4D_max_3_degrees_max.h5' # '/home/jsn295/Documents/climtestdir/tx_JJA_41r1_4D_max_3_degrees_max.h5'
-#ddtx = ForecastToObsAlignment(season = 'JJA', cycle = '41r1')
-#ddtx.alignedobject = dd.read_hdf(matchobject, key = 'intermediate')
-#ddtx.books_name = 'blahblahblahblah'
-#
-#self = Comparison(ddtx, climatology = clim1)
-#self.merge_to_clim()
 
-#self = ScoreAnalysis('ahblah_tx_clim_1980-05-30_2010-08-31_4D-max_3-degrees-max_5_5_q0.5')
-        
-#ddtg = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
-#ddtg.recollect(booksname= 'books_tg_DJF_41r1_7D-mean_3-degrees-mean.csv')
-#climatology = Climatology('tg', **{'name':'tg_clim_1980-05-30_2015-02-28_7D-mean_3-degrees-mean_5_5_q0.1'})
-#climatology.localclim()
-#self = Comparison(alignment=ddtg, climatology = climatology)
 
-#climatology = Climatology('tg', **{'name':'tg_clim_1980-05-30_2015-02-28_2D-mean_3-degrees-mean_5_5_q0.1'})
-#climatology.localclim()
-#ddtx = ForecastToObsAlignment(season = 'DJF', cycle = '41r1')
-##ddtx.alignedobject = dd.read_hdf('/nobackup/users/straaten/match/tx_JJA_41r1_3D_max_1.5_degrees_max_169c5dbd7e3a4881928a9f04ca68c400.h5', key = 'intermediate')
-#ddtx.recollect(booksname='books_tg_DJF_41r1_2D-mean_3-degrees-mean.csv')
-#comp = Comparison(ddtx, climatology = climatology)
-#comp.compute_predictors(pp_model = NGR())
-#comp.fit_pp_models(pp_model= NGR())
-#comp.make_pp_forecast(pp_model = NGR())
-#comp.brierscore()
-#case1 = comp.frame.compute()
-#
-#comp2 = Comparison(ddtx, climatology = climatology)
-#comp2.compute_predictors(pp_model = NGR2())
-#comp2.fit_pp_models(pp_model = NGR2())
-#comp2.make_pp_forecast(pp_model = NGR2())
-#comp2.brierscore()
-#case2 = comp2.frame.compute()
-#
-##domain wide
-#globalbs1 = case1.groupby(['leadtime']).quantile(0.95)
-#globalbs1['corbss'] = 1 - globalbs1['corbrier'] / globalbs1['climbrier']
-#globalbs2 = case2.groupby(['leadtime']).quantile(0.95)
-#globalbs2['cor_transformbss'] = 1 - globalbs2['corbrier'] / globalbs2['climbrier']
-#pd.DataFrame([globalbs1['corbss'], globalbs2['cor_transformbss']]).T.plot()
-#
-#(globalbs2['corbrier'] - globalbs1['corbrier']).plot()
-#
-##local
-#globalbs1 = case1.groupby(['leadtime', 'latitude','longitude']).mean()['corbrier']
-#globalbs2 = case2.groupby(['leadtime', 'latitude','longitude']).mean()['corbrier']
-#globalbs2.name = 'corbrier_logtransform'
-#
-#bsframe = pd.DataFrame([globalbs1, globalbs2]).T
-#bsfields = bsframe.to_xarray()
-#
-## Check the fits at location: lon 16.5, lat 50.75
-#fits1 = comp.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),comp.coefcols + ['leadtime']].drop_duplicates()
-#fits2 = comp2.fits.loc[np.logical_and(comp.fits['latitude'] == 50.75, comp.fits['longitude'] == 16.5),comp.coefcols + ['leadtime']].drop_duplicates()
+

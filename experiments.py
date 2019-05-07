@@ -189,14 +189,15 @@ class Experiment(object):
             
             for quantile in self.quantiles:    
                 scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
+                scoreanalysis.load()
                 #skillscore = scoreanalysis.bootstrap_skill_score(groupers=['leadtime'])
                 skillscore = scoreanalysis.mean_skill_score(groupers=['leadtime','latitude','longitude']) # Uses the new scoring. Apply bootstrapping later on.
                 result[self.quantiles.index(quantile)] = skillscore
         else:
             result = np.repeat(None,1)
             scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', '')], timeagg = timeagg)
-            #result[0] = scoreanalysis.mean_skill_score(groupers=['leadtime','latitude','longitude'])
-            result[0] = scoreanalysis.block_bootstrap_mean_of_local_skills(n_samples = 200)
+            scoreanalysis.load()
+            result[0] = scoreanalysis.block_bootstrap_local_skills(n_samples = 200)
         return(result)
         
 
@@ -275,7 +276,7 @@ test3.setuplog()
 #test3.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
 ###test3.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
 #test3.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
-#test3.iterateaggregations(func = 'skill', column = 'scores')
+test3.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
 
 """
 Probability of precipitation matching.
