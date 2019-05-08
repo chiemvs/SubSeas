@@ -336,6 +336,8 @@ class EventClassification(object):
         if obs_dask is not None:
             self.obsd = obs_dask
             
+        self.old_units = getattr(obs.array, 'units')
+            
         for key in kwds.keys():
             setattr(self, key, kwds[key])
     
@@ -352,7 +354,7 @@ class EventClassification(object):
         if inplace:
             self.obs.array = xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop')
             self.obs.newvar = 'pop'
-            self.obs.array.attrs = {'long_name':'probability_of_precipitation', 'threshold_mm_day':threshold}
+            self.obs.array.attrs = {'long_name':'probability_of_precipitation', 'threshold_mm_day':threshold, 'units':self.old_units, 'new_units':''}
             #self.obs.construct_name()
         else:
             return(xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop'))

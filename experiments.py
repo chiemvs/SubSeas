@@ -20,7 +20,7 @@ import itertools
 
 class Experiment(object):
     
-    def __init__(self, expname, basevar, cycle, season, method = 'mean', timeaggregations = ['1D', '2D', '3D', '4D', '7D'], spaceaggregations = [0.25, 0.75, 1.5, 3], quantiles = [0.5, 0.9, 0.95]):
+    def __init__(self, expname, basevar, cycle, season, newvar = None, method = 'mean', timeaggregations = ['1D', '2D', '3D', '4D', '7D'], spaceaggregations = [0.25, 0.75, 1.5, 3], quantiles = [0.5, 0.9, 0.95]):
         """
         Setting the relevant attributes. Timeaggregations are pandas frequency strings, spaceaggregations are floats in degrees.
         Quantiles can be None if you are already investigating an event variable and if you want to crps-score the whole distribution.
@@ -29,6 +29,7 @@ class Experiment(object):
         self.resultsdir = '/nobackup/users/straaten/results/'
         self.expname = expname
         self.basevar = basevar
+        self.newvar = newvar
         self.cycle = cycle
         self.season = season
         self.method = method
@@ -87,6 +88,8 @@ class Experiment(object):
             obs.aggregatetime(freq = timeagg, method = self.method)
         if spaceagg != 0.25:
             obs.aggregatespace(step = spaceagg, method = self.method, by_degree = True)
+        if self.newvar is not None:
+            getattr(EventClassification(obs), self.newvar)(inplace = True)
         obs.savechanges()
         return(obs.name)
     
@@ -94,13 +97,16 @@ class Experiment(object):
         """
         Writes the intermediate files. And returns the (possibly appended) booksname
         """
-        obs = SurfaceObservations(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),(obscol,'')]})
+        if self.newvar is None:
+            obs = SurfaceObservations(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),(obscol,'')]})
+        else:
+            obs = SurfaceObservations(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),(obscol,'')], 'newvar':self.newvar})
         obs.load()
         alignment = ForecastToObsAlignment(season = self.season, observations=obs, cycle=self.cycle)
         alignment.find_forecasts()
         alignment.load_forecasts(n_members = 11)
         alignment.force_resolution(time = (timeagg != '1D'), space = (spaceagg != 0.25))
-        alignment.match_and_write()
+        alignment.match_and_write(newvariable = (self.newvar is not None))
         return(alignment.books_name)
     
     def makeclim(self, spaceagg, timeagg, climtmin, climtmax):
@@ -281,4 +287,8 @@ Experiment 3 setup. Same climatology period. Make sure it does not append to boo
 """
 Experiment 5 setup Probability of Precipitation.
 """
-
+self = Experiment(expname = 'test5', basevar = 'rr', newvar = 'pop', cycle = '41r1', season = 'DJF', method = 'mean', 
+                   timeaggregations = ['2D'], spaceaggregations = [0.75], quantiles = None)
+self.setuplog()
+self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '2000-01-01',tmax = '2000-01-10'))
+self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})

@@ -130,7 +130,7 @@ class ForecastToObsAlignment(object):
     def match_and_write(self, newvariable = False):
         """
         Neirest neighbouring to match pairs. Be careful when domain of observations is larger.
-        Also converts forecast units to observed units.
+        Also converts forecast units to observed units. (the observed units of a newvariable should be its old units)
         Creates the dataset and writes it to disk. Possibly empties basket and writes to disk 
         at intermediate steps if intermediate results press too much on memory.
         """
@@ -181,6 +181,7 @@ class ForecastToObsAlignment(object):
                 allleadtimes = xr.concat(objs = [f.array.swap_dims({'time':'leadtime'}) for f in listofforecasts], dim = 'leadtime') # concatenates over leadtime dimension.
                 a,b = unitconversionfactors(xunit = allleadtimes.units, yunit = fieldobs.units)
                 exp = allleadtimes.reindex_like(fieldobs, method='nearest') * a + b
+                exp.attrs = {'units':fieldobs.units}
                 
                 # Call force_new_variable here. Which in its turn calls the same EventClassification method that was also used on the obs.
                 if newvariable:

@@ -62,7 +62,7 @@ def agg_space(array, orlats, orlons, step, skipna = False, method = 'mean', by_d
         else:
             maxnacells = int(0.4 * step**2)
         toomanyna = np.isnan(array).groupby(combined).sum('stacked_latitude_longitude') > maxnacells
-        grouped.values[toomanyna] = np.nan # Set the values.
+        grouped.values[toomanyna.values] = np.nan # Set the values. NOTE: an error might occur here for dataarray with a limited length first axis (time). Then change toomanyna to toomanyna.values
     
     # Compute new coordinates, and construct a spatial multiindex with lats and lons for each group
     newlat = orlats.to_series().groupby(binlat).mean()
