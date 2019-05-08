@@ -13,7 +13,7 @@ import pygrib
 # Extended range has 50 perturbed members. and 1 control forecast. Steps: "0/to/1104/by/6"
 # Reforecasts have 11 members (stream = "enfh", number "1/to/10"). Probably some duplicates will arise.
 # Params: 228.128 : total precipitation (or 228172). 167.128 : T2m
-# Interpolated resolution 0.4 or 0.5 degree. Native grid O320 (but subsetting is not available for native)
+# Native grid O320 (but subsetting is not available for native)
 
 # Global variables
 server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)

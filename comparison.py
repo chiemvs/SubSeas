@@ -14,7 +14,7 @@ import dask.dataframe as dd
 import itertools
 import properscoring as ps
 from observations import SurfaceObservations, Climatology, EventClassification
-#from forecasts import Forecast
+from forecasts import Forecast
 from helper_functions import monthtoseasonlookup, unitconversionfactors
 from fitting import NGR, Logistic
 

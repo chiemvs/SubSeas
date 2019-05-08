@@ -79,7 +79,7 @@ class Experiment(object):
     
     def prepareobs(self, spaceagg, timeagg, tmin, tmax):
         """
-        Writes the observations that will be matched to forecasts
+        Writes the observations that will be matched to forecasts. TODO: add minfilter, and event_class method.
         """
         obs = SurfaceObservations(self.basevar)
         obs.load(tmin = tmin, tmax = tmax, llcrnr = (25,-30), rucrnr = (75,75))
@@ -123,12 +123,12 @@ class Experiment(object):
             climnames = np.repeat(None,len(self.quantiles))
             for quantile in self.quantiles:
                 climatology = Climatology(self.basevar)
-                climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = quantile, daily_obs_array = dailyobs.array)
+                climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = quantile, daily_obs = dailyobs)
                 climatology.savelocalclim()
                 climnames[self.quantiles.index(quantile)] = climatology.name
         else:
             climatology = Climatology(self.basevar) # Make a 'random draws' climatology.
-            climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = None, n_draws = 11, daily_obs_array = dailyobs.array)
+            climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = None, n_draws = 11, daily_obs = dailyobs)
             climatology.savelocalclim()
             climnames = climatology.name
         return(climnames)
@@ -228,7 +228,7 @@ Max temperature benchmarks.
 Mean temperature benchmarks. Observations split into two decades. Otherwise potential memory error in matching.
 """
 
-dask.config.set(temporary_directory='/nobackup/users/straaten/')
+#dask.config.set(temporary_directory='/nobackup/users/straaten/')
 
 # Calling of the class        
 #test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
@@ -267,37 +267,18 @@ dask.config.set(temporary_directory='/nobackup/users/straaten/')
 """
 Experiment 3 setup. Same climatology period. Make sure it does not append to bookfiles of experiment 2. Actually the same matchfiles can be used.
 """    
-test3 = Experiment(expname = 'test3', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
-                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = None)
-test3.setuplog()
+#test3 = Experiment(expname = 'test3', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
+#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = None)
+#test3.setuplog()
 # Assigned the same matchfiles.
 ###test3.log.loc[:,('booksname','')] = test2.log.loc[:,('booksname','')]
 ###test3.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = {'tmin':'1995-11-30','tmax':'2005-02-28'}) TODO: do not forget the filter step
 #test3.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1980-05-30','climtmax':'2015-02-28'})
 ###test3.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
 #test3.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
-test3.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
+#test3.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
 
 """
-Probability of precipitation matching.
+Experiment 5 setup Probability of Precipitation.
 """
-#obsrr1day = SurfaceObservations('rr')
-#obsrr1day.load(tmin = '1995-01-01', tmax = '2000-12-31', llcrnr = (25,-30), rucrnr = (75,75))
-#classpop1day = EventClassification(obs = obsrr1day)
-#classpop1day.pop()
 
-# Make a separate climatology
-#classpop1day.localclim(daysbefore=5, daysafter = 5)
-#classpop1day.clim
-#classpop1day.obs.array
-
-# Now match this to forecasts
-#alignment = ForecastToObsAlignment(season = 'DJF', observations = classpop1day.obs, cycle='41r1')
-#alignment.find_forecasts()
-#alignment.load_forecasts(n_members=11) # With the 'rr' basevariable
-#alignment.match_and_write(newvariable = True)
-#alignment.recollect() # booksname = books_pop_DJF_41r1_1D_0.25_degrees.csv
-
-# Now to scoring
-#final = Comparison(alignedobject=alignment.alignedobject, climatology=classpop1day.clim) # in this case climatology is a probability
-#test = final.brierscore()
