@@ -13,17 +13,17 @@ import pygrib
 # Extended range has 50 perturbed members. and 1 control forecast. Steps: "0/to/1104/by/6"
 # Reforecasts have 11 members (stream = "enfh", number "1/to/10"). Probably some duplicates will arise.
 # Params: 228.128 : total precipitation (or 228172). 167.128 : T2m
-# Interpolated resolution 0.4 or 0.5 degree. Native grid O320 (but subsetting is not available for native)
+# Native grid O320 (but subsetting is not available for native)
 
 # Global variables
 server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)
-for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
-                   'mx2t6': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
+for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
+                   'mx2t6': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
                    'tp': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
                    'tpvar': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
                    'rr': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
-                   'tx': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
-                   'tg': {'dtype': 'int16', 'scale_factor': 0.0015, 'add_offset': 283, '_FillValue': -32767},
+                   'tx': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
+                   'tg': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
                    'time': {'dtype': 'int64'},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
@@ -418,6 +418,9 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
-#start_batch(tmin = '2018-06-21', tmax = '2018-06-21')
-#start_batch(tmin = '2018-07-05', tmax = '2018-07-05')
-#start_batch(tmin = '2018-07-15', tmax = '2018-08-01')
+#start_batch(tmin = '2018-08-02', tmax = '2018-08-08')
+#start_batch(tmin = '2018-08-13', tmax = '2018-08-31')
+#start_batch(tmin = '2018-06-05', tmax = '2018-07-31')
+#start_batch(tmin = '2018-11-01', tmax = '2018-11-05')
+#start_batch(tmin = '2018-11-06', tmax = '2018-11-11')
+#start_batch(tmin = '2018-11-12', tmax = '2018-11-18')

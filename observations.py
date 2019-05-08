@@ -3,16 +3,17 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import dask.array as da
-from helper_functions import agg_space, agg_time
+from helper_functions import agg_space, agg_time, monthtoseasonlookup
 
 obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
-                   'tx': {'dtype': 'int16', 'scale_factor': 0.0015, '_FillValue': -32767},
-                   'tg': {'dtype': 'int16', 'scale_factor': 0.0015, '_FillValue': -32767},
+                   'tx': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
+                   'tg': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'pop': {'dtype': 'int16', 'scale_factor': 0.0001, '_FillValue': -32767},
                    'time': {'dtype': 'int64'},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
-                   'doy': {'dtype': 'int16'}}
+                   'doy': {'dtype': 'int16'},
+                   'number': {'dtype': 'int16'}}
 
 class SurfaceObservations(object):
     
@@ -123,6 +124,16 @@ class SurfaceObservations(object):
         self.tmin = pd.Series(self.array.time).min().strftime('%Y-%m-%d')
         self.tmax = pd.Series(self.array.time).max().strftime('%Y-%m-%d')
 
+    def minfilter(self, season, n_min_per_seas = 40):
+        """
+        Requires on average a minimum amount of daily observations per season of interest (91 days). Assigns NaN all year round when this is not the case.
+        """
+        seasonindex = self.array.time.dt.season == season
+        n_seasons = np.diff(seasonindex).sum() / 2 # Number of transitions between season and non-season divided by 2 
+        seasononly = self.array.sel(time = seasonindex)
+        
+        self.array = self.array.where(seasononly.count('time') >= n_seasons * n_min_per_seas, np.nan)
+        
     def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = False):
         """
         Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
@@ -151,6 +162,8 @@ class SurfaceObservations(object):
 
         # To access days of week: self.array.time.dt.timeofday
         # Also possible is self.array.time.dt.floor('D')
+    
+
     
     def savechanges(self):
         """
@@ -195,15 +208,17 @@ class Climatology(object):
         
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
         
-    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, daily_obs_array = None):
+    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, n_draws = None, daily_obs = None):
         """
         Load a local clim if one with corresponding basevar, tmin, tmax and method is found, or if name given at initialization is found.
         Construct local climatological distribution within a rolling window, but with pooled years. 
-        Extracts mean (giving probabilities if you have a binary variable) 
+        Extracts mean (giving probabilities if you have a binary variable). Or a random number of draws if these are given.
         It can also compute a quantile on a continuous variables. Returns fields of this for all supplied day-of-year (doy) and space.
         Daysbefore and daysafter are inclusive.
         For non-daily aggregations the procedure is the same, as the climatology needs to be still derived from daily values. 
         Therefore the amount of aggregated dats is inferred.
+        For event-based variables: the obs should have the transformation already. 
+        The daily obs should have the original continuous variable (only space aggregated) and is transformed here 
         """
         
         keys = ['tmin','tmax','timemethod','spacemethod', 'daysbefore', 'daysafter']
@@ -215,8 +230,10 @@ class Climatology(object):
 
         if mean:
             self.climmethod = 'mean'
-        else:
+        elif quant is not None:
             self.climmethod = 'q' + str(quant)
+        else:
+            self.climmethod = 'rand'
         
         # Overwrites possible nonsense attributes
         self.construct_name(force = False)
@@ -232,7 +249,7 @@ class Climatology(object):
             
             if (self.ndayagg > 1):
                 freq, method = obs.timemethod.split('-')
-                doygroups = daily_obs_array.groupby('time.dayofyear')
+                doygroups = daily_obs.array.groupby('time.dayofyear')
             else:
                 doygroups = obs.array.groupby('time.dayofyear')
             
@@ -258,6 +275,15 @@ class Climatology(object):
                         aggregated_slices.append(agg_time(array = slice_arr, freq = freq, method = method, ndayagg = self.ndayagg)[0]) # [0] for only the returned array. not the timemethod             
                         complete = complete.drop(slice_arr.time.values, dim = 'time') # remove so new minimum can be found.
                     complete = xr.concat(aggregated_slices, dim = 'time')
+                    
+                    # Possible classification in the aggregated slices if the supplied obs was transformed.
+                    try:
+                        newvar = getattr(obs, 'newvar') # only there if transformed.
+                        daily_obs.array = complete # Assign to the class.
+                        getattr(EventClassification(daily_obs),newvar)() # Get the classifier capable of transforming the class.
+                        complete = daily_obs.array
+                    except AttributeError:
+                        pass
     
                 if mean:
                     reduced = complete.mean('time', keep_attrs = True)
@@ -269,12 +295,19 @@ class Climatology(object):
                     reduced.attrs = complete.attrs
                     reduced.attrs['quantile'] = quant
                 else:
-                    raise ValueError('Provide a quantile if mean is set to False')
+                    # Random sampling with replacement if not enough fields in the complete array
+                    try:
+                        draws = complete.sel(time = np.random.choice(complete.time, size = n_draws, replace = False))
+                    except ValueError:
+                        draws = complete.sel(time = np.random.choice(complete.time, size = n_draws, replace = True))
+                    # Assign a number dimension to the draws.
+                    reduced = xr.DataArray(data = draws, coords = [np.arange(n_draws), complete.coords['latitude'], complete.coords['longitude']], dims = ['number','latitude','longitude'], name = self.var)
                 
-                # Setting a minimum on the amount of observations that went into the mean and quantile computation.
-                number_nan = reduced.isnull().sum().values
+                # Setting a minimum on the amount of observations that went into the mean and quantile computation, and report the number of locations that went to NaN
+                number_nan = reduced.isnull().sum(['latitude','longitude']).values
                 reduced = reduced.where(complete.count('time') >= 10, np.nan)
-                number_nan = reduced.isnull().sum().values - number_nan
+                number_nan = reduced.isnull().sum(['latitude','longitude']).values - number_nan
+                
                 
                 print('computed clim of', doy, ', removed', number_nan, 'locations with < 10 obs.')
                 reduced.coords['doy'] = doy
@@ -286,7 +319,7 @@ class Climatology(object):
     def savelocalclim(self):
         
         self.construct_name(force = True)
-        particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clim.to_dataset().keys()} 
+        particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clim.to_dataset().variables.keys()} 
         self.clim.to_netcdf(self.filepath, encoding = particular_encoding)
         
         
@@ -308,7 +341,7 @@ class EventClassification(object):
     
     def pop(self, threshold = 0.3, inplace = True):
         """
-        Method to change rainfall accumulation arrays to a boolean variable of whether it rains or not. Unit is mm.
+        Method to change rainfall accumulation arrays to a boolean variable of whether it rains or not. Unit is mm / day.
         Because we still like to incorporate np.NaN on the unobserved areas, the array has to be floats of 0 and 1
         """
         if hasattr(self, 'obsd'):
@@ -319,7 +352,7 @@ class EventClassification(object):
         if inplace:
             self.obs.array = xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop')
             self.obs.newvar = 'pop'
-            self.obs.array.attrs = {'long_name':'probability_of_precipitation', 'threshold_mm':threshold}
+            self.obs.array.attrs = {'long_name':'probability_of_precipitation', 'threshold_mm_day':threshold}
             #self.obs.construct_name()
         else:
             return(xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop'))
@@ -350,23 +383,3 @@ class EventClassification(object):
             results.append(fields - self.clim.sel(doy = doy))
             print('computed exceedance of', doy)
         self.exceedance = xr.concat(results, dim = 'time')
-
-       
-#test1 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-#test1.load(tmax = '1980-01-01')
-#test2 = SurfaceObservations('rr', **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-#test2.load(tmax = '1980-01-01')
-#test2.aggregatetime(freq = '3D')
-#self = Climatology(test1.basevar, **{'basedir':'/home/jsn295/Documents/climtestdir/'})
-#self.localclim(obs = test1, daysbefore = 5, daysafter = 5, mean = True)
-#self.localclim(obs = test2, daysbefore = 5, daysafter = 5, daily_obs_array = test1.array, mean = False, quant = 0.9)
-#test1.load(tmax = '1980-01-01', lazychunk={'time':300})
-
-#clas = EventClassification(obs = test1, obsd = test1)
-#clas.pop()
-#clas.obs.savechanges()
-#clim1 = Climatology('pop')
-#obs = SurfaceObservations('pop', **{'name':'pop.1950-01-01.1980-01-01.1D.0.25_degrees'})
-#obs.load()
-#clim1.localclim(obs = obs, daysbefore = 5, daysafter = 5)
-#clim1.savelocalclim()
