@@ -15,7 +15,7 @@ import dask.config
 from observations import SurfaceObservations, Climatology, EventClassification
 from forecasts import Forecast
 from comparison import ForecastToObsAlignment, Comparison, ScoreAnalysis
-from fitting import NGR
+from fitting import NGR, Logistic
 import itertools
 
 class Experiment(object):
@@ -80,10 +80,11 @@ class Experiment(object):
     
     def prepareobs(self, spaceagg, timeagg, tmin, tmax):
         """
-        Writes the observations that will be matched to forecasts. TODO: add minfilter, and event_class method.
+        Writes the observations that will be matched to forecasts. Also applies minfilter for average minimum amount of daily observations per season.
         """
         obs = SurfaceObservations(self.basevar)
         obs.load(tmin = tmin, tmax = tmax, llcrnr = (25,-30), rucrnr = (75,75))
+        obs.minfilter(season = self.season, n_min_per_seas = 40)
         if timeagg != '1D':
             obs.aggregatetime(freq = timeagg, method = self.method)
         if spaceagg != 0.25:
@@ -112,18 +113,19 @@ class Experiment(object):
     def makeclim(self, spaceagg, timeagg, climtmin, climtmax):
         """
         Make climatologies based on a period of 30 years, longer than the 5 years in matching. Should daysbefore/daysafter be an attribute of the class?
+        No observation minfilter needed. Climatology has its own filters.
         """
         obs = SurfaceObservations(self.basevar)
         obs.load(tmin = climtmin, tmax = climtmax, llcrnr = (25,-30), rucrnr = (75,75))
-        obs.minfilter(season = self.season)
         dailyobs = SurfaceObservations(self.basevar)
         dailyobs.load(tmin = climtmin, tmax = climtmax, llcrnr = (25,-30), rucrnr = (75,75))
-        dailyobs.minfilter(season = self.season)
         if timeagg != '1D':
             obs.aggregatetime(freq = timeagg, method = self.method)
         if spaceagg != 0.25:
             obs.aggregatespace(step = spaceagg, method = self.method, by_degree = True)
             dailyobs.aggregatespace(step = spaceagg, method = self.method, by_degree = True) # Aggregate the dailyobs for the climatology
+        if self.newvar is not None:
+            getattr(EventClassification(obs), self.newvar)(inplace = True) # Only the observation needs to be transformed. Daily_obs are transformed in local_climatology
         
         if self.quantiles is not None:
             climnames = np.repeat(None,len(self.quantiles))
@@ -133,12 +135,16 @@ class Experiment(object):
                 climatology.savelocalclim()
                 climnames[self.quantiles.index(quantile)] = climatology.name
         else:
-            climatology = Climatology(self.basevar) # Make a 'random draws' climatology.
-            climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = None, n_draws = 11, daily_obs = dailyobs)
+            if self.newvar is None: # Make a 'random draws' climatology.
+                climatology = Climatology(self.basevar)
+                climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = None, n_draws = 11, daily_obs = dailyobs)
+            else:
+                climatology = Climatology(self.newvar)
+                climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = True, quant = None, daily_obs = dailyobs)
             climatology.savelocalclim()
             climnames = climatology.name
+
         return(climnames)
-            
     
     def score(self, spaceagg, timeagg, pp_model = None):
         """
@@ -180,8 +186,11 @@ class Experiment(object):
             if not pp_model is None:
                 comp.fit_pp_models(pp_model = pp_model, groupers = ['leadtime','latitude','longitude'])
                 comp.export(fits=True, frame = False)
-                comp.make_pp_forecast(pp_model = pp_model, n_members = 11)
-            comp.crpsscore()
+                comp.make_pp_forecast(pp_model = pp_model, n_members = 11 if isinstance(pp_model, NGR) else None)
+            if self.newvar is None:
+                comp.crpsscore()
+            else:
+                comp.brierscore()
             result = comp.export(fits=False, frame = True)
             
         return(result)
@@ -287,8 +296,10 @@ Experiment 3 setup. Same climatology period. Make sure it does not append to boo
 """
 Experiment 5 setup Probability of Precipitation.
 """
-self = Experiment(expname = 'test5', basevar = 'rr', newvar = 'pop', cycle = '41r1', season = 'DJF', method = 'mean', 
-                   timeaggregations = ['2D'], spaceaggregations = [0.75], quantiles = None)
-self.setuplog()
-self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '2000-01-01',tmax = '2000-01-10'))
-self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
+#self = Experiment(expname = 'test5', basevar = 'rr', newvar = 'pop', cycle = '41r1', season = 'DJF', method = 'mean', 
+#                   timeaggregations = ['7D'], spaceaggregations = [0.25], quantiles = None)
+#self.setuplog()
+#self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-10'))
+#self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
+#self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1990-01-01','climtmax':'2000-02-28'})
+#self.iterateaggregations(func = 'score', columns = 'scorefiles', kwargs = {'pp_model':Logistic()})

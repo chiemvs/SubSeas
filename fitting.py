@@ -105,6 +105,7 @@ class Logistic(object):
     def fit(self, train):
         """
         Uses L2-loss minimization to fit a logistic model
+        Fitting fails if training set has only one category (usually happens when always dry)
         """
         clf = LogisticRegression(solver='liblinear')
         clf.fit(X = train[self.predcols[1:]], y = train[self.obscol])

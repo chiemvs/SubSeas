@@ -733,7 +733,3 @@ class ScoreAnalysis(object):
 #self.filepath = self.basedir + 'tg_DJF_41r1_7D-mean_3-degrees-mean_tg_clim_1980-05-30_2015-02-28_7D-mean_3-degrees-mean_5_5_rand.h5'
 #self.load()
 #res = self.block_bootstrap_local_skills(n_samples = 2)
-
-
-
-
