@@ -297,14 +297,14 @@ Experiment 3 setup. Climatology period same as exp 2. Make sure it does not appe
 """
 Experiment 4 setup. Western europe only. Same climatology period.
 """  
-test4 = Experiment(expname = 'west_eur', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean',
-                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = None)
-test4.setuplog()
-test4.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
-test4.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
-test4.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
-test4.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
-test4.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
+#test4 = Experiment(expname = 'west_eur', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean',
+#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = None)
+#test4.setuplog()
+#test4.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
+#test4.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
+#test4.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
+#test4.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
+#test4.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
 
 
 """

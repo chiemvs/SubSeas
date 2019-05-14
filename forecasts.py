@@ -1,14 +1,13 @@
 #!/usr/bin/env python
 import ecmwfapi 
 import os
-#import gzip
 import numpy as np
-#import sys
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 import pandas as pd
 import xarray as xr
 import pygrib
+from helper_functions import unitconversionfactors
 
 # Extended range has 50 perturbed members. and 1 control forecast. Steps: "0/to/1104/by/6"
 # Reforecasts have 11 members (stream = "enfh", number "1/to/10"). Probably some duplicates will arise.
@@ -418,9 +417,33 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
+class ModelClimatology(object):
+    """
+    Class to estimate model climatology per day of the year and per leadtime.
+    Only means, over time and over members.
+    """
+    def __init__(self, cycle, **kwds):
+        
+        self.basedir = "/nobackup/users/straaten/modelclimatology/"
+        self.cycle = cycle
+        for key in kwds.keys():
+            setattr(self, key, kwds[key])
+    
+    def local_clim(tmin = None, tmax = None, timemethod = None, spacemethod = None):
+        pass
+    
+    def load_forecasts(desired_window):
+        pass
+    
+    def change_units(self, newunit):
+        
+        a,b = unitconversionfactors(xunit = self.array.units, yunit = newunit)
+        
+
 #start_batch(tmin = '2018-08-02', tmax = '2018-08-08')
 #start_batch(tmin = '2018-08-13', tmax = '2018-08-31')
 #start_batch(tmin = '2018-06-05', tmax = '2018-07-31')
 #start_batch(tmin = '2018-11-01', tmax = '2018-11-05')
 #start_batch(tmin = '2018-11-06', tmax = '2018-11-11')
 #start_batch(tmin = '2018-11-12', tmax = '2018-11-18')
+#start_batch(tmin = '2018-11-19', tmax = '2018-11-22')
