@@ -78,12 +78,12 @@ class Experiment(object):
             else:
                 print('already filled')
     
-    def prepareobs(self, spaceagg, timeagg, tmin, tmax):
+    def prepareobs(self, spaceagg, timeagg, tmin, tmax, llcrnr = (25,-30), rucrnr = (75,75)):
         """
         Writes the observations that will be matched to forecasts. Also applies minfilter for average minimum amount of daily observations per season.
         """
         obs = SurfaceObservations(self.basevar)
-        obs.load(tmin = tmin, tmax = tmax, llcrnr = (25,-30), rucrnr = (75,75))
+        obs.load(tmin = tmin, tmax = tmax, llcrnr = llcrnr, rucrnr = rucrnr)
         obs.minfilter(season = self.season, n_min_per_seas = 40)
         if timeagg != '1D':
             obs.aggregatetime(freq = timeagg, method = self.method)
@@ -103,22 +103,22 @@ class Experiment(object):
         else:
             obs = SurfaceObservations(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),(obscol,'')], 'newvar':self.newvar})
         obs.load()
-        alignment = ForecastToObsAlignment(season = self.season, observations=obs, cycle=self.cycle)
+        alignment = ForecastToObsAlignment(season = self.season, observations=obs, cycle=self.cycle, **{'expname':self.expname})
         alignment.find_forecasts()
         alignment.load_forecasts(n_members = 11)
         alignment.force_resolution(time = (timeagg != '1D'), space = (spaceagg != 0.25))
         alignment.match_and_write(newvariable = (self.newvar is not None))
         return(alignment.books_name)
     
-    def makeclim(self, spaceagg, timeagg, climtmin, climtmax):
+    def makeclim(self, spaceagg, timeagg, climtmin, climtmax, llcrnr = (25,-30), rucrnr = (75,75)):
         """
         Make climatologies based on a period of 30 years, longer than the 5 years in matching. Should daysbefore/daysafter be an attribute of the class?
         No observation minfilter needed. Climatology has its own filters.
         """
         obs = SurfaceObservations(self.basevar)
-        obs.load(tmin = climtmin, tmax = climtmax, llcrnr = (25,-30), rucrnr = (75,75))
+        obs.load(tmin = climtmin, tmax = climtmax, llcrnr = llcrnr, rucrnr = rucrnr)
         dailyobs = SurfaceObservations(self.basevar)
-        dailyobs.load(tmin = climtmin, tmax = climtmax, llcrnr = (25,-30), rucrnr = (75,75))
+        dailyobs.load(tmin = climtmin, tmax = climtmax, llcrnr = llcrnr, rucrnr = rucrnr)
         if timeagg != '1D':
             obs.aggregatetime(freq = timeagg, method = self.method)
         if spaceagg != 0.25:
@@ -212,7 +212,8 @@ class Experiment(object):
             result = np.repeat(None,1)
             scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', '')], timeagg = timeagg)
             scoreanalysis.load()
-            result[0] = scoreanalysis.block_bootstrap_local_skills(n_samples = 200)
+            #result[0] = scoreanalysis.mean_skill_score()
+            result[0] = scoreanalysis.block_bootstrap_local_skills(n_samples = 2000)
         return(result)
         
 
@@ -280,7 +281,7 @@ Mean temperature benchmarks. Observations split into two decades. Otherwise pote
 #skillframe.sort_index()[['rawbrierskill','corbrierskill']].to_hdf('/nobackup/users/straaten/results/exp2_skill.h5', key = 'local_mean')
 
 """
-Experiment 3 setup. Same climatology period. Make sure it does not append to bookfiles of experiment 2. Actually the same matchfiles can be used.
+Experiment 3 setup. Climatology period same as exp 2. Make sure it does not append to bookfiles of experiment 2. Actually the same matchfiles can be used.
 """    
 #test3 = Experiment(expname = 'test3', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
 #                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = None)
@@ -292,6 +293,19 @@ Experiment 3 setup. Same climatology period. Make sure it does not append to boo
 ###test3.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
 #test3.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
 #test3.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
+
+"""
+Experiment 4 setup. Western europe only. Same climatology period.
+"""  
+test4 = Experiment(expname = 'west_eur', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean',
+                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25, 0.75, 1.25, 2, 3], quantiles = None)
+test4.setuplog()
+test4.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
+test4.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
+test4.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
+test4.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
+test4.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
+
 
 """
 Experiment 5 setup Probability of Precipitation.

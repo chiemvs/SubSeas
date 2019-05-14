@@ -24,7 +24,7 @@ class ForecastToObsAlignment(object):
     This searches the corresponding forecasts, and possibly forces the same aggregations.
     TODO: not sure how to handle groups yet.
     """
-    def __init__(self, season, cycle, observations = None):
+    def __init__(self, season, cycle, observations = None, **kwds):
         """
         Temporal extend can be read from the attributes of the observation class. 
         Specify the season under inspection for subsetting.
@@ -39,6 +39,9 @@ class ForecastToObsAlignment(object):
             # infer dominant time aggregation in days
             self.time_agg = int(self.dates.diff().dt.days.mode())
             self.maxleadtime = 46
+        
+        for key in kwds.keys():
+            setattr(self, key, kwds[key])
     
     def find_forecasts(self):
         """
@@ -151,6 +154,7 @@ class ForecastToObsAlignment(object):
             else:
                 characteristics = [self.obs.basevar, self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
             filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.h5'
+            characteristics = [self.expname] + characteristics if hasattr(self, 'expname') else characteristics
             self.books_name = 'books_' + '_'.join(characteristics) + '.csv'
             books_path = self.basedir + self.books_name
             
