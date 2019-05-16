@@ -1,12 +1,12 @@
-#!/usr/bin/env python
-#import ecmwfapi 
+#!/usr/bin/env python3
+import ecmwfapi 
 import os
 import numpy as np
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 import pandas as pd
 import xarray as xr
-#import pygrib
+import pygrib
 from helper_functions import unitconversionfactors
 
 # Extended range has 50 perturbed members. and 1 control forecast. Steps: "0/to/1104/by/6"
@@ -15,7 +15,7 @@ from helper_functions import unitconversionfactors
 # Native grid O320 (but subsetting is not available for native)
 
 # Global variables
-#server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)
+server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)
 for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
                    'mx2t6': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
                    'tp': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
@@ -27,6 +27,7 @@ for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.002, 'add_off
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
                    'number': {'dtype': 'int16'},
+                   'doy': {'dtype': 'int16'},
                    'leadtime': {'dtype': 'int16'}}
 
 model_cycles = pd.DataFrame(data = {'firstday':pd.to_datetime(['2015-05-12','2016-03-08','2016-11-22','2017-07-11','2018-06-05','']),
@@ -257,9 +258,12 @@ class Forecast(object):
         from helper_functions import agg_time
         
         if keep_leadtime:
-            lead0 = self.array.coords['leadtime'].isel(time = slice(0,1))
-            self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, ndayagg = ndayagg)
-            self.array.coords.update({'leadtime':lead0})
+            leadtimes = self.array.coords['leadtime']
+            if ndayagg is None:
+                self.array, self.timemethod, ndayagg = agg_time(array = self.array, freq = freq, method = method, returnndayagg = True)
+            else:
+                self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, ndayagg = ndayagg)
+            self.array.coords.update({'leadtime':leadtimes[slice(0,None,ndayagg)]})
         else:
             self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, ndayagg = ndayagg)
     
@@ -430,15 +434,22 @@ class ModelClimatology(object):
         for key in kwds.keys():
             setattr(self, key, kwds[key])
     
-    def local_clim(tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 5, daysafter = 5):
-        
-        self.time_agg = 1 if spacemethod is None else int(timemethod[0]) # Will not work for '1W' Alternative is to infer from data
+    def local_clim(self, tmin = None, tmax = None, timemethod = '1D', daysbefore = 5, daysafter = 5):
+        """
+        Method to construct the climatology based on forecasts within a desired timewindow.
+        Should I add a spacemethod and spatial aggregation option? spacemethod = '0.38-degrees'
+        Climatology dependend on doy and on leadtime. Takes the average over all ensemble members and times within a window.
+        This window is determined by daysbefore and daysafter and the time aggregation of the desired variable.
+        """
+        self.time_agg = int(timemethod[0]) # Will not work for '1W' Alternative is to infer from data
         # self.time_agg = int(self.dates.diff().dt.days.mode())
+        self.timemethod = timemethod # Later use in the aggregation.
         self.maxleadtime = 46 #days
         self.maxdoy = 366
         
         eval_time_axis = pd.date_range(tmin, tmax, freq = 'D')
         
+        climate = []
         
         for doy in range(1,self.maxdoy + 1):
             window = np.arange(doy - daysbefore, doy + daysafter + self.time_agg, dtype = 'int64')
@@ -446,36 +457,71 @@ class ModelClimatology(object):
             window[ window < 1 ] += self.maxdoy
             window[ window > self.maxdoy ] -= self.maxdoy
             
-            eval_indices = np.nonzero(np.isin(eval_time_axis.dayofyear, window))[0]
+            eval_indices = np.nonzero(np.isin(eval_time_axis.dayofyear, window))[0] # Can lead to empty windows if no entries in the chosen evaluation time axis belong to this doy and its window.
             eval_windows = np.split(eval_indices, np.nonzero(np.diff(eval_indices) > 1)[0] + 1)
             
-            eval_time_windows = [ eval_time_axis.iloc[ind] for ind in eval_windows]
-            self.load_forecasts(eval_time_windows)
+            eval_time_windows = [ eval_time_axis[ind] for ind in eval_windows ]
+            total = self.load_forecasts(eval_time_windows)
             
-    def load_forecasts(evaluation_windows, n_members):
+            if total is not None:
+                doy_climate = total.groupby('leadtime').mean(['number','time'], keep_attrs = True)
+                doy_climate.coords['doy'] = doy
+                climate.append(doy_climate)
+                print('computed model climate of', doy, 'for', len(doy_climate['leadtime']), 'leadtimes.')
+            else:
+                print('no available forecasts for', doy, 'in chosen evaluation time axis')
         
+        self.clim = xr.concat(climate, dim='doy')
+            
+    def load_forecasts(self, evaluation_windows, n_members = 11):
+        """
+        Per initialization date either the hindcast or the forecast can exist.
+        Teste for possibility of empty supplied windows.
+        Returns the whole block of (potentially time averaged) forecasts belonging to a set of windows around a doy, at different leadtimes.
+        If no forecasts existed for these doy-specific evaluation_windos then it returns none.
+        """
         # Work per blocked window of a certain consecutive amount of days.
-        forecasts = {} # Perhaps just a regular list?
+        forecast_collection = [] # Perhaps just a regular list?
         for window in evaluation_windows:
-            # Determine forecast initialization times that fully contain the evaluation date (including its window for time aggregation)
-            containstart = window.min() + pd.Timedelta(str(self.time_agg) + 'D') - pd.Timedelta(str(self.maxleadtime) + 'D') # Also plus 1 for the 1day aggregation?
-            containend = window.max() - pd.Timedelta(str(self.time_agg) + 'D')
-            contain = pd.date_range(start = containstart, end = containend, freq = 'D')
             
-            for indate in contain:
-                stringdate = indate.strftime('%Y-%m-%d')
-                forecasts = [Forecast(stringdate, prefix = 'for_', cycle = self.cycle), Forecast(stringdate, prefix = 'hin_', cycle = self.cycle)]
-                # Load the overlapping parts for the forecasts that exist
-                forecastrange = indate + pd.Timedelta(str(self.maxleadtime) + 'D')
-                overlap = forecastrange == window # Some sort of inner join? numpy perhaps?
-                loaded = [f.load(self.var, tmin = overlap.min(), tmax = overlap.max()) for f in forecasts if os.path.isfile(f.basedir + f.processedfile)]
-                # Aggregate. What to do with leadtime? Assigned to first day as this is also done in the matching.
-            
-    
+            if len(window) > 0:
+                # Determine forecast initialization times that fully contain the evaluation date (including its window for time aggregation)
+                containstart = window.min() + pd.Timedelta(str(self.time_agg) + 'D') - pd.Timedelta(str(self.maxleadtime) + 'D') # Also plus 1 for the 1day aggregation?
+                containend = window.max() - pd.Timedelta(str(self.time_agg - 1) + 'D') # Initialized at day x means it also already contains day x as leadtime = 1 day
+                contain = pd.date_range(start = containstart, end = containend, freq = 'D')
+                
+                for indate in contain:
+                    stringdate = indate.strftime('%Y-%m-%d')
+                    forecasts = [Forecast(stringdate, prefix = 'for_', cycle = self.cycle), Forecast(stringdate, prefix = 'hin_', cycle = self.cycle)]
+                    forecasts = [ f for f in forecasts if os.path.isfile(f.basedir + f.processedfile) ]
+                    # Load the overlapping parts for the forecast that exist
+                    if forecasts:
+                        forecastrange = pd.date_range(indate, indate + pd.Timedelta(str(self.maxleadtime - 1) + 'D')) # Leadtime one plus 45 extra leadtimes.
+                        overlap = np.intersect1d(forecastrange, window) # Some sort of inner join? numpy perhaps?
+                        forecasts[0].load(self.var, tmin = overlap.min(), tmax = overlap.max(), n_members = n_members)
+                        # Aggregate. What to do with leadtime? Assigned to first day as this is also done in the matching.
+                        if forecasts[0].timemethod != self.timemethod:
+                            freq, method = self.timemethod.split('-')
+                            forecasts[0].aggregatetime(freq = freq, method = method, ndayagg = self.time_agg, keep_leadtime = True) # Array becomes empty when overlap loaded is less than the time aggregation.
+                            print('aligned time')
+                            
+                        forecast_collection.append(forecasts[0].array)
+        try:
+            total = xr.concat(forecast_collection, dim = 'time') 
+            if total.shape[0] == 0: # Test for empty first dimension.
+                raise ValueError
+            else:
+                return(total)
+        except ValueError: # No forecasts existed, or the supplied window was empty and forecast_collection remained empty, or the overlap was too little for the desired aggregation.
+            return(None)
+                            
     def change_units(self, newunit):
         
-        a,b = unitconversionfactors(xunit = self.array.units, yunit = newunit)
+        a,b = unitconversionfactors(xunit = self.clim.units, yunit = newunit)
         
+
+self = ModelClimatology('41r1', 'tg')
+self.local_clim(tmin = '2000-01-01',tmax = '2000-02-21', timemethod = '3D-mean', daysbefore = 1, daysafter = 1)
 
 #start_batch(tmin = '2018-08-02', tmax = '2018-08-08')
 #start_batch(tmin = '2018-08-13', tmax = '2018-08-31')

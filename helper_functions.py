@@ -75,7 +75,7 @@ def agg_space(array, orlats, orlons, step, skipna = False, method = 'mean', by_d
     spacemethod = '-'.join([str(step), 'cells', method]) if not by_degree else '-'.join([str(step), 'degrees', method])
     return(array, spacemethod)
 
-def agg_time(array, freq = 'w', method = 'mean', ndayagg = None):
+def agg_time(array, freq = 'w', method = 'mean', ndayagg = None, returnndayagg = False):
     """
     Assumes an input array with a regularly spaced daily time index. Uses the pandas frequency indicators. Method can be mean, min, max, std
     Completely lazy when loading is lazy. Returns an adapted array and a timemethod string for documentation.
@@ -89,7 +89,9 @@ def agg_time(array, freq = 'w', method = 'mean', ndayagg = None):
         ndayagg = (array.time.values[1] - array.time.values[0]).astype('timedelta64[D]').item().days # infer the interval length.
     timemethod = '-'.join([freq,method])
     if (input_length % ndayagg) != 0:
-        return(array.isel(time = slice(0,-1,None)), timemethod)
+        array = array.isel(time = slice(0,-1,None))
+    if returnndayagg:
+        return(array, timemethod, ndayagg)
     else:    
         return(array, timemethod)
     
