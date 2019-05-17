@@ -518,10 +518,12 @@ class ModelClimatology(object):
     def change_units(self, newunit):
         
         a,b = unitconversionfactors(xunit = self.clim.units, yunit = newunit)
+        self.clim = self.clim * a + b
+        self.clim.attrs = {'units':newunit}
         
 
 self = ModelClimatology('41r1', 'tg')
-self.local_clim(tmin = '2000-01-01',tmax = '2000-02-21', timemethod = '3D-mean', daysbefore = 1, daysafter = 1)
+self.local_clim(tmin = '2000-01-01',tmax = '2001-01-21', timemethod = '1D', daysbefore = 3, daysafter = 3)
 
 #start_batch(tmin = '2018-08-02', tmax = '2018-08-08')
 #start_batch(tmin = '2018-08-13', tmax = '2018-08-31')
