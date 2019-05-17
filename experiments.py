@@ -94,7 +94,7 @@ class Experiment(object):
         obs.savechanges()
         return(obs.name)
     
-    def match(self, spaceagg, timeagg, obscol = 'obsname'):
+    def match(self, spaceagg, timeagg, obscol = 'obsname', loadkwargs = {}):
         """
         Writes the intermediate files. And returns the (possibly appended) booksname
         """
@@ -105,7 +105,7 @@ class Experiment(object):
         obs.load()
         alignment = ForecastToObsAlignment(season = self.season, observations=obs, cycle=self.cycle, **{'expname':self.expname})
         alignment.find_forecasts()
-        alignment.load_forecasts(n_members = 11)
+        alignment.load_forecasts(loadkwargs = loadkwargs, n_members = 11)
         alignment.force_resolution(time = (timeagg != '1D'), space = (spaceagg != 0.25))
         alignment.match_and_write(newvariable = (self.newvar is not None))
         return(alignment.books_name)
@@ -302,7 +302,7 @@ test4 = Experiment(expname = 'west_eur', basevar = 'tg', cycle = '41r1', season 
 test4.setuplog()
 test4.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
 test4.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
-test4.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname'})
+test4.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'obscol':'obsname', 'loadkwargs':{'llcrnr':(45,0), 'rucrnr':(55,6)}}) 
 test4.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
 test4.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
 

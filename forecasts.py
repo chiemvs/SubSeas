@@ -14,6 +14,7 @@ import pygrib
 # Reforecasts have 11 members (stream = "enfh", number "1/to/10"). Probably some duplicates will arise.
 # Params: 228.128 : total precipitation (or 228172). 167.128 : T2m
 # Native grid O320 (but subsetting is not available for native)
+# Grids at the ecmwf are stored with decreasing latitude but increasing longitude.
 
 # Global variables
 server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)
@@ -220,9 +221,12 @@ class Forecast(object):
             except OSError:
                 pass
     
-    def load(self, variable = None, tmin = None, tmax = None, n_members = None):
+    def load(self, variable = None, tmin = None, tmax = None, n_members = None, llcrnr = (None, None), rucrnr = (None,None)):
         """
         Loading of processedfile. Similar behaviour to observation class
+        Default behaviour is to load the full spatial field and whole forecast range.
+        Field is stored with decreasing latitude but increasing longitude.
+        Variable needs to be supplied. Otherwise no array can be loaded.
         If n_members is set to one it selects only the control member.
         Then the numbers are set to a default range because they are not unique across initialization times
         over which they are later pooled. Within one forecast instance they do of course resemble a physical pathway.
@@ -242,7 +246,7 @@ class Forecast(object):
             numbers = np.concatenate((numbers[[0]], 
                                       np.random.choice(numbers[1:], size = n_members - 1, replace = False)))
         
-        self.array = full.sel(time = pd.date_range(tmin, tmax, freq = 'D'), number = numbers)
+        self.array = full.sel(time = pd.date_range(tmin, tmax, freq = 'D'), number = numbers, longitude = slice(llcrnr[1], rucrnr[1]), latitude = slice(rucrnr[0], llcrnr[0]))
         # reset the index
         if n_members is not None:
             self.array.coords['number'] = np.arange(0,n_members, dtype = 'int16')
