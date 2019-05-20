@@ -4,6 +4,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import dask.array as da
+import warnings
 from helper_functions import agg_space, agg_time, monthtoseasonlookup
 
 obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
@@ -328,8 +329,9 @@ class EventClassification(object):
     
     def __init__(self, obs, obs_dask = None, **kwds):
         """
-        Aimed at on-the-grid classification.
-        Supply the observations xarray: Normal array for (memory efficient) grouping and fast explicit climatology computation
+        Aimed at on-the-grid classification of continuous variables. By modifying the array
+        attribute of observation or forecast objects. Normal array for (memory efficient) grouping 
+        and fast explicit computation
         If the dataset is potentially large then one can supply a version withy dask array
         dask array for the anomaly computation which probably will not fit into memory.
         """
@@ -358,7 +360,9 @@ class EventClassification(object):
             self.obs.array.attrs = {'long_name':'probability_of_precipitation', 'threshold_mm_day':threshold, 'units':self.old_units, 'new_units':''}
             #self.obs.construct_name()
         else:
-            return(xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop'))
+            return(xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims,
+                                attrs = {'long_name':'probability_of_precipitation', 'threshold_mm_day':threshold, 'units':self.old_units, 'new_units':''},
+                                name = 'pop'))
     
     def stefanon2012(self):
         """
@@ -372,17 +376,39 @@ class EventClassification(object):
         time/space greedy fill of local exceedence of climatological quantile.
         """
     
-    def climexceedance(self, clim):
+    def anom(self, inplace = True):
         """
         Substracts the climatological value for the associated day of year from the observations.
         This leads to anomalies when the climatological mean was taken. Exceedances become sorted by doy.
+        The climatology object needs to have been supplied at initialization.
+        TODO: make this work per leadtime.
         """
+        if not hasattr(self, 'climatology'):
+            raise AttributeError('provide climatology at initialization please')
+        
+        if not (self.obs.array.units == self.climatology.clim.units):
+            raise ValueError('supplied object and climatology do not have the same units')
+        
         if hasattr(self, 'obsd'):
             doygroups = self.obsd.array.groupby('time.dayofyear')
         else:
             doygroups = self.obs.array.groupby('time.dayofyear')
-        results = []
-        for doy, fields in doygroups:
-            results.append(fields - self.clim.sel(doy = doy))
-            print('computed exceedance of', doy)
-        self.exceedance = xr.concat(results, dim = 'time')
+        
+        def subtraction(inputarray):
+            doy = int(np.unique(inputarray['time.dayofyear']))
+            if hasattr(inputarray, 'leadtime') and hasattr(self.climatology.clim, 'leadtime'):
+                climatology = self.climatology.clim.sel(doy = doy, leadtime = inputarray['leadtime'], drop = True)
+            else:
+                warnings.warn('anomaly subtraction not leadtime dependent')
+                climatology = self.climatology.clim.sel(doy = doy, drop = True)
+            return(inputarray - climatology)
+        
+        if inplace:
+            self.obs.array = doygroups.apply(subtraction)
+            self.obs.newvar = 'anom'
+            self.obs.array.name = 'anom'
+            self.obs.array.attrs = {'long_name':'-'.join([self.obs.basevar, 'anomalies']), 'units':self.old_units, 'new_units':self.old_units}
+        else:
+            return(xr.DataArray(data = doygroups.apply(subtraction), coords = self.obs.array.coords, dims= self.obs.array.dims,
+                                attrs = {'long_name':'-'.join([self.obs.basevar, 'anomalies']), 'units':self.old_units, 'new_units':self.old_units},
+                                name = 'anom'))

@@ -249,6 +249,7 @@ class Forecast(object):
         # Standard methods of the processed files.
         self.timemethod = '1D'
         self.spacemethod = '0.38-degrees'
+        self.basevar = variable
         
     def aggregatetime(self, freq = 'w' , method = 'mean', ndayagg = None, keep_leadtime = False):
         """
@@ -522,8 +523,8 @@ class ModelClimatology(object):
         self.clim.attrs = {'units':newunit}
         
 
-self = ModelClimatology('41r1', 'tg')
-self.local_clim(tmin = '2000-01-01',tmax = '2001-01-21', timemethod = '1D', daysbefore = 3, daysafter = 3)
+#self = ModelClimatology('41r1', 'tg')
+#self.local_clim(tmin = '2000-01-01',tmax = '2001-01-21', timemethod = '1D', daysbefore = 3, daysafter = 3)
 
 #start_batch(tmin = '2018-08-02', tmax = '2018-08-08')
 #start_batch(tmin = '2018-08-13', tmax = '2018-08-31')

@@ -78,62 +78,65 @@ class ForecastToObsAlignment(object):
         
         self.n_members = n_members
      
-    def force_resolution(self, time = True, space = True):
+    def force_resolution(self, forecast, time = True, space = True):
         """
-        Force the observed resolution onto the Forecast arrays. Checks if the same resolution and force spatial/temporal aggregation if that is not the case.
-        Makes use of the methods of each Forecast class
-        """
-            
-        for date, listofforecasts in self.forecasts.items():
-        
-            for forecast in listofforecasts:
-                
-                if time:
-                    # Check time aggregation
-                    obstimemethod = getattr(self.obs, 'timemethod')
-                                
-                    try:
-                        fortimemethod = getattr(forecast, 'timemethod')
-                        if not fortimemethod == obstimemethod:
-                            raise AttributeError
-                        else:
-                            print('Time already aligned')
-                    except AttributeError:
-                        print('Aligning time aggregation')
-                        freq, method = obstimemethod.split('-')
-                        forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True, ndayagg = self.time_agg)
-                
-                if space:
-                    # Check space aggregation
-                    obsspacemethod = getattr(self.obs, 'spacemethod')
+        Force the observed resolution onto the supplied Forecast. Checks if the same resolution and force spatial/temporal aggregation if that is not the case.
+        Makes use of the methods of each Forecast class. Checks can be switched on and off.
+        """                
+        if time:
+            # Check time aggregation
+            obstimemethod = getattr(self.obs, 'timemethod')
                         
-                    try:
-                        forspacemethod = getattr(forecast, 'spacemethod')
-                        if not forspacemethod == obsspacemethod:
-                            raise AttributeError
-                        else:
-                            print('Space already aligned')
-                    except AttributeError:
-                        print('Aligning space aggregation')
-                        step, what, method = obsspacemethod.split('-')
-                        forecast.aggregatespace(step = float(step), method = method, by_degree = (what == 'degrees'))
-                      
-    def force_new_variable(self, array):
+            try:
+                fortimemethod = getattr(forecast, 'timemethod')
+                if not fortimemethod == obstimemethod:
+                    raise AttributeError
+                else:
+                    print('Time already aligned')
+            except AttributeError:
+                print('Aligning time aggregation')
+                freq, method = obstimemethod.split('-')
+                forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True, ndayagg = self.time_agg)
+        
+        if space:
+            # Check space aggregation
+            obsspacemethod = getattr(self.obs, 'spacemethod')
+                
+            try:
+                forspacemethod = getattr(forecast, 'spacemethod')
+                if not forspacemethod == obsspacemethod:
+                    raise AttributeError
+                else:
+                    print('Space already aligned')
+            except AttributeError:
+                print('Aligning space aggregation')
+                step, what, method = obsspacemethod.split('-')
+                forecast.aggregatespace(step = float(step), method = method, by_degree = (what == 'degrees'))
+    
+    def force_units(self, forecast):
         """
-        Call upon event classification to get the on-the-grid conversion of the base variable.
-        Do this by a small initization of an object with an .array attribute.
-        Then call the classification method with a similar name as the newvar and execute it to let it return the newvar array
+        Linear conversion of forecast object units to match the observed units.
+        """
+        a,b = unitconversionfactors(xunit = forecast.array.units, yunit = self.obs.array.units)
+        forecast.array = forecast.array * a + b
+        forecast.array.attrs = {'units':self.obs.array.units}
+                      
+    def force_new_variable(self, forecast, newvarkwargs = {}, inplace = True):
+        """
+        Call upon event classification on the forecast object to get the on-the-grid conversion of the base variable.
+        This is classification method is the same as applied to obs and is determined by the similar name.
+        Possibly returns xarray object if inplace is False.
         """
         newvariable = self.obs.newvar
-        temp = SurfaceObservations(alias = newvariable, **{'array':array}) # Just a convenient class, does not neccessarily mean the array is an observed one.
-        method = getattr(EventClassification(obs = temp), newvariable)
-        return(method(inplace = False))
+        method = getattr(EventClassification(obs = forecast, **newvarkwargs), newvariable)
+        return(method(inplace = inplace))
         
                 
-    def match_and_write(self, newvariable = False):
+    def match_and_write(self, newvariable = False, newvarkwargs = {}, matchtime = True, matchspace = True):
         """
         Neirest neighbouring to match pairs. Be careful when domain of observations is larger.
-        Also converts forecast units to observed units. (the observed units of a newvariable should be its old units)
+        Determines the order in which space-time aggregation and classification is done based on the potential newvar.
+        Also calls unit conversion for the forecasts. (the observed units of a newvariable are actually its old units)
         Creates the dataset and writes it to disk. Possibly empties basket and writes to disk 
         at intermediate steps if intermediate results press too much on memory.
         """
@@ -180,32 +183,53 @@ class ForecastToObsAlignment(object):
         for date, listofforecasts in self.forecasts.items():
             
             if listofforecasts:
+                
+                for forecast in listofforecasts:
+                    self.force_units(forecast) # Get units correct.
+                    if newvariable:
+                        if self.obs.newvar == 'anom':
+                            self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = True) # If newvar is anomaly then first new variable and then aggregation. If e.g. newvar is pop then first aggregation then transformation
+                            self.force_resolution(forecast, time = matchtime, space = matchspace)
+                            forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
+                        elif self.obs.newvar == 'pop': # This could even be some sort of 'binary newvariable' criterion.
+                            self.force_resolution(forecast, time = matchtime, space = matchspace)
+                            forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
+                            try:
+                                listofbinaries.append(self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False))
+                            except NameError:
+                                listofbinaries = [self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False)]
+                    else:
+                        self.force_resolution(forecast, time = matchtime, space = matchspace)
+                        forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
+                
+                # Get the correct observed and inplace forecast arrays.
                 fieldobs = self.obs.array.sel(time = date).drop('time')
+                allleadtimes = xr.concat(objs = [f.array for f in listofforecasts], 
+                                                 dim = 'leadtime') # concatenates over leadtime dimension.
+                exp = allleadtimes.reindex_like(fieldobs, method='nearest') # Select nearest neighbour forecast for each observed point in space.
                 
-                allleadtimes = xr.concat(objs = [f.array.swap_dims({'time':'leadtime'}) for f in listofforecasts], dim = 'leadtime') # concatenates over leadtime dimension.
-                a,b = unitconversionfactors(xunit = allleadtimes.units, yunit = fieldobs.units)
-                exp = allleadtimes.reindex_like(fieldobs, method='nearest') * a + b
-                exp.attrs = {'units':fieldobs.units}
-                
-                # Call force_new_variable here. Which in its turn calls the same EventClassification method that was also used on the obs.
-                if newvariable:
-                    binary = self.force_new_variable(exp) # the binary members are discarded at some point.
-                    pi = binary.mean(dim = 'number') # only the probability of the event over the members is retained.
+                # When we have created a binary new_variable like pop, the forecastlist was appended with the not-inplace transformed ones 
+                # of These we only want to retain the ensemble probability (i.e. the mean).
+                try:
+                    binary = xr.concat(objs = listofbinaries,
+                                       dim = 'leadtime') # concatenates over leadtime dimension.
+                    listofbinaries.clear() # Empty for next iteration
+                    pi = binary.reindex_like(fieldobs, method='nearest').mean(dim = 'number') # only the probability of the event over the members is retained
                     # Merging, exporting to pandas and masking by dropping on NA observations.
                     combined = xr.Dataset({'forecast':exp.drop('time'),'observation':fieldobs, 'pi':pi.drop('time')}).to_dataframe().dropna(axis = 0)
                     # Unstack creates duplicates. Two extra columns (obs and pi) need to be selected. Therefore the iloc
                     temp = combined.unstack('number').iloc[:,np.append(np.arange(0,self.n_members + 1), self.n_members * 2)]
                     temp.reset_index(inplace = True) # places latitude and all in 
-                    labels = [l for l in temp.columns.labels[1]]
+                    labels = temp.columns.labels[1].tolist()
                     labels[-2:] = np.repeat(self.n_members, 2)
-                else:
+                except NameError:
                     # Merging, exporting to pandas and masking by dropping on NA observations.
                     combined = xr.Dataset({'forecast':exp.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0)
                     # Handle the multi-index
                     # first puts number dimension into columns. observerations are duplicated so therefore selects up to n_members +1
                     temp = combined.unstack('number').iloc[:,:(self.n_members + 1)]
                     temp.reset_index(inplace = True) # places latitude and all in 
-                    labels = [l for l in temp.columns.labels[1]]
+                    labels = temp.columns.labels[1].tolist()
                     labels[-1] = self.n_members
                 
                 temp.columns.set_labels(labels, level = 1, inplace = True)
@@ -217,7 +241,8 @@ class ForecastToObsAlignment(object):
                 
                 # prepend with the time index.
                 temp.insert(0, 'time', date)
-                aligned_basket.append(temp) # temp.swaplevel(1,2, axis = 0)
+                aligned_basket.append(temp)
+                self.forecasts[date].clear()
                 print(date, 'matched')
                 
                 # If aligned takes too much system memory (> 1Gb) . Write it out
@@ -737,3 +762,33 @@ class ScoreAnalysis(object):
 #self.filepath = self.basedir + 'tg_DJF_41r1_7D-mean_3-degrees-mean_tg_clim_1980-05-30_2015-02-28_7D-mean_3-degrees-mean_5_5_rand.h5'
 #self.load()
 #res = self.block_bootstrap_local_skills(n_samples = 2)
+
+
+# Try a pop observation aggregation. Make force new variable, unit conversion and force aggregation all act in place on the Forecast object.
+# Only certain event classifications will result in binary variables.
+# Write a Event-Classification method for anomalies. (possibly per leadtime for the Forecasts). 
+        
+#obs = SurfaceObservations('rr')
+#obs.load(tmin = '2000-01-01', tmax = '2002-02-01')
+#obs.aggregatetime(freq = '2D', method = 'mean')
+#obs.aggregatespace(3, method = 'mean', by_degree=True)
+#
+#dailyobs = SurfaceObservations('rr')
+#dailyobs.load(tmin = '2000-01-01', tmax = '2002-02-01')
+#dailyobs.aggregatespace(3, method = 'mean', by_degree=True)
+#
+#clim = Climatology(alias = 'rr')
+#clim.localclim(obs = obs, daily_obs= dailyobs, daysbefore = 5, daysafter = 5, mean = True)
+#
+#clas = EventClassification(obs = obs, **{'climatology':clim})
+#clas.anom(inplace = True)
+#
+#from forecasts import ModelClimatology
+#modelclim = ModelClimatology('41r1','rr')
+#modelclim.local_clim(tmin = '2000-01-01', tmax = '2002-02-01', timemethod = '1D')
+#
+#self = ForecastToObsAlignment(season = 'DJF', cycle = '41r1', observations=obs)
+#self.find_forecasts()
+#self.load_forecasts(11)
+#self.match_and_write(newvariable = True, matchtime = True, matchspace = True)
+
