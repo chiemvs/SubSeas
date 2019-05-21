@@ -403,12 +403,12 @@ class EventClassification(object):
                 climatology = self.climatology.clim.sel(doy = doy, drop = True)
             return(inputarray - climatology)
         
-        if inplace:
-            self.obs.array = doygroups.apply(subtraction)
-            self.obs.newvar = 'anom'
-            self.obs.array.name = 'anom'
-            self.obs.array.attrs = {'long_name':'-'.join([self.obs.basevar, 'anomalies']), 'units':self.old_units, 'new_units':self.old_units}
-        else:
-            return(xr.DataArray(data = doygroups.apply(subtraction), coords = self.obs.array.coords, dims= self.obs.array.dims,
+        result = xr.DataArray(data = doygroups.apply(subtraction), coords = self.obs.array.coords, dims= self.obs.array.dims,
                                 attrs = {'long_name':'-'.join([self.obs.basevar, 'anomalies']), 'units':self.old_units, 'new_units':self.old_units},
-                                name = 'anom'))
+                                name = self.obs.basevar)
+        
+        if inplace:
+            self.obs.array = result
+            self.obs.newvar = 'anom'
+        else:
+            return(result)

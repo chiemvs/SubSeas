@@ -13,7 +13,7 @@ import pandas as pd
 import dask.dataframe as dd
 import dask.config
 from observations import SurfaceObservations, Climatology, EventClassification
-from forecasts import Forecast
+from forecasts import Forecast, ModelClimatology
 from comparison import ForecastToObsAlignment, Comparison, ScoreAnalysis
 from fitting import NGR, Logistic
 import itertools
@@ -144,6 +144,13 @@ class Experiment(object):
             climatology.savelocalclim()
             climnames = climatology.name
 
+        return(climnames)
+    
+    def makemodelclim(self, spaceagg, timeagg):
+        """
+        Performed only once at the highest possible model resolution.
+        """
+        climnames = None
         return(climnames)
     
     def score(self, spaceagg, timeagg, pp_model = None):

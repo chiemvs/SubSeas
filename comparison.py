@@ -285,7 +285,7 @@ class Comparison(object):
         """
         The aligned object has Observation | members |
         Potentially an external observed climatology object can be supplied that takes advantage of the full observed dataset. It has to have a location and dayofyear timestamp. Is it already aggregated?
-        This climatology can be a quantile (used as the threshold for brier scoring) of it is a climatological probability if we have an aligned event predictor like POP. Or it is a random draw used for CRPS scoring. which means that multiple 'numbers' will be present.
+        This climatology can be a quantile (used as the threshold for brier scoring) or it is a climatological probability if we have an aligned event predictor like POP. Or it is a random draw used for CRPS scoring. which means that multiple 'numbers' will be present.
         """
         self.frame = alignment.alignedobject
         self.basedir = '/nobackup/users/straaten/scores/'
@@ -768,27 +768,30 @@ class ScoreAnalysis(object):
 # Only certain event classifications will result in binary variables.
 # Write a Event-Classification method for anomalies. (possibly per leadtime for the Forecasts). 
         
-#obs = SurfaceObservations('rr')
-#obs.load(tmin = '2000-01-01', tmax = '2002-02-01')
+obs = SurfaceObservations('rr')
+obs.load(tmin = '2000-01-01', tmax = '2000-02-01')
 #obs.aggregatetime(freq = '2D', method = 'mean')
 #obs.aggregatespace(3, method = 'mean', by_degree=True)
-#
-#dailyobs = SurfaceObservations('rr')
-#dailyobs.load(tmin = '2000-01-01', tmax = '2002-02-01')
+
+dailyobs = SurfaceObservations('rr')
+dailyobs.load(tmin = '2000-01-01', tmax = '2002-02-01')
 #dailyobs.aggregatespace(3, method = 'mean', by_degree=True)
+
+clim = Climatology(alias = 'rr')
+clim.localclim(obs = obs, daily_obs= dailyobs, daysbefore = 5, daysafter = 5, mean = True)
 #
-#clim = Climatology(alias = 'rr')
-#clim.localclim(obs = obs, daily_obs= dailyobs, daysbefore = 5, daysafter = 5, mean = True)
+clas = EventClassification(obs = obs, **{'climatology':clim})
+clas.anom(inplace = True)
+
+obs.aggregatetime(freq = '2D', method = 'mean') # Do aggregation after anomalie computation at the highest res.
+
+from forecasts import ModelClimatology
+modelclim = ModelClimatology('41r1','rr')
+modelclim.local_clim(tmin = '2000-01-01', tmax = '2002-05-01', timemethod = '1D', daysbefore = 0, daysafter = 0)
+modelclim.change_units('mm')
 #
-#clas = EventClassification(obs = obs, **{'climatology':clim})
-#clas.anom(inplace = True)
-#
-#from forecasts import ModelClimatology
-#modelclim = ModelClimatology('41r1','rr')
-#modelclim.local_clim(tmin = '2000-01-01', tmax = '2002-02-01', timemethod = '1D')
-#
-#self = ForecastToObsAlignment(season = 'DJF', cycle = '41r1', observations=obs)
-#self.find_forecasts()
-#self.load_forecasts(11)
-#self.match_and_write(newvariable = True, matchtime = True, matchspace = True)
+self = ForecastToObsAlignment(season = 'DJF', cycle = '41r1', observations=obs)
+self.find_forecasts()
+self.load_forecasts(11)
+self.match_and_write(newvariable = True, newvarkwargs={'climatology':modelclim}, matchtime = True, matchspace= False)
 

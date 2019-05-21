@@ -471,6 +471,12 @@ class ModelClimatology(object):
                 print('computed model climate of', doy, 'for', len(doy_climate['leadtime']), 'leadtimes.')
             else:
                 print('no available forecasts for', doy, 'in chosen evaluation time axis')
+                f = Forecast()
+                f.load(variable=self.var, n_members = 1)
+                doy_climate = f.array.swap_dims({'time':'leadtime'}).isel(leadtime = slice(None), latitude = slice(None), longitude = slice(None), number = 0).drop(['number','time'])
+                doy_climate[:] = np.nan
+                doy_climate.coords['doy'] = doy
+                climate.append(doy_climate)
         
         self.clim = xr.concat(climate, dim='doy')
             
