@@ -153,7 +153,7 @@ class ForecastToObsAlignment(object):
             Saves to a unique filename and creates a bookkeeping file (appends if it already exists)
             """
             if newvariable:
-                characteristics = [self.obs.newvar, self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
+                characteristics = ['-'.join([self.obs.basevar,self.obs.newvar]), self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
             else:
                 characteristics = [self.obs.basevar, self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
             filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.h5'
@@ -768,30 +768,32 @@ class ScoreAnalysis(object):
 # Only certain event classifications will result in binary variables.
 # Write a Event-Classification method for anomalies. (possibly per leadtime for the Forecasts). 
         
-obs = SurfaceObservations('rr')
-obs.load(tmin = '2000-01-01', tmax = '2000-02-01')
+#obs = SurfaceObservations('rr')
+#obs.load(tmin = '2000-01-01', tmax = '2000-02-01')
 #obs.aggregatetime(freq = '2D', method = 'mean')
 #obs.aggregatespace(3, method = 'mean', by_degree=True)
 
-dailyobs = SurfaceObservations('rr')
-dailyobs.load(tmin = '2000-01-01', tmax = '2002-02-01')
+#dailyobs = SurfaceObservations('rr')
+#dailyobs.load(tmin = '2000-01-01', tmax = '2002-02-01')
 #dailyobs.aggregatespace(3, method = 'mean', by_degree=True)
 
-clim = Climatology(alias = 'rr')
-clim.localclim(obs = obs, daily_obs= dailyobs, daysbefore = 5, daysafter = 5, mean = True)
-#
-clas = EventClassification(obs = obs, **{'climatology':clim})
-clas.anom(inplace = True)
+#clim = Climatology(alias = 'rr')
+#clim.localclim(obs = obs, daily_obs= dailyobs, daysbefore = 5, daysafter = 5, mean = True)
 
-obs.aggregatetime(freq = '2D', method = 'mean') # Do aggregation after anomalie computation at the highest res.
+#clas = EventClassification(obs = obs, **{'climatology':clim})
+#clas.anom(inplace = True)
 
-from forecasts import ModelClimatology
-modelclim = ModelClimatology('41r1','rr')
-modelclim.local_clim(tmin = '2000-01-01', tmax = '2002-05-01', timemethod = '1D', daysbefore = 0, daysafter = 0)
-modelclim.change_units('mm')
-#
-self = ForecastToObsAlignment(season = 'DJF', cycle = '41r1', observations=obs)
-self.find_forecasts()
-self.load_forecasts(11)
-self.match_and_write(newvariable = True, newvarkwargs={'climatology':modelclim}, matchtime = True, matchspace= False)
+#obs.aggregatetime(freq = '2D', method = 'mean') # Do aggregation after anomalie computation at the highest res.
+
+#from forecasts import ModelClimatology
+#modelclim = ModelClimatology('41r1','rr', **{'name':'rr_2000-01-01_2002-05-01_1D_0_0'})
+#modelclim.local_clim(tmin = '2000-01-01', tmax = '2002-05-01', timemethod = '1D', daysbefore = 0, daysafter = 0)
+#modelclim.change_units('mm')
+#modelclim.local_clim()
+
+
+#self = ForecastToObsAlignment(season = 'DJF', cycle = '41r1', observations=obs)
+#self.find_forecasts()
+#self.load_forecasts(11)
+#self.match_and_write(newvariable = True, newvarkwargs={'climatology':modelclim}, matchtime = True, matchspace= False)
 

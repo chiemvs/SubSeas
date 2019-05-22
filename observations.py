@@ -10,7 +10,9 @@ from helper_functions import agg_space, agg_time, monthtoseasonlookup
 obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
                    'tx': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'tg': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
-                   'pop': {'dtype': 'int16', 'scale_factor': 0.0001, '_FillValue': -32767},
+                   'rr-anom': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
+                   'tg-anom': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
+                   'rr-pop': {'dtype': 'int16', 'scale_factor': 0.0001, '_FillValue': -32767},
                    'time': {'dtype': 'int64'},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
@@ -19,13 +21,13 @@ obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValu
 
 class SurfaceObservations(object):
     
-    def __init__(self, alias, **kwds):
+    def __init__(self, basevar, **kwds):
         """
         Sets the base E-OBS variable alias. And sets the base storage directory. 
         Additionally you can supply 'timemethod', 'spacemethod', 'tmin' and 
         'tmax', or the comple filename if you want to load a pre-existing adapted file.
         """
-        self.basevar = alias
+        self.basevar = basevar
         self.basedir = "/nobackup/users/straaten/E-OBS/"
         for key in kwds.keys():
             setattr(self, key, kwds[key])
@@ -43,7 +45,7 @@ class SurfaceObservations(object):
         else:
             values = [ getattr(self,key) for key in keys[1:] if hasattr(self, key)]
             try:
-                values.insert(0,self.newvar) 
+                values.insert(0,'-'.join([self.basevar,self.newvar]))
             except AttributeError:
                 values.insert(0,self.basevar)
             self.name = '_'.join(values)
@@ -280,10 +282,10 @@ class Climatology(object):
                     
                     # Possible classification in the aggregated slices if the supplied obs was transformed.
                     try:
-                        newvar = getattr(obs, 'newvar') # only there if transformed.
-                        daily_obs.array = complete # Assign to the class.
-                        getattr(EventClassification(daily_obs),newvar)() # Get the classifier capable of transforming the class.
-                        complete = daily_obs.array
+                        if getattr(obs, 'newvar') != getattr(daily_obs, 'newvar'): # only there needs to be a transformation and if newvar attributes are present
+                            daily_obs.array = complete # Assign to the class.
+                            getattr(EventClassification(daily_obs),getattr(obs, 'newvar'))() # Get the classifier capable of transforming the class.
+                            complete = daily_obs.array
                     except AttributeError:
                         pass
     
@@ -354,15 +356,15 @@ class EventClassification(object):
         else:
             data = np.where(np.isnan(self.obs.array), self.obs.array, self.obs.array.data > threshold)
         
-        if inplace:
-            self.obs.array = xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop')
-            self.obs.newvar = 'pop'
-            self.obs.array.attrs = {'long_name':'probability_of_precipitation', 'threshold_mm_day':threshold, 'units':self.old_units, 'new_units':''}
-            #self.obs.construct_name()
-        else:
-            return(xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims,
+        result = xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims,
                                 attrs = {'long_name':'probability_of_precipitation', 'threshold_mm_day':threshold, 'units':self.old_units, 'new_units':''},
-                                name = 'pop'))
+                                name = '-'.join([self.obs.basevar, 'pop']))
+        
+        if inplace:
+            self.obs.array = result
+            self.obs.newvar = 'pop'
+        else:
+            return(result)
     
     def stefanon2012(self):
         """
@@ -405,7 +407,7 @@ class EventClassification(object):
         
         result = xr.DataArray(data = doygroups.apply(subtraction), coords = self.obs.array.coords, dims= self.obs.array.dims,
                                 attrs = {'long_name':'-'.join([self.obs.basevar, 'anomalies']), 'units':self.old_units, 'new_units':self.old_units},
-                                name = self.obs.basevar)
+                                name = '-'.join([self.obs.basevar, 'anom']))
         
         if inplace:
             self.obs.array = result

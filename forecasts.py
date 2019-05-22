@@ -428,12 +428,32 @@ class ModelClimatology(object):
     Only means, over time and over members.
     """
     def __init__(self, cycle, variable, **kwds):
-        
+        """
+        Var is the base variable that will be extracted from the model netcdfs. 
+        """
         self.basedir = "/nobackup/users/straaten/modelclimatology/"
         self.cycle = cycle
         self.var = variable
+        self.maxleadtime = 46 #days
+        self.maxdoy = 366
+        self.changedunits = False
         for key in kwds.keys():
             setattr(self, key, kwds[key])
+    
+    def construct_name(self, force = False):
+        """
+        Name and filepath are based on the base variable and the relevant attributes (if present).
+        """
+        keys = ['var','tmin','tmax', 'timemethod', 'daysbefore', 'daysafter']
+        if hasattr(self, 'name') and (not force):
+            values = self.name.split(sep = '_')
+            for key in keys:
+                setattr(self, key, values[keys.index(key)])
+        else:
+            values = [ str(getattr(self,key)) for key in keys if hasattr(self, key)]
+            self.name = '_'.join(values)
+        
+        self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
     def local_clim(self, tmin = None, tmax = None, timemethod = '1D', daysbefore = 5, daysafter = 5):
         """
@@ -442,43 +462,52 @@ class ModelClimatology(object):
         Climatology dependend on doy and on leadtime. Takes the average over all ensemble members and times within a window.
         This window is determined by daysbefore and daysafter and the time aggregation of the desired variable.
         """
-        self.time_agg = int(timemethod[0]) # Will not work for '1W' Alternative is to infer from data
-        # self.time_agg = int(self.dates.diff().dt.days.mode())
-        self.timemethod = timemethod # Later use in the aggregation.
-        self.maxleadtime = 46 #days
-        self.maxdoy = 366
+                
+        keys = ['tmin','tmax','timemethod','daysbefore', 'daysafter']
+        for key in keys:
+            setattr(self, key, locals()[key])
         
-        eval_time_axis = pd.date_range(tmin, tmax, freq = 'D')
-        
-        climate = []
-        
-        for doy in range(1,self.maxdoy + 1):
-            window = np.arange(doy - daysbefore, doy + daysafter + self.time_agg, dtype = 'int64')
-            # small corrections for overshooting into previous or next year.
-            window[ window < 1 ] += self.maxdoy
-            window[ window > self.maxdoy ] -= self.maxdoy
+        # Overwrites possible nonsense attributes if name was supplied at initialization
+        self.construct_name(force = False)
+                
+        try:
+            self.clim = xr.open_dataarray(self.filepath)
+            print('climatology directly loaded')
+        except OSError:
+            self.time_agg = int(timemethod[0]) # Will not work for '1W' Alternative is to infer from data
+            # self.time_agg = int(self.dates.diff().dt.days.mode())
             
-            eval_indices = np.nonzero(np.isin(eval_time_axis.dayofyear, window))[0] # Can lead to empty windows if no entries in the chosen evaluation time axis belong to this doy and its window.
-            eval_windows = np.split(eval_indices, np.nonzero(np.diff(eval_indices) > 1)[0] + 1)
+            eval_time_axis = pd.date_range(self.tmin, self.tmax, freq = 'D')
             
-            eval_time_windows = [ eval_time_axis[ind] for ind in eval_windows ]
-            total = self.load_forecasts(eval_time_windows)
+            climate = []
             
-            if total is not None:
-                doy_climate = total.groupby('leadtime').mean(['number','time'], keep_attrs = True)
-                doy_climate.coords['doy'] = doy
-                climate.append(doy_climate)
-                print('computed model climate of', doy, 'for', len(doy_climate['leadtime']), 'leadtimes.')
-            else:
-                print('no available forecasts for', doy, 'in chosen evaluation time axis')
-                f = Forecast()
-                f.load(variable=self.var, n_members = 1)
-                doy_climate = f.array.swap_dims({'time':'leadtime'}).isel(leadtime = slice(None), latitude = slice(None), longitude = slice(None), number = 0).drop(['number','time'])
-                doy_climate[:] = np.nan
-                doy_climate.coords['doy'] = doy
-                climate.append(doy_climate)
-        
-        self.clim = xr.concat(climate, dim='doy')
+            for doy in range(1,self.maxdoy + 1):
+                window = np.arange(doy - daysbefore, doy + daysafter + self.time_agg, dtype = 'int64')
+                # small corrections for overshooting into previous or next year.
+                window[ window < 1 ] += self.maxdoy
+                window[ window > self.maxdoy ] -= self.maxdoy
+                
+                eval_indices = np.nonzero(np.isin(eval_time_axis.dayofyear, window))[0] # Can lead to empty windows if no entries in the chosen evaluation time axis belong to this doy and its window.
+                eval_windows = np.split(eval_indices, np.nonzero(np.diff(eval_indices) > 1)[0] + 1)
+                
+                eval_time_windows = [ eval_time_axis[ind] for ind in eval_windows ]
+                total = self.load_forecasts(eval_time_windows)
+                
+                if total is not None:
+                    doy_climate = total.groupby('leadtime').mean(['number','time'], keep_attrs = True)
+                    doy_climate.coords['doy'] = doy
+                    climate.append(doy_climate)
+                    print('computed model climate of', doy, 'for', len(doy_climate['leadtime']), 'leadtimes.')
+                else:
+                    print('no available forecasts for', doy, 'in chosen evaluation time axis')
+                    f = Forecast()
+                    f.load(variable=self.var, n_members = 1)
+                    doy_climate = f.array.swap_dims({'time':'leadtime'}).isel(leadtime = slice(None), latitude = slice(None), longitude = slice(None), number = 0).drop(['number','time'])
+                    doy_climate[:] = np.nan
+                    doy_climate.coords['doy'] = doy
+                    climate.append(doy_climate)
+            
+            self.clim = xr.concat(climate, dim='doy')
             
     def load_forecasts(self, evaluation_windows, n_members = 11):
         """
@@ -523,11 +552,23 @@ class ModelClimatology(object):
             return(None)
                             
     def change_units(self, newunit):
-        
+        """
+        Simple linear change of units. Beware with changing units before saving.
+        This will lead to problems with for_netcdf_encoding
+        """
         a,b = unitconversionfactors(xunit = self.clim.units, yunit = newunit)
         self.clim = self.clim * a + b
         self.clim.attrs = {'units':newunit}
+        self.changedunits = True
+    
+    def savelocalclim(self):
         
+        if not self.changedunits:
+            self.construct_name(force = True)
+            particular_encoding = {key : for_netcdf_encoding[key] for key in self.clim.to_dataset().variables.keys()} 
+            self.clim.to_netcdf(self.filepath, encoding = particular_encoding)
+        else:
+            raise TypeError('You cannot save this model climatology after changing the original model units')
 
 #self = ModelClimatology('41r1', 'tg')
 #self.local_clim(tmin = '2000-01-01',tmax = '2001-01-21', timemethod = '1D', daysbefore = 3, daysafter = 3)
