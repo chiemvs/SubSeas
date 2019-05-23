@@ -459,7 +459,7 @@ class ModelClimatology(object):
         
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
-    def local_clim(self, tmin = None, tmax = None, timemethod = '1D', daysbefore = 5, daysafter = 5):
+    def local_clim(self, tmin = None, tmax = None, timemethod = '1D', daysbefore = 5, daysafter = 5, loadkwargs = {}):
         """
         Method to construct the climatology based on forecasts within a desired timewindow.
         Should I add a spacemethod and spatial aggregation option? spacemethod = '0.38-degrees'
@@ -495,7 +495,7 @@ class ModelClimatology(object):
                 eval_windows = np.split(eval_indices, np.nonzero(np.diff(eval_indices) > 1)[0] + 1)
                 
                 eval_time_windows = [ eval_time_axis[ind] for ind in eval_windows ]
-                total = self.load_forecasts(eval_time_windows)
+                total = self.load_forecasts(eval_time_windows, loadkwargs = loadkwargs)
                 
                 if total is not None:
                     doy_climate = total.groupby('leadtime').mean(['number','time'], keep_attrs = True)
@@ -505,7 +505,7 @@ class ModelClimatology(object):
                 else:
                     print('no available forecasts for', doy, 'in chosen evaluation time axis')
                     f = Forecast()
-                    f.load(variable=self.var, n_members = 1)
+                    f.load(variable=self.var, n_members = 1, **loadkwargs)
                     doy_climate = f.array.swap_dims({'time':'leadtime'}).isel(leadtime = slice(None), latitude = slice(None), longitude = slice(None), number = 0).drop(['number','time'])
                     doy_climate[:] = np.nan
                     doy_climate.coords['doy'] = doy
@@ -513,7 +513,7 @@ class ModelClimatology(object):
             
             self.clim = xr.concat(climate, dim='doy')
             
-    def load_forecasts(self, evaluation_windows, n_members = 11):
+    def load_forecasts(self, evaluation_windows, n_members = 11, loadkwargs = {}):
         """
         Per initialization date either the hindcast or the forecast can exist.
         Teste for possibility of empty supplied windows.
@@ -538,7 +538,7 @@ class ModelClimatology(object):
                     if forecasts:
                         forecastrange = pd.date_range(indate, indate + pd.Timedelta(str(self.maxleadtime - 1) + 'D')) # Leadtime one plus 45 extra leadtimes.
                         overlap = np.intersect1d(forecastrange, window) # Some sort of inner join? numpy perhaps?
-                        forecasts[0].load(self.var, tmin = overlap.min(), tmax = overlap.max(), n_members = n_members)
+                        forecasts[0].load(self.var, tmin = overlap.min(), tmax = overlap.max(), n_members = n_members, **loadkwargs)
                         # Aggregate. What to do with leadtime? Assigned to first day as this is also done in the matching.
                         if forecasts[0].timemethod != self.timemethod:
                             freq, method = self.timemethod.split('-')

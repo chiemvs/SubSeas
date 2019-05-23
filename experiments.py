@@ -124,7 +124,7 @@ class Experiment(object):
             newvarkwargs={}
         alignment = ForecastToObsAlignment(season = self.season, observations=obs, cycle=self.cycle, **{'expname':self.expname})
         alignment.find_forecasts()
-        alignment.load_forecasts(n_members = 11)
+        alignment.load_forecasts(n_members = 11, loadkwargs = loadkwargs)
         alignment.match_and_write(newvariable = (self.newvar is not None), 
                                   newvarkwargs = newvarkwargs, 
                                   matchtime = (timeagg != '1D'), 
@@ -176,16 +176,17 @@ class Experiment(object):
 
         return(climnames)
     
-    def makehighresmodelclim(self, spaceagg, timeagg, climtmin, climtmax, ):
+    def makehighresmodelclim(self, spaceagg, timeagg, climtmin, climtmax, llcrnr = (None,None), rucrnr = (None,None)):
         """
         Only needed for later subtraction of mean from model fiels to create the anom variable (in matching)
         Performed at the highest possible model resolution (daily and 0.38 degrees). 
         Only done once (at the first iteration) and for other iterations this name is copied.
         Changing to the correct (observation) units is done later in the matching.
         """
+        loadkwargs = dict(llcrnr = llcrnr, rucrnr = rucrnr)
         if spaceagg == self.spaceaggregations[-1] and timeagg == self.timeaggregations[-1]:
             modelclim = ModelClimatology(self.cycle,self.basevar)
-            modelclim.local_clim(tmin = climtmin, tmax = climtmax, timemethod = '1D', daysbefore = 5, daysafter = 5)
+            modelclim.local_clim(tmin = climtmin, tmax = climtmax, timemethod = '1D', daysbefore = 5, daysafter = 5, loadkwargs = loadkwargs)
             modelclim.savelocalclim()
             climnames = modelclim.name
         else:
