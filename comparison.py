@@ -62,10 +62,11 @@ class ForecastToObsAlignment(object):
             hindcasts = [h for h in hindcasts if os.path.isfile(h.basedir + h.processedfile)]
             self.forecasts.update({date : forecasts + hindcasts})   
         
-    def load_forecasts(self, n_members):
+    def load_forecasts(self, n_members, loadkwargs = {}):
         """
         Gets the daily processed forecasts into memory. Delimited by the left timestamp and the aggregation time.
         This is done by using the load method of each Forecast class in the dictionary. They are stored in a list.
+        Loadkwargs can carry the delimiting spatial corners if only a part of the domain is desired.
         """
         for date, listofforecasts in self.forecasts.items():
             
@@ -74,7 +75,7 @@ class ForecastToObsAlignment(object):
                 tmax = date + pd.Timedelta(str(self.time_agg - 1) + 'D') # -1 because date itself also counts for one day in the aggregation.
                 
                 for forecast in listofforecasts:
-                    forecast.load(variable = self.obs.basevar, tmin = tmin, tmax = tmax, n_members = n_members)
+                    forecast.load(variable = self.obs.basevar, tmin = tmin, tmax = tmax, n_members = n_members, **loadkwargs)
         
         self.n_members = n_members
      

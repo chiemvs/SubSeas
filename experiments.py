@@ -103,7 +103,8 @@ class Experiment(object):
         obs.savechanges()
         return(obs.name)
     
-    def match(self, spaceagg, timeagg):
+    def match(self, spaceagg, timeagg, loadkwargs = {}):
+
         """
         Writes the intermediate files. And returns the (possibly appended) booksname
         """
@@ -128,6 +129,7 @@ class Experiment(object):
                                   newvarkwargs = newvarkwargs, 
                                   matchtime = (timeagg != '1D'), 
                                   matchspace= (spaceagg != 0.25))
+
         return(alignment.books_name)
     
     def makeclim(self, spaceagg, timeagg, climtmin, climtmax, llcrnr = (25,-30), rucrnr = (75,75)):
