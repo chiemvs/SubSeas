@@ -1,14 +1,13 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import ecmwfapi 
 import os
-#import gzip
 import numpy as np
-#import sys
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 import pandas as pd
 import xarray as xr
 import pygrib
+from helper_functions import unitconversionfactors
 
 # Extended range has 50 perturbed members. and 1 control forecast. Steps: "0/to/1104/by/6"
 # Reforecasts have 11 members (stream = "enfh", number "1/to/10"). Probably some duplicates will arise.
@@ -29,6 +28,7 @@ for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.002, 'add_off
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
                    'number': {'dtype': 'int16'},
+                   'doy': {'dtype': 'int16'},
                    'leadtime': {'dtype': 'int16'}}
 
 model_cycles = pd.DataFrame(data = {'firstday':pd.to_datetime(['2015-05-12','2016-03-08','2016-11-22','2017-07-11','2018-06-05','']),
@@ -253,6 +253,7 @@ class Forecast(object):
         # Standard methods of the processed files.
         self.timemethod = '1D'
         self.spacemethod = '0.38-degrees'
+        self.basevar = variable
         
     def aggregatetime(self, freq = 'w' , method = 'mean', ndayagg = None, keep_leadtime = False):
         """
@@ -262,9 +263,12 @@ class Forecast(object):
         from helper_functions import agg_time
         
         if keep_leadtime:
-            lead0 = self.array.coords['leadtime'].isel(time = slice(0,1))
-            self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, ndayagg = ndayagg)
-            self.array.coords.update({'leadtime':lead0})
+            leadtimes = self.array.coords['leadtime']
+            if ndayagg is None:
+                self.array, self.timemethod, ndayagg = agg_time(array = self.array, freq = freq, method = method, returnndayagg = True)
+            else:
+                self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, ndayagg = ndayagg)
+            self.array.coords.update({'leadtime':leadtimes[slice(0,None,ndayagg)]})
         else:
             self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, ndayagg = ndayagg)
     
@@ -422,9 +426,161 @@ class Hindcast(object):
         for hindcast in self.hindcasts:
             hindcast.cleanup()
 
+class ModelClimatology(object):
+    """
+    Class to estimate model climatology per day of the year and per leadtime.
+    Only means, over time and over members.
+    """
+    def __init__(self, cycle, variable, **kwds):
+        """
+        Var is the base variable that will be extracted from the model netcdfs. 
+        """
+        self.basedir = "/nobackup/users/straaten/modelclimatology/"
+        self.cycle = cycle
+        self.var = variable
+        self.maxleadtime = 46 #days
+        self.maxdoy = 366
+        self.changedunits = False
+        for key in kwds.keys():
+            setattr(self, key, kwds[key])
+    
+    def construct_name(self, force = False):
+        """
+        Name and filepath are based on the base variable and the relevant attributes (if present).
+        """
+        keys = ['var','tmin','tmax', 'timemethod', 'daysbefore', 'daysafter']
+        if hasattr(self, 'name') and (not force):
+            values = self.name.split(sep = '_')
+            for key in keys:
+                setattr(self, key, values[keys.index(key)])
+        else:
+            values = [ str(getattr(self,key)) for key in keys if hasattr(self, key)]
+            self.name = '_'.join(values)
+        
+        self.filepath = ''.join([self.basedir, self.name, ".nc"])
+    
+    def local_clim(self, tmin = None, tmax = None, timemethod = '1D', daysbefore = 5, daysafter = 5):
+        """
+        Method to construct the climatology based on forecasts within a desired timewindow.
+        Should I add a spacemethod and spatial aggregation option? spacemethod = '0.38-degrees'
+        Climatology dependend on doy and on leadtime. Takes the average over all ensemble members and times within a window.
+        This window is determined by daysbefore and daysafter and the time aggregation of the desired variable.
+        """
+                
+        keys = ['tmin','tmax','timemethod','daysbefore', 'daysafter']
+        for key in keys:
+            setattr(self, key, locals()[key])
+        
+        # Overwrites possible nonsense attributes if name was supplied at initialization
+        self.construct_name(force = False)
+                
+        try:
+            self.clim = xr.open_dataarray(self.filepath)
+            print('climatology directly loaded')
+        except OSError:
+            self.time_agg = int(timemethod[0]) # Will not work for '1W' Alternative is to infer from data
+            # self.time_agg = int(self.dates.diff().dt.days.mode())
+            
+            eval_time_axis = pd.date_range(self.tmin, self.tmax, freq = 'D')
+            
+            climate = []
+            
+            for doy in range(1,self.maxdoy + 1):
+                window = np.arange(doy - daysbefore, doy + daysafter + self.time_agg, dtype = 'int64')
+                # small corrections for overshooting into previous or next year.
+                window[ window < 1 ] += self.maxdoy
+                window[ window > self.maxdoy ] -= self.maxdoy
+                
+                eval_indices = np.nonzero(np.isin(eval_time_axis.dayofyear, window))[0] # Can lead to empty windows if no entries in the chosen evaluation time axis belong to this doy and its window.
+                eval_windows = np.split(eval_indices, np.nonzero(np.diff(eval_indices) > 1)[0] + 1)
+                
+                eval_time_windows = [ eval_time_axis[ind] for ind in eval_windows ]
+                total = self.load_forecasts(eval_time_windows)
+                
+                if total is not None:
+                    doy_climate = total.groupby('leadtime').mean(['number','time'], keep_attrs = True)
+                    doy_climate.coords['doy'] = doy
+                    climate.append(doy_climate)
+                    print('computed model climate of', doy, 'for', len(doy_climate['leadtime']), 'leadtimes.')
+                else:
+                    print('no available forecasts for', doy, 'in chosen evaluation time axis')
+                    f = Forecast()
+                    f.load(variable=self.var, n_members = 1)
+                    doy_climate = f.array.swap_dims({'time':'leadtime'}).isel(leadtime = slice(None), latitude = slice(None), longitude = slice(None), number = 0).drop(['number','time'])
+                    doy_climate[:] = np.nan
+                    doy_climate.coords['doy'] = doy
+                    climate.append(doy_climate)
+            
+            self.clim = xr.concat(climate, dim='doy')
+            
+    def load_forecasts(self, evaluation_windows, n_members = 11):
+        """
+        Per initialization date either the hindcast or the forecast can exist.
+        Teste for possibility of empty supplied windows.
+        Returns the whole block of (potentially time averaged) forecasts belonging to a set of windows around a doy, at different leadtimes.
+        If no forecasts existed for these doy-specific evaluation_windos then it returns none.
+        """
+        # Work per blocked window of a certain consecutive amount of days.
+        forecast_collection = [] # Perhaps just a regular list?
+        for window in evaluation_windows:
+            
+            if len(window) > 0:
+                # Determine forecast initialization times that fully contain the evaluation date (including its window for time aggregation)
+                containstart = window.min() + pd.Timedelta(str(self.time_agg) + 'D') - pd.Timedelta(str(self.maxleadtime) + 'D') # Also plus 1 for the 1day aggregation?
+                containend = window.max() - pd.Timedelta(str(self.time_agg - 1) + 'D') # Initialized at day x means it also already contains day x as leadtime = 1 day
+                contain = pd.date_range(start = containstart, end = containend, freq = 'D')
+                
+                for indate in contain:
+                    stringdate = indate.strftime('%Y-%m-%d')
+                    forecasts = [Forecast(stringdate, prefix = 'for_', cycle = self.cycle), Forecast(stringdate, prefix = 'hin_', cycle = self.cycle)]
+                    forecasts = [ f for f in forecasts if os.path.isfile(f.basedir + f.processedfile) ]
+                    # Load the overlapping parts for the forecast that exist
+                    if forecasts:
+                        forecastrange = pd.date_range(indate, indate + pd.Timedelta(str(self.maxleadtime - 1) + 'D')) # Leadtime one plus 45 extra leadtimes.
+                        overlap = np.intersect1d(forecastrange, window) # Some sort of inner join? numpy perhaps?
+                        forecasts[0].load(self.var, tmin = overlap.min(), tmax = overlap.max(), n_members = n_members)
+                        # Aggregate. What to do with leadtime? Assigned to first day as this is also done in the matching.
+                        if forecasts[0].timemethod != self.timemethod:
+                            freq, method = self.timemethod.split('-')
+                            forecasts[0].aggregatetime(freq = freq, method = method, ndayagg = self.time_agg, keep_leadtime = True) # Array becomes empty when overlap loaded is less than the time aggregation.
+                            print('aligned time')
+                            
+                        forecast_collection.append(forecasts[0].array)
+        try:
+            total = xr.concat(forecast_collection, dim = 'time') 
+            if total.shape[0] == 0: # Test for empty first dimension.
+                raise ValueError
+            else:
+                return(total)
+        except ValueError: # No forecasts existed, or the supplied window was empty and forecast_collection remained empty, or the overlap was too little for the desired aggregation.
+            return(None)
+                            
+    def change_units(self, newunit):
+        """
+        Simple linear change of units. Beware with changing units before saving.
+        This will lead to problems with for_netcdf_encoding
+        """
+        a,b = unitconversionfactors(xunit = self.clim.units, yunit = newunit)
+        self.clim = self.clim * a + b
+        self.clim.attrs = {'units':newunit}
+        self.changedunits = True
+    
+    def savelocalclim(self):
+        
+        if not self.changedunits:
+            self.construct_name(force = True)
+            particular_encoding = {key : for_netcdf_encoding[key] for key in self.clim.to_dataset().variables.keys()} 
+            self.clim.to_netcdf(self.filepath, encoding = particular_encoding)
+        else:
+            raise TypeError('You cannot save this model climatology after changing the original model units')
+
+#self = ModelClimatology('41r1', 'tg')
+#self.local_clim(tmin = '2000-01-01',tmax = '2001-01-21', timemethod = '1D', daysbefore = 3, daysafter = 3)
+
 #start_batch(tmin = '2018-08-02', tmax = '2018-08-08')
 #start_batch(tmin = '2018-08-13', tmax = '2018-08-31')
 #start_batch(tmin = '2018-06-05', tmax = '2018-07-31')
 #start_batch(tmin = '2018-11-01', tmax = '2018-11-05')
 #start_batch(tmin = '2018-11-06', tmax = '2018-11-11')
 #start_batch(tmin = '2018-11-12', tmax = '2018-11-18')
+#start_batch(tmin = '2018-11-19', tmax = '2018-11-22')

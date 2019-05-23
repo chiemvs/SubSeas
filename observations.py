@@ -1,14 +1,18 @@
+#!/usr/bin/env python3
 import os
 import numpy as np
 import xarray as xr
 import pandas as pd
 import dask.array as da
+import warnings
 from helper_functions import agg_space, agg_time, monthtoseasonlookup
 
 obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
                    'tx': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'tg': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
-                   'pop': {'dtype': 'int16', 'scale_factor': 0.0001, '_FillValue': -32767},
+                   'rr-anom': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
+                   'tg-anom': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
+                   'rr-pop': {'dtype': 'int16', 'scale_factor': 0.0001, '_FillValue': -32767},
                    'time': {'dtype': 'int64'},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
@@ -17,13 +21,13 @@ obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValu
 
 class SurfaceObservations(object):
     
-    def __init__(self, alias, **kwds):
+    def __init__(self, basevar, **kwds):
         """
         Sets the base E-OBS variable alias. And sets the base storage directory. 
         Additionally you can supply 'timemethod', 'spacemethod', 'tmin' and 
         'tmax', or the comple filename if you want to load a pre-existing adapted file.
         """
-        self.basevar = alias
+        self.basevar = basevar
         self.basedir = "/nobackup/users/straaten/E-OBS/"
         for key in kwds.keys():
             setattr(self, key, kwds[key])
@@ -41,7 +45,7 @@ class SurfaceObservations(object):
         else:
             values = [ getattr(self,key) for key in keys[1:] if hasattr(self, key)]
             try:
-                values.insert(0,self.newvar) 
+                values.insert(0,'-'.join([self.basevar,self.newvar]))
             except AttributeError:
                 values.insert(0,self.basevar)
             self.name = '_'.join(values)
@@ -278,10 +282,10 @@ class Climatology(object):
                     
                     # Possible classification in the aggregated slices if the supplied obs was transformed.
                     try:
-                        newvar = getattr(obs, 'newvar') # only there if transformed.
-                        daily_obs.array = complete # Assign to the class.
-                        getattr(EventClassification(daily_obs),newvar)() # Get the classifier capable of transforming the class.
-                        complete = daily_obs.array
+                        if getattr(obs, 'newvar') != getattr(daily_obs, 'newvar'): # only there needs to be a transformation and if newvar attributes are present
+                            daily_obs.array = complete # Assign to the class.
+                            getattr(EventClassification(daily_obs),getattr(obs, 'newvar'))() # Get the classifier capable of transforming the class.
+                            complete = daily_obs.array
                     except AttributeError:
                         pass
     
@@ -327,8 +331,9 @@ class EventClassification(object):
     
     def __init__(self, obs, obs_dask = None, **kwds):
         """
-        Aimed at on-the-grid classification.
-        Supply the observations xarray: Normal array for (memory efficient) grouping and fast explicit climatology computation
+        Aimed at on-the-grid classification of continuous variables. By modifying the array
+        attribute of observation or forecast objects. Normal array for (memory efficient) grouping 
+        and fast explicit computation
         If the dataset is potentially large then one can supply a version withy dask array
         dask array for the anomaly computation which probably will not fit into memory.
         """
@@ -351,13 +356,15 @@ class EventClassification(object):
         else:
             data = np.where(np.isnan(self.obs.array), self.obs.array, self.obs.array.data > threshold)
         
+        result = xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims,
+                                attrs = {'long_name':'probability_of_precipitation', 'threshold_mm_day':threshold, 'units':self.old_units, 'new_units':''},
+                                name = '-'.join([self.obs.basevar, 'pop']))
+        
         if inplace:
-            self.obs.array = xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop')
+            self.obs.array = result
             self.obs.newvar = 'pop'
-            self.obs.array.attrs = {'long_name':'probability_of_precipitation', 'threshold_mm_day':threshold, 'units':self.old_units, 'new_units':''}
-            #self.obs.construct_name()
         else:
-            return(xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims, name = 'pop'))
+            return(result)
     
     def stefanon2012(self):
         """
@@ -371,17 +378,39 @@ class EventClassification(object):
         time/space greedy fill of local exceedence of climatological quantile.
         """
     
-    def climexceedance(self, clim):
+    def anom(self, inplace = True):
         """
         Substracts the climatological value for the associated day of year from the observations.
         This leads to anomalies when the climatological mean was taken. Exceedances become sorted by doy.
+        The climatology object needs to have been supplied at initialization.
+        TODO: make this work per leadtime.
         """
+        if not hasattr(self, 'climatology'):
+            raise AttributeError('provide climatology at initialization please')
+        
+        if not (self.obs.array.units == self.climatology.clim.units):
+            raise ValueError('supplied object and climatology do not have the same units')
+        
         if hasattr(self, 'obsd'):
             doygroups = self.obsd.array.groupby('time.dayofyear')
         else:
             doygroups = self.obs.array.groupby('time.dayofyear')
-        results = []
-        for doy, fields in doygroups:
-            results.append(fields - self.clim.sel(doy = doy))
-            print('computed exceedance of', doy)
-        self.exceedance = xr.concat(results, dim = 'time')
+        
+        def subtraction(inputarray):
+            doy = int(np.unique(inputarray['time.dayofyear']))
+            if hasattr(inputarray, 'leadtime') and hasattr(self.climatology.clim, 'leadtime'):
+                climatology = self.climatology.clim.sel(doy = doy, leadtime = inputarray['leadtime'], drop = True)
+            else:
+                warnings.warn('anomaly subtraction not leadtime dependent')
+                climatology = self.climatology.clim.sel(doy = doy, drop = True)
+            return(inputarray - climatology)
+        
+        result = xr.DataArray(data = doygroups.apply(subtraction), coords = self.obs.array.coords, dims= self.obs.array.dims,
+                                attrs = {'long_name':'-'.join([self.obs.basevar, 'anomalies']), 'units':self.old_units, 'new_units':self.old_units},
+                                name = '-'.join([self.obs.basevar, 'anom']))
+        
+        if inplace:
+            self.obs.array = result
+            self.obs.newvar = 'anom'
+        else:
+            return(result)
