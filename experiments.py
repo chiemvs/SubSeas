@@ -247,7 +247,7 @@ class Experiment(object):
                 comp.fit_pp_models(pp_model = pp_model, groupers = ['leadtime','latitude','longitude'])
                 comp.export(fits=True, frame = False)
                 comp.make_pp_forecast(pp_model = pp_model, n_members = 11 if isinstance(pp_model, NGR) else None)
-            if self.newvar is None:
+            if (self.newvar is None) or (self.newvar == 'anom'):
                 comp.crpsscore()
             else:
                 comp.brierscore()
@@ -273,7 +273,7 @@ class Experiment(object):
             scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', '')], timeagg = timeagg)
             scoreanalysis.load()
             #result[0] = scoreanalysis.mean_skill_score()
-            result[0] = scoreanalysis.block_bootstrap_local_skills(n_samples = 2000)
+            result[0] = scoreanalysis.block_bootstrap_local_skills(n_samples = 200)
         return(result)
         
 
