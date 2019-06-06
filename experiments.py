@@ -307,7 +307,7 @@ Max temperature benchmarks.
 Mean temperature benchmarks. Observations split into two decades. Otherwise potential memory error in matching.
 """
 
-#dask.config.set(temporary_directory='/nobackup/users/straaten/')
+dask.config.set(temporary_directory='/nobackup_1/users/straaten/')
 
 # Calling of the class        
 #test2 = Experiment(expname = 'test2', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
@@ -382,12 +382,42 @@ Experiment 5 setup Probability of Precipitation.
 #self.iterateaggregations(func = 'score', columns = 'scorefiles', kwargs = {'pp_model':Logistic()})
 
 """
-Experiment 6 anomalies test
+Experiment 6 anomalies test for western Europe
 """
-#self = Experiment(expname = 'test6', basevar = 'tg', newvar = 'anom', cycle = '41r1', season = 'DJF', method = 'mean', 
-#                   timeaggregations = ['5D','7D'], spaceaggregations = [0.25,0.75], quantiles = None) # [0.33, 0.66])
-#self.setuplog()
-#self.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '2000-01-01', climtmax = '2002-03-10'))
-#self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '2000-01-01',tmax = '2002-03-10'))
-#self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '2000-01-01', climtmax = '2002-03-10'))
-#self.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '2000-01-01', climtmax = '2000-02-03'))
+self = Experiment(expname = 'westa6', basevar = 'tg', newvar = 'anom', cycle = '41r1', season = 'DJF', method = 'mean', 
+                   timeaggregations = ['1D','2D','3D','4D'], spaceaggregations = [0.25,0.75,1.25,2], quantiles = None)
+self.setuplog()
+self.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+self.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+self.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform = True)})
+self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
+
+"""
+Experiment 7 Maximum temperature for western Europe
+"""
+#
+#test7 = Experiment(expname = 'westtx7', basevar = 'tx', cycle = '41r1', season = 'JJA', method = 'max',
+#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25], quantiles = None)
+#test7.setuplog()
+#test7.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
+#test7.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
+#test7.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#test7.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
+#test7.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
+
+"""
+Experiment 8 anomalies maximum temperatures test for western Europe
+"""
+test8 = Experiment(expname = 'westtxa8', basevar = 'tx', newvar = 'anom', cycle = '41r1', season = 'JJA', method = 'max', 
+                   timeaggregations = ['1D','2D','3D','4D'], spaceaggregations = [0.25,0.75,1.25,2], quantiles = None)
+test8.setuplog()
+test8.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+test8.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+test8.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+test8.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+test8.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+test8.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform = True)})
+test8.iterateaggregations(func = 'skill', column = 'scores')
