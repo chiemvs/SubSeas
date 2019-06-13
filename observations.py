@@ -11,6 +11,7 @@ obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValu
                    'tx': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'tg': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'rr-anom': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
+                   'tx-anom': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'tg-anom': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'rr-pop': {'dtype': 'int16', 'scale_factor': 0.0001, '_FillValue': -32767},
                    'time': {'dtype': 'int64'},
