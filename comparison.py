@@ -15,8 +15,8 @@ import itertools
 import properscoring as ps
 from observations import SurfaceObservations, Climatology, EventClassification
 from forecasts import Forecast
-from helper_functions import monthtoseasonlookup, unitconversionfactors
-from fitting import NGR, Logistic
+from helper_functions import monthtoseasonlookup, unitconversionfactors, lastconsecutiveabove, assignmidpointleadtime
+from fitting import NGR, Logistic, ExponentialQuantile
 
 class ForecastToObsAlignment(object):
     """
@@ -530,6 +530,9 @@ class Comparison(object):
 class ScoreAnalysis(object):
     """
     Contains several ways to analyse an exported file with scores. 
+    Its main function is to calculate skill-scores. 
+    It can export bootstrapped skillscore samples and later analyze these
+    For spatial mean scores and forecast horizons.
     """
     def __init__(self, scorefile, timeagg):
         """
@@ -578,41 +581,16 @@ class ScoreAnalysis(object):
     def mean_skill_score(self, groupers = ['leadtime']):
         """
         Grouping. Average and compute skill score.
+        Always a mid-point leadtime correction is performed.
         """
         grouped =  self.frame.groupby(groupers)
         
         scores = grouped.apply(self.eval_skillscore, 
                                meta = pd.DataFrame(dtype='float32', columns = self.returncols, index=[self.output])).compute()
+        
+        scores = assignmidpointleadtime(scores, timeagg = self.timeagg)
+        
         return(scores)
-    
-    def bootstrap_skill_score(self, groupers = ['leadtime'], n_samples = 200):
-        """
-        Samples the score entries. First grouping and then per (local) group multiple 
-        random samples are taken and their quantiles are outputted per group.
-        Quantiles for the confidence intervals (also for plots) are defined in this function.
-        NOTE: decorrelation time and block-bootstrapping cannot be incorporated
-        here as it is only easy for local in time.
-        """
-        grouped =  self.frame.groupby(groupers)
-        
-        def bootstrap_quantiles(df, n_samples, quantiles):
-            """
-            Acts per group. Creates n samples (with replacement) of the dataframe.
-            For each of these it calls the evaluate skill-scores method, whose output is collected.
-            From the sized n collection it distills and returns the desired quantiles.
-            
-            """
-            collect = pd.DataFrame(dtype = 'float32', columns = self.returncols, index = pd.RangeIndex(stop = n_samples))
-            
-            for i in range(n_samples):
-                collect.iloc[i,:] = self.eval_skillscore(df[self.scorecols].sample(frac = 1, replace = True))
-                
-            return(collect.quantile(q = quantiles, axis = 0).astype('float32'))
-        
-        bounds = grouped.apply(bootstrap_quantiles,
-                               meta = pd.DataFrame(dtype='float32', columns = self.returncols, index = pd.Index(self.quantiles, name = 'quantile')),
-                               **{'n_samples':n_samples, 'quantiles':self.quantiles}).compute()
-        return(bounds)
     
     def characteristiclength(self):
         """
@@ -620,6 +598,7 @@ class ScoreAnalysis(object):
         According the formula of Leith 1973 which is reference in Feng (2011)
         T_0 = 1 + 2 * \sum_{\tau= 1}^D (1 - \tau/D) * \rho_\tau
         The number is in the unit of the time-aggregation of the variable. (nr days if daily values)
+        Note: should the use of the charlengths have to be adapted for the small datasets? Cannot be 7 weeks or something.
         """
         def auto_cor(df, freq, cutofflag = 20, return_char_length = True):
             """
@@ -647,74 +626,23 @@ class ScoreAnalysis(object):
         
         # Quality control needed. Values below 1 are set to 1 (reduces later to normal bootstrapping)
         self.charlengths[self.charlengths < 1] = 1
-            
-    def block_bootstrap_mean_of_local_skills(self, n_samples = 200):
+    
+    def block_bootstrap_local_skills(self, n_samples = 200, fixsize = True):
         """
         At each random instance picks a local time-block-bootstraped sample and computes local skill for each location.
-        These are reworked to the areal mean. This process is repeated n_samples times 
-        and quantiles of the generated skillsare returned. The procedure loads the whole dataset
-        per leadtime (dask based), and does local (pandas based) grouping to get local block lengths and a local random set.
-        Note: should the use of the charlengths have to be adapted for the small datasets? Cannot be 7 weeks or something.
-        """
-
-        if not hasattr(self, 'charlengths'):
-            self.characteristiclength()
-        
-        def block_sample(dflocation, fraction):
-            """
-            Assumes that all rows in the supplied data are unique timesteps.
-            It splits the sets of rows in a non-overlapping sense in blocks with the local blocklength.
-            These splits currently might jump into the new season. Otherwise it will be more expensive to track consequtive months
-            with local records of uneven length.
-            The local blocklength is read from the self.charlengths attribute.
-            """
-            blocklength = self.charlengths.loc[(dflocation['latitude'].iloc[0],dflocation['longitude'].iloc[0])]
-            blocklength = int(np.ceil(blocklength))
-            #print(blocklength)
-            setlength = len(dflocation)
-            
-            if blocklength == 1:
-                return(self.eval_skillscore(dflocation[self.scorecols].sample(frac = fraction, replace = True)))
-            else:
-                rowsets = pd.Series(np.array_split(np.arange(setlength), np.arange(blocklength,setlength,blocklength))) # produces a list of arrays
-                choice = rowsets.sample(frac = fraction, replace = True)
-                choice = np.concatenate(choice.values) # Glue the chosen sets back to a list
-                return(self.eval_skillscore(dflocation.iloc[choice,:])) # Duplicate indices are allowed in iloc.
-            
-        def per_leadtime(df, n_samples, quantiles):
-            """
-            Function so we can apply the procedure per leadtime in the dask-framework.
-            The overall score is computed n_samples times. Only quantiles are returned.
-            """
-            localgroups = df.groupby(['latitude','longitude']) # Pandas grouping.
-            collect = pd.DataFrame(dtype = 'float32', columns = self.returncols, index = pd.RangeIndex(stop = n_samples))
-            
-            for i in range(n_samples):
-                localscores = localgroups.apply(block_sample, **{'fraction':1})
-                spacemean = localscores.mean(axis = 0, skipna = True) # mean of local scores.
-                collect.iloc[i,:] = spacemean
-                
-            return(collect.quantile(q = quantiles, axis = 0).astype('float32'))
-        
-        grouped =  self.frame.groupby(['leadtime']) # Dask grouping
-        bounds = grouped.apply(per_leadtime,
-                               meta = pd.DataFrame(dtype='float32', columns = self.returncols, index = pd.Index(self.quantiles, name = 'quantile')),
-                               **{'n_samples':n_samples, 'quantiles':self.quantiles}).compute()
-        
-        return(bounds)
-    
-    def block_bootstrap_local_skills(self, n_samples = 200):
-        """
-        Full grouping. returns 200 samples per group. Fix the sample size according to the maximum availabilities.
-        """
-        if not hasattr(self, 'charlengths'):
-            self.characteristiclength()
-        
+        Full grouping. returns 200 samples per group. Either does a full fraction = 1 sampling
+        But also has the possibility to fix the sample size according to the maximum availabilities, thereby over-sampling the smaller ones.
+        Exports the bootstrap samples to the scorefile. Such that later quantiles can be computed.
+        Returns a true if completed
+        """        
         # Get the maximum count. The goal is to equalize this accross leadtimes.
-        maxcount = self.frame.groupby(['leadtime','latitude','longitude'])[self.climcol].count().max().compute()
-        print(maxcount)
+        if fixsize:
+            if (not hasattr(self, 'charlengths')):
+                self.characteristiclength()
+            maxcount = self.frame.groupby(['leadtime','latitude','longitude'])[self.climcol].count().max().compute()
+            print(maxcount)
         
-        def fix_sample_score(df, n_samples, fixed_size):
+        def fix_sample_score(df, n_samples, fixed_size = None):
             """
             Acts per location/leadtime group. 
             Assumes that all rows in the supplied data are unique timesteps.
@@ -728,14 +656,18 @@ class ScoreAnalysis(object):
             blocklength = int(np.ceil(blocklength))
             #print(blocklength)
             setlength = len(df)
+            if fixed_size is None:
+                size = setlength
+            else:
+                size = fixed_size
             rowsets = pd.Series(np.array_split(np.arange(setlength), np.arange(blocklength,setlength,blocklength))) # produces a list of arrays
             
             local_result = [None] * n_samples            
             for i in range(n_samples):
                 if blocklength == 1:
-                    sample = df[self.scorecols].sample(n = fixed_size, replace = True)
+                    sample = df[self.scorecols].sample(n = size, replace = True)
                 else:
-                    choice = rowsets.sample(n = fixed_size // blocklength, replace = True)
+                    choice = rowsets.sample(n = size // blocklength, replace = True)
                     choice = np.concatenate(choice.values) # Glue the chosen sets back to a listchoice = np.concatenate(choice.values)
                     sample = df.iloc[choice,:] # Duplicate indices are allowed in iloc.
                 
@@ -746,17 +678,80 @@ class ScoreAnalysis(object):
         grouped =  self.frame.groupby(['leadtime','latitude','longitude']) # Dask grouping
         sample_scores = grouped.apply(fix_sample_score,
                                meta = pd.DataFrame(dtype='float32', columns = self.returncols, index = pd.RangeIndex(n_samples)),
-                               **{'n_samples':n_samples, 'fixed_size':maxcount})
+                               **{'n_samples':n_samples, 'fixed_size':maxcount if fixsize else None })
         
         sample_scores.to_hdf(self.filepath, key = 'bootstrap',  format = 'table', **{'mode':'a'})
+        return(True)
+    
+    def process_bootstrapped_skills(self, local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0, average_afterwards = False):
+        """
+        Rework all sampled local skills to a spatial mean for each random instance. Or let the scores remain local.
+        Compute quantiles on these skills. Standard empirical, option is quantile fitted exponential model
+        Option to rework this to forecast horizon. Option to average these spatially afterwards when dealing with local scores.
+        The options can be seen as a sequential procedure, for the forcast horizon quantiles are needed.
+        Always a mid-point leadtime correction is performed.
+        """
+        skills = pd.read_hdf(self.filepath, key = 'bootstrap') # DaskDataframe would give issues related to this https://github.com/dask/dask/issues/4643
         
-        # Do the europe mean computation.
-        res = dd.read_hdf(self.filepath, key = 'bootstrap')
+        if local:
+            groupers = ['leadtime','latitude','longitude']
+        else:
+            groupers = ['leadtime']
+            skills = skills.groupby(['leadtime','samples']).mean()
         
-        #return(sample_scores)
-        eurmean = res.groupby(['leadtime','samples']).mean().compute()
-        return(eurmean.groupby('leadtime').quantile(self.quantiles))
+        # Extract quantiles from the samples. Removes samples as an index. Eventually I want to go to dask. But the  grouped.apply combination is giving trouble
+        #meta = dict(itertools.product(skills.columns.to_list(), ['float32']))
+        if fitquantiles:
+            # Not grouping by leadtime here, because we will fit against leadtime
+            groupers.remove('leadtime')
+            def fit_quantiles(df, fullindex = True):
+                model1 = ExponentialQuantile(obscol=skills.columns[0])
+                model1.fit(train = df, quantiles=self.quantiles, startx=None, endx=None)
+                pred1 = model1.predict(test= df, quantiles = self.quantiles, startx=None, endx=None, restoreindex = fullindex)
+                model2 = ExponentialQuantile(obscol=skills.columns[-1])
+                model2.fit(train = df, quantiles=self.quantiles, startx=None, endx=None)
+                pred2 = model2.predict(test= df, quantiles = self.quantiles, startx=None, endx=None, restoreindex = fullindex)
+                return(pred1.merge(pred2, left_index = True, right_index = True))
+            if not groupers:
+                quants = fit_quantiles(skills)
+            else:
+                grouped = skills.groupby(groupers)
+                quants = grouped.apply(fit_quantiles, **{'fullindex':False})
+        else:
+            grouped = skills.groupby(groupers)
+            quants = grouped.quantile(self.quantiles) # Quantile is not a dask dataframe grouping method. Also the apply seems to give problems
+            quants.index.rename('quantile',level = -1, inplace = True)
+            
+        #quants.compute()
+        # Midpoint correction using self.timeagg. (Converted to integer value in the helper function)
+        quants = assignmidpointleadtime(quants, timeagg = self.timeagg)
         
+        if not forecast_horizon:
+            return(quants)
+        else:
+            data = quants.unstack(level = 'quantile').loc(axis = 1)[slice(None), np.min(self.quantiles)] # We want the lower bound
+            try:
+                groupers.remove('leadtime') # Still no grouping with leadtime, try to remove it if it has not been removed in the quantile fitting
+            except ValueError:
+                pass
+            def get_f_hor(df, skillthreshold):
+                horizons = pd.Series(np.nan, index = df.columns.get_level_values(0), name = 'horizon')
+                for col in df.columns:
+                    horizons.loc[col[0]] = lastconsecutiveabove(df.loc[:,col], threshold=skillthreshold)
+                return(horizons)
+            if not groupers:
+                result = get_f_hor(data, skillthreshold=skillthreshold)
+            else:
+                result = data.groupby(groupers).apply(get_f_hor, **{'skillthreshold':skillthreshold})
+                if average_afterwards:
+                    result = result.mean(axis = 0)
+            return(result)
+
+#self = ScoreAnalysis(scorefile = 'westtxa8_tx-anom_JJA_41r1_1D_2-degrees-max_tx-anom_clim_1995-01-01_2015-01-11_1D_2-degrees-max_5_5_rand', timeagg = '1D')
+#test = self.process_bootstrapped_skills()
+#test2 = self.process_bootstrapped_skills(average_afterwards=True)
+#test3 = self.process_bootstrapped_skills(local = False, forecast_horizon = False)
+#test4 = self.process_bootstrapped_skills(fitquantiles= True, forecast_horizon=True)
 # Laptop test setup for new dask bootstrapping
 #self = ScoreAnalysis(scorefile = 'we', timeagg = '7D')
 #self.basedir = '/home/jsn295/Downloads/'

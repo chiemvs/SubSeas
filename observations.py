@@ -281,12 +281,18 @@ class Climatology(object):
                         complete = complete.drop(slice_arr.time.values, dim = 'time') # remove so new minimum can be found.
                     complete = xr.concat(aggregated_slices, dim = 'time')
                     
-                    # Possible classification in the aggregated slices if the supplied obs was transformed.
+                    # Possible classification in the aggregated slices if the supplied obs was transformed, and this is not the same (pre-aggregation) transformation already present on the daily-obs.
                     try:
-                        if getattr(obs, 'newvar') != getattr(daily_obs, 'newvar'): # only there needs to be a transformation and if newvar attributes are present
-                            daily_obs.array = complete # Assign to the class.
-                            getattr(EventClassification(daily_obs),getattr(obs, 'newvar'))() # Get the classifier capable of transforming the class.
-                            complete = daily_obs.array
+                        obsnewvar = getattr(obs, 'newvar')
+                        try:
+                            dailyobsnewvar = getattr(daily_obs, 'newvar')
+                            if obsnewvar != dailyobsnewvar:
+                                raise AttributeError
+                        except AttributeError:
+                            tempobs = SurfaceObservations(basevar= obs.basevar) # Assign to the class for alteraton
+                            tempobs.array = complete
+                            getattr(EventClassification(tempobs),getattr(obs, 'newvar'))() # Get the classifier capable of transforming the class
+                            complete = tempobs.array
                     except AttributeError:
                         pass
     

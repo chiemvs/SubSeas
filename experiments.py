@@ -25,7 +25,6 @@ class Experiment(object):
         """
         Setting the relevant attributes. Timeaggregations are pandas frequency strings, spaceaggregations are floats in degrees.
         Quantiles can be None if you are already investigating an event variable and if you want to crps-score the whole distribution.
-        TODO: whether quantiles are present leads to many subtle differences (in scoring and executing same code multiple times) Perhaps there is a clever (decorator) way to code this.
         """
         self.resultsdir = '/nobackup/users/straaten/results/'
         self.expname = expname
@@ -41,7 +40,8 @@ class Experiment(object):
     def setuplog(self):
         """
         Load an experiment log if it is present. Otherwise create one.
-        Columns are for obsname and booksname. For climname, scorefiles and scores the amount of columns is times the amount of quantiles.
+        Columns are for obsname and booksname, and possibly the highres climatologies. 
+        For climname, scorefiles, bootstrap scores the amount of columns is times the amount of quantiles.
         """
         self.logpath = self.resultsdir + self.expname + '.h5'
         try:
@@ -49,11 +49,11 @@ class Experiment(object):
         except OSError:
             if self.quantiles is not None:
                 self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations, self.quantiles], names = ['spaceagg','timeagg','quantile']), 
-                                        columns = ['climname','scorefiles','scores'])
+                                        columns = ['climname','scorefiles','bootstrap','scores'])
                 self.log = self.log.unstack(level = -1)
             else:
                 self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations], names = ['spaceagg','timeagg']), 
-                                        columns = pd.MultiIndex.from_product([['climname','scorefiles','scores'],['']])) # Also two levels for compatibility
+                                        columns = pd.MultiIndex.from_product([['climname','scorefiles','bootstrap','scores'],['']])) # Also two levels for compatibility
             self.log = self.log.assign(**{'obsname':None,'booksname':None, 'obsclim':None,'modelclim':None}) # :''
     
     def savelog(self):
@@ -258,25 +258,57 @@ class Experiment(object):
             
         return(result)
     
-    def skill(self, spaceagg, timeagg):
+    def bootstrap_scores(self, spaceagg, timeagg, bootstrapkwargs = dict(n_samples = 200, fixsize = True)):
         """
-        Reads the exported file and calls upon several possible methods to compute (bootstrapped) skill scores
+        Will bootstrap the scores in the scoreanalysis files and export these samples 
+        Such that these can be later analyzed in the skill function.
+        """
+        if self.quantiles is not None:
+            result = np.repeat(None,len(self.quantiles))
+            
+            for quantile in self.quantiles:
+                scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
+                scoreanalysis.load()
+                result[self.quantiles.index(quantile)] = scoreanalysis.block_bootstrap_local_skills(**bootstrapkwargs)
+        else:
+            result = np.repeat(None,1)
+            scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', '')], timeagg = timeagg)
+            scoreanalysis.load()
+            result[0] = scoreanalysis.block_bootstrap_local_skills(**bootstrapkwargs)
+        return(result)
+    
+    def skill(self, spaceagg, timeagg, usebootstrapped = False, analysiskwargs = {}):
+        """
+        Reads the exported scoreanalysis file and analyses it. 
+        Standard is to compute the mean score. But when bootstrapping has been performed in the previous step
+        and when usebootstrapped is set to True then quantiles, forecast horizons, 
+        can all be computed. These options are controlled with analysiskwargs
         """
         if self.quantiles is not None:
             result = np.repeat(None,len(self.quantiles))
             
             for quantile in self.quantiles:    
                 scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
-                scoreanalysis.load()
-                #skillscore = scoreanalysis.bootstrap_skill_score(groupers=['leadtime'])
-                skillscore = scoreanalysis.mean_skill_score(groupers=['leadtime','latitude','longitude']) # Uses the new scoring. Apply bootstrapping later on.
+                bootstrap_ready = [(spaceagg, timeagg),('bootstrap', quantile)]
+                if usebootstrapped and bootstrap_ready:
+                    skillscore = scoreanalysis.process_bootstrapped_skills(**analysiskwargs)
+                else:
+                    print('mean scoring')
+                    scoreanalysis.load()
+                    skillscore = scoreanalysis.mean_skill_score(**analysiskwargs)
+                    
                 result[self.quantiles.index(quantile)] = skillscore
         else:
             result = np.repeat(None,1)
             scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', '')], timeagg = timeagg)
-            scoreanalysis.load()
-            #result[0] = scoreanalysis.mean_skill_score()
-            result[0] = scoreanalysis.block_bootstrap_local_skills(n_samples = 200)
+            bootstrap_ready = [(spaceagg, timeagg),('bootstrap', '')]
+            if usebootstrapped and bootstrap_ready:
+                skillscore = scoreanalysis.process_bootstrapped_skills(**analysiskwargs)
+            else:
+                print('mean scoring')
+                scoreanalysis.load()
+                skillscore = scoreanalysis.mean_skill_score(**analysiskwargs)
+            result[0] = skillscore
         return(result)
         
 
@@ -374,12 +406,15 @@ Experiment 4 setup. Western europe only. Same climatology period.
 Experiment 5 setup Probability of Precipitation.
 """
 #self = Experiment(expname = 'test5', basevar = 'rr', newvar = 'pop', cycle = '41r1', season = 'DJF', method = 'mean', 
-#                   timeaggregations = ['7D'], spaceaggregations = [0.25], quantiles = None)
+#                   timeaggregations = ['7D'], spaceaggregations = [3], quantiles = None)
 #self.setuplog()
-#self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '2000-01-01',tmax = '2000-02-10'))
-#self.iterateaggregations(func = 'match', column = 'booksname')
-#self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1990-01-01','climtmax':'2000-02-28'})
-#self.iterateaggregations(func = 'score', columns = 'scorefiles', kwargs = {'pp_model':Logistic()})
+#self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-02-10',  llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '2000-01-01', climtmax = '2010-02-10', llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic()})
+#self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = True)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime'])})
 
 """
 Experiment 6 anomalies test for western Europe
