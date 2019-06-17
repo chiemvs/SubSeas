@@ -390,7 +390,6 @@ class EventClassification(object):
         Substracts the climatological value for the associated day of year from the observations.
         This leads to anomalies when the climatological mean was taken. Exceedances become sorted by doy.
         The climatology object needs to have been supplied at initialization.
-        TODO: make this work per leadtime.
         """
         if not hasattr(self, 'climatology'):
             raise AttributeError('provide climatology at initialization please')

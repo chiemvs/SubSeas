@@ -258,7 +258,7 @@ class Experiment(object):
             
         return(result)
     
-    def bootstrap_scores(self, spaceagg, timeagg, bootstrapkwargs = dict(n_samples = 200, fixsize = True)):
+    def bootstrap_scores(self, spaceagg, timeagg, bootstrapkwargs = dict(n_samples = 200, fixsize = 60)):
         """
         Will bootstrap the scores in the scoreanalysis files and export these samples 
         Such that these can be later analyzed in the skill function.
@@ -428,7 +428,9 @@ Experiment 6 anomalies test for western Europe
 #self.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
 #self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
 #self.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform = True)})
-#self.iterateaggregations(func = 'skill', column = 'scores')
+#self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = True)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
+#t = pd.concat(self.log['scores'].tolist(), keys = self.log.index, names=['spaceagg','timeagg'])
 
 """
 Experiment 7 Maximum temperature for western Europe
@@ -446,13 +448,14 @@ Experiment 7 Maximum temperature for western Europe
 """
 Experiment 8 anomalies maximum temperatures test for western Europe
 """
-#test8 = Experiment(expname = 'westtxa8', basevar = 'tx', newvar = 'anom', cycle = '41r1', season = 'JJA', method = 'max', 
-#                   timeaggregations = ['1D','2D','3D','4D'], spaceaggregations = [0.25,0.75,1.25,2], quantiles = None)
-#test8.setuplog()
-#test8.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
-#test8.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
-#test8.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
-#test8.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
-#test8.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
-#test8.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform = True)})
-#test8.iterateaggregations(func = 'skill', column = 'scores')
+test8 = Experiment(expname = 'westtxa8', basevar = 'tx', newvar = 'anom', cycle = '41r1', season = 'JJA', method = 'max', 
+                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25,0.75,1.25,2,3], quantiles = None)
+test8.setuplog()
+test8.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+test8.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+test8.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+test8.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
+test8.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+test8.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform = True)})
+test8.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = 60)})
+test8.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.2, average_afterwards = True)})

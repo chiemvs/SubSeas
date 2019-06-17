@@ -588,3 +588,5 @@ class ModelClimatology(object):
 #start_batch(tmin = '2018-12-04', tmax = '2018-12-15')
 #start_batch(tmin = '2018-12-21', tmax = '2018-12-31')
 #start_batch(tmin = '2019-01-01', tmax = '2019-01-10')
+#start_batch(tmin = '2019-01-11', tmax = '2019-01-15')
+#start_batch(tmin = '2019-01-16', tmax = '2019-01-20')

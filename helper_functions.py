@@ -223,7 +223,7 @@ def assignmidpointleadtime(frame, timeagg = None):
     temp = frame.reset_index()
     pos_uncor_indices = ['spaceagg','latitude','longitude','quantile']
     try:
-        midpointday = (temp['timeagg'].values[0] - 1) / 2
+        midpointday = (int(temp['timeagg'].values[0][0]) - 1) / 2
     except KeyError:
         midpointday = (int(timeagg[0]) - 1) / 2
     print(midpointday)

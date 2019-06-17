@@ -631,15 +631,18 @@ class ScoreAnalysis(object):
         """
         At each random instance picks a local time-block-bootstraped sample and computes local skill for each location.
         Full grouping. returns 200 samples per group. Either does a full fraction = 1 sampling
-        But also has the possibility to fix the sample size according to the maximum availabilities, thereby over-sampling the smaller ones.
+        But also has the possibility to fix the sample size: either with providing an integer to fixsize or according to the minimum availabilities in the loaded dataset, thereby under-sampling the smaller groups.
         Exports the bootstrap samples to the scorefile. Such that later quantiles can be computed.
         Returns a true if completed
         """        
+        if (not hasattr(self, 'charlengths')):
+            self.characteristiclength()
+                
         # Get the maximum count. The goal is to equalize this accross leadtimes.
         if fixsize:
-            if (not hasattr(self, 'charlengths')):
-                self.characteristiclength()
-            maxcount = self.frame.groupby(['leadtime','latitude','longitude'])[self.climcol].count().max().compute()
+            maxcount = fixsize
+            if not isinstance(fixsize, int):
+                maxcount = self.frame.groupby(['leadtime','latitude','longitude'])[self.climcol].count().max().compute()
             print(maxcount)
         
         def fix_sample_score(df, n_samples, fixed_size = None):
@@ -746,50 +749,3 @@ class ScoreAnalysis(object):
                 if average_afterwards:
                     result = result.mean(axis = 0)
             return(result)
-
-#self = ScoreAnalysis(scorefile = 'westtxa8_tx-anom_JJA_41r1_1D_2-degrees-max_tx-anom_clim_1995-01-01_2015-01-11_1D_2-degrees-max_5_5_rand', timeagg = '1D')
-#test = self.process_bootstrapped_skills()
-#test2 = self.process_bootstrapped_skills(average_afterwards=True)
-#test3 = self.process_bootstrapped_skills(local = False, forecast_horizon = False)
-#test4 = self.process_bootstrapped_skills(fitquantiles= True, forecast_horizon=True)
-# Laptop test setup for new dask bootstrapping
-#self = ScoreAnalysis(scorefile = 'we', timeagg = '7D')
-#self.basedir = '/home/jsn295/Downloads/'
-#self.filepath = self.basedir + 'tg_DJF_41r1_7D-mean_3-degrees-mean_tg_clim_1980-05-30_2015-02-28_7D-mean_3-degrees-mean_5_5_rand.h5'
-#self.load()
-#res = self.block_bootstrap_local_skills(n_samples = 2)
-
-
-# Try a pop observation aggregation. Make force new variable, unit conversion and force aggregation all act in place on the Forecast object.
-# Only certain event classifications will result in binary variables.
-# Write a Event-Classification method for anomalies. (possibly per leadtime for the Forecasts). 
-        
-#obs = SurfaceObservations('rr')
-#obs.load(tmin = '2000-01-01', tmax = '2000-02-01')
-#obs.aggregatetime(freq = '2D', method = 'mean')
-#obs.aggregatespace(3, method = 'mean', by_degree=True)
-
-#dailyobs = SurfaceObservations('rr')
-#dailyobs.load(tmin = '2000-01-01', tmax = '2002-02-01')
-#dailyobs.aggregatespace(3, method = 'mean', by_degree=True)
-
-#clim = Climatology(alias = 'rr')
-#clim.localclim(obs = obs, daily_obs= dailyobs, daysbefore = 5, daysafter = 5, mean = True)
-
-#clas = EventClassification(obs = obs, **{'climatology':clim})
-#clas.anom(inplace = True)
-
-#obs.aggregatetime(freq = '2D', method = 'mean') # Do aggregation after anomalie computation at the highest res.
-
-#from forecasts import ModelClimatology
-#modelclim = ModelClimatology('41r1','rr', **{'name':'rr_2000-01-01_2002-05-01_1D_0_0'})
-#modelclim.local_clim(tmin = '2000-01-01', tmax = '2002-05-01', timemethod = '1D', daysbefore = 0, daysafter = 0)
-#modelclim.change_units('mm')
-#modelclim.local_clim()
-
-
-#self = ForecastToObsAlignment(season = 'DJF', cycle = '41r1', observations=obs)
-#self.find_forecasts()
-#self.load_forecasts(11)
-#self.match_and_write(newvariable = True, newvarkwargs={'climatology':modelclim}, matchtime = True, matchspace= False)
-
