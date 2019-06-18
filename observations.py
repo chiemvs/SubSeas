@@ -59,16 +59,14 @@ class SurfaceObservations(object):
         """
         import urllib3
         
-        urls = {"tg":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg/tg_0.25deg_reg_v17.0.nc.gz",
-        "tn":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg/tn_0.25deg_reg_v17.0.nc.gz",
-        "tx":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg/tx_0.25deg_reg_v17.0.nc.gz",
-        "rr":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg/rr_0.25deg_reg_v17.0.nc.gz",
-        "pp":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg/pp_0.25deg_reg_v17.0.nc.gz"}
+        urls = {"tg":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg_ensemble/tg_ens_mean_0.25deg_reg_v19.0e.nc",
+        "tn":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg_ensemble/tn_ens_mean_0.25deg_reg_v19.0e.nc",
+        "tx":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg_ensemble/tx_ens_mean_0.25deg_reg_v19.0e.nc",
+        "rr":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg_ensemble/rr_ens_mean_0.25deg_reg_v19.0e.nc",
+        "pp":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg_ensemble/pp_ens_mean_0.25deg_reg_v19.0e.nc"}
         
-        zippath = self.filepath + '.gz'
-        
-        if not os.path.isfile(zippath):
-            f = open(zippath, 'wb')
+        if not os.path.isfile(self.filepath):
+            f = open(self.filepath, 'wb')
             http = urllib3.PoolManager()
             u = http.request('GET', urls[self.basevar], preload_content = False)
             filesize = int(u.info().getheaders("Content-Length")[0])
@@ -88,9 +86,6 @@ class SurfaceObservations(object):
             u.release_conn()
             f.close()
             
-        os.system("gunzip -k " + zippath) # Results in file written at filepath
-
-        
     def load(self, lazychunk = None, tmin = None, tmax = None, llcrnr = (None, None), rucrnr = (None,None)):
         """
         Loads the netcdf (possibly delimited by maxtime and corners). Corners need to be given as tuples (lat,lon)
