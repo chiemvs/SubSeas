@@ -297,7 +297,9 @@ class Experiment(object):
                     res[self.quantiles.index(quantile)] = f(*args, **kwargs, quantile = quantile)
                 return(res)
             else:
-                return(np.array(f(*args, **kwargs)))
+                res = np.repeat(None,1)
+                res[0] = f(*args, **kwargs)
+                return(res)
         return(wrapped)
 
 
@@ -447,8 +449,8 @@ Experiment 8 anomalies maximum temperatures test for western Europe
 #test8.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
 #test8.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform = True)})
 #test8.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = 60)})
-#test8.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.2, average_afterwards = True)})
-
+#test8.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.4, average_afterwards = True)})
+#test8.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = False, fitquantiles = False, forecast_horizon = False)})
 """
 Europe wide highres characteristic timescales
 """
@@ -457,7 +459,7 @@ Europe wide highres characteristic timescales
 #test9 = Experiment(expname = 'chartimescale', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
 #                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25], quantiles = None) # 
 #test9.setuplog()
-#test9.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01', llcrnr = (None,-30), rucrnr = (None,48)))
+#test9.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01', tmax = None, llcrnr = (None,-30), rucrnr = (None,48)))
 #test9.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '1999-01-11', llcrnr = (None,-30), rucrnr = (None,48))) 
 #test9.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (None,-30), rucrnr = (None,48))})
 #test9.iterateaggregations(func = 'score', column = 'scorefiles')
