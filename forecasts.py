@@ -372,8 +372,10 @@ class Hindcast(object):
                 
                 control = cf.select(validDate = pd.to_datetime(hd), stepRange = steps, cfVarName = param)
                 members = pf.select(validDate = pd.to_datetime(hd), stepRange = steps, cfVarName = param) #1.5 min more or less
-
-                lats,lons = control[0].latlons()
+                
+                lats = np.linspace(control[0]['latitudeOfFirstGridPointInDegrees'], control[0]['latitudeOfLastGridPointInDegrees'], num = control[0]['Nj'])
+                lons = np.linspace(control[0]['longitudeOfFirstGridPointInDegrees'], control[0]['longitudeOfLastGridPointInDegrees'], num = control[0]['Ni'])
+                #lats,lons = control[0].latlons()
                 units = control[0].units
                 gribmissval = control[0].missingValue
             
@@ -383,7 +385,7 @@ class Hindcast(object):
                     # If empty lists (tmax analysis) the field in nonexisting and we want fillvalues
                     if not cthisstep:
                         print('missing field')
-                        controlval = np.full(shape = lats.shape, fill_value = float(gribmissval))
+                        controlval = np.full(shape = (len(lats),len(lons)), fill_value = float(gribmissval)) #np.full(shape = lats.shape, fill_value = float(gribmissval))
                         membersnum = [m.perturbationNumber for m in members if m.stepRange == steps[i+1]]
                         membersval = [controlval] * len(membersnum)
                     else:
@@ -399,7 +401,7 @@ class Hindcast(object):
                     data = np.expand_dims(np.stack(membersval, axis = -1), axis = 0)
                     data[data == float(gribmissval)] = np.nan # Replace grib missing value with numpy missing value
                     result = xr.DataArray(data = data, 
-                                          coords=[timestamp, lats[:,0], lons[0,:], membersnum], 
+                                          coords=[timestamp, lats, lons, membersnum], #coords=[timestamp, lats[:,0], lons[0,:], membersnum], 
                                           dims=['time', 'latitude', 'longitude', 'number'])
                     collectsteps.append(result)
                 
@@ -588,3 +590,5 @@ class ModelClimatology(object):
 #start_batch(tmin = '2018-12-04', tmax = '2018-12-15')
 #start_batch(tmin = '2018-12-21', tmax = '2018-12-31')
 #start_batch(tmin = '2019-01-01', tmax = '2019-01-10')
+#start_batch(tmin = '2019-01-11', tmax = '2019-01-15')
+#start_batch(tmin = '2019-01-16', tmax = '2019-01-20')

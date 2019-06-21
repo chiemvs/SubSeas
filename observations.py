@@ -59,16 +59,14 @@ class SurfaceObservations(object):
         """
         import urllib3
         
-        urls = {"tg":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg/tg_0.25deg_reg_v17.0.nc.gz",
-        "tn":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg/tn_0.25deg_reg_v17.0.nc.gz",
-        "tx":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg/tx_0.25deg_reg_v17.0.nc.gz",
-        "rr":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg/rr_0.25deg_reg_v17.0.nc.gz",
-        "pp":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg/pp_0.25deg_reg_v17.0.nc.gz"}
+        urls = {"tg":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg_ensemble/tg_ens_mean_0.25deg_reg_v19.0e.nc",
+        "tn":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg_ensemble/tn_ens_mean_0.25deg_reg_v19.0e.nc",
+        "tx":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg_ensemble/tx_ens_mean_0.25deg_reg_v19.0e.nc",
+        "rr":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg_ensemble/rr_ens_mean_0.25deg_reg_v19.0e.nc",
+        "pp":"https://www.ecad.eu/download/ensembles/data/Grid_0.25deg_reg_ensemble/pp_ens_mean_0.25deg_reg_v19.0e.nc"}
         
-        zippath = self.filepath + '.gz'
-        
-        if not os.path.isfile(zippath):
-            f = open(zippath, 'wb')
+        if not os.path.isfile(self.filepath):
+            f = open(self.filepath, 'wb')
             http = urllib3.PoolManager()
             u = http.request('GET', urls[self.basevar], preload_content = False)
             filesize = int(u.info().getheaders("Content-Length")[0])
@@ -88,9 +86,6 @@ class SurfaceObservations(object):
             u.release_conn()
             f.close()
             
-        os.system("gunzip -k " + zippath) # Results in file written at filepath
-
-        
     def load(self, lazychunk = None, tmin = None, tmax = None, llcrnr = (None, None), rucrnr = (None,None)):
         """
         Loads the netcdf (possibly delimited by maxtime and corners). Corners need to be given as tuples (lat,lon)
@@ -281,12 +276,18 @@ class Climatology(object):
                         complete = complete.drop(slice_arr.time.values, dim = 'time') # remove so new minimum can be found.
                     complete = xr.concat(aggregated_slices, dim = 'time')
                     
-                    # Possible classification in the aggregated slices if the supplied obs was transformed.
+                    # Possible classification in the aggregated slices if the supplied obs was transformed, and this is not the same (pre-aggregation) transformation already present on the daily-obs.
                     try:
-                        if getattr(obs, 'newvar') != getattr(daily_obs, 'newvar'): # only there needs to be a transformation and if newvar attributes are present
-                            daily_obs.array = complete # Assign to the class.
-                            getattr(EventClassification(daily_obs),getattr(obs, 'newvar'))() # Get the classifier capable of transforming the class.
-                            complete = daily_obs.array
+                        obsnewvar = getattr(obs, 'newvar')
+                        try:
+                            dailyobsnewvar = getattr(daily_obs, 'newvar')
+                            if obsnewvar != dailyobsnewvar:
+                                raise AttributeError
+                        except AttributeError:
+                            tempobs = SurfaceObservations(basevar= obs.basevar) # Assign to the class for alteraton
+                            tempobs.array = complete
+                            getattr(EventClassification(tempobs),getattr(obs, 'newvar'))() # Get the classifier capable of transforming the class
+                            complete = tempobs.array
                     except AttributeError:
                         pass
     
@@ -384,7 +385,6 @@ class EventClassification(object):
         Substracts the climatological value for the associated day of year from the observations.
         This leads to anomalies when the climatological mean was taken. Exceedances become sorted by doy.
         The climatology object needs to have been supplied at initialization.
-        TODO: make this work per leadtime.
         """
         if not hasattr(self, 'climatology'):
             raise AttributeError('provide climatology at initialization please')

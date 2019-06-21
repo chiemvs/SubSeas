@@ -9,6 +9,7 @@ Created on Thu Feb 14 09:41:45 2019
 from scipy import optimize
 from scipy.stats import norm
 from sklearn.linear_model import LogisticRegression
+import statsmodels.formula.api as smf
 import properscoring as ps
 import numpy as np
 import pandas as pd
@@ -105,8 +106,9 @@ class Logistic(object):
     def fit(self, train):
         """
         Uses L2-loss minimization to fit a logistic model
-        Fitting fails if training set has only one category (usually happens when always dry)
+        Fitting with liblinear fails if training set has only one category (usually happens when always dry, but there are some cases of always wet).
         """
+
         clf = LogisticRegression(solver='liblinear')
         clf.fit(X = train[self.predcols[1:]], y = train[self.obscol])
             
@@ -124,3 +126,58 @@ class Logistic(object):
         
         return(exp_part/ (1 + exp_part))
 
+
+class ExponentialQuantile(object):
+    """
+    Parametric model for y = a0 + a1 * ln(x)
+    After fitting stores the parameters internally for each desired quantile
+    Prediction for a certain quantile in y uses these stored parameters
+    """
+    def __init__(self, predcol = 'leadtime', obscol = 'forecast_crpss'):
+        """
+        Possibility to chose the x and the y columns
+        """
+        self.model_coefs = ['a0','a1']
+        self.predcol = predcol
+        self.obscol = obscol
+    
+    def fit(self, train, quantiles = [0.025, 0.975], startx = None, endx = None):
+        """
+        Uses the statsmodel implementation of quantile regression. Quantile weighted least squares.
+        Possibility to only fit the exponential decay beyond a certain leadtime
+        Works on dataframe with resetted index. (i.e. leadtime as a column)
+        """
+        train = train.reset_index('leadtime')
+        if startx is not None:
+            train = train.loc[train[self.predcol] >= startx,:]
+        if endx is not None:
+            train = train.loc[train[self.predcol] <= endx,:]
+        
+        mod = smf.quantreg(self.obscol + ' ~ np.log(' + self.predcol + ')', train)
+        self.fits = pd.DataFrame(np.zeros((len(quantiles),2)), index = quantiles, columns = self.model_coefs)
+        for q in quantiles:
+            res = mod.fit(q=q)
+            self.fits.loc[q,:] = res.params.values
+    
+    def predict(self, test, quantiles = [0.025, 0.975], startx = None, endx = None, restoreindex = True):
+        """
+        Uses the coefficients that were stored as attributes in fit method.
+        Needs a dataframe with resetted index (i.e. leadtime as a column)
+        """
+        test = test.reset_index('leadtime')
+        if startx is not None:
+            test = test.loc[test[self.predcol] >= startx,:]
+        if endx is not None:
+            test = test.loc[test[self.predcol] <= endx,:]
+        mod = smf.quantreg(self.obscol + ' ~ np.log(' + self.predcol + ')', test)
+        predictions = [None] * len(quantiles)
+        for q in quantiles:
+            # Predict function of mod produces an array. Need to reconstruct the index.
+            if restoreindex:
+                prediction = pd.DataFrame({self.obscol:mod.predict(self.fits.loc[q,:]),self.predcol:test[self.predcol]}, index = test.index)
+                prediction.set_index('leadtime', append = True, inplace = True) # Prepend leadtime as an index
+            else:
+                prediction = pd.DataFrame({self.obscol:mod.predict(self.fits.loc[q,:])}, index = test[self.predcol])
+            
+            predictions[quantiles.index(q)] = prediction.drop_duplicates() # and remove duplicates
+        return(pd.concat(objs = predictions, keys = quantiles, names = ['quantile'] + prediction.index.names))

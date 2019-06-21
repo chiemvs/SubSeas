@@ -25,7 +25,7 @@ class Experiment(object):
         """
         Setting the relevant attributes. Timeaggregations are pandas frequency strings, spaceaggregations are floats in degrees.
         Quantiles can be None if you are already investigating an event variable and if you want to crps-score the whole distribution.
-        TODO: whether quantiles are present leads to many subtle differences (in scoring and executing same code multiple times) Perhaps there is a clever (decorator) way to code this.
+        But should be a multitude if these are desired.
         """
         self.resultsdir = '/nobackup/users/straaten/results/'
         self.expname = expname
@@ -41,7 +41,8 @@ class Experiment(object):
     def setuplog(self):
         """
         Load an experiment log if it is present. Otherwise create one.
-        Columns are for obsname and booksname. For climname, scorefiles and scores the amount of columns is times the amount of quantiles.
+        Columns are for obsname and booksname, and possibly the highres climatologies. 
+        For climname, scorefiles, bootstrap scores the amount of columns is times the amount of quantiles.
         """
         self.logpath = self.resultsdir + self.expname + '.h5'
         try:
@@ -49,11 +50,11 @@ class Experiment(object):
         except OSError:
             if self.quantiles is not None:
                 self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations, self.quantiles], names = ['spaceagg','timeagg','quantile']), 
-                                        columns = ['climname','scorefiles','scores'])
+                                        columns = ['climname','scorefiles','bootstrap','scores'])
                 self.log = self.log.unstack(level = -1)
             else:
                 self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations], names = ['spaceagg','timeagg']), 
-                                        columns = pd.MultiIndex.from_product([['climname','scorefiles','scores'],['']])) # Also two levels for compatibility
+                                        columns = pd.MultiIndex.from_product([['climname','scorefiles','bootstrap','scores'],['']])) # Also two levels for compatibility
             self.log = self.log.assign(**{'obsname':None,'booksname':None, 'obsclim':None,'modelclim':None}) # :''
     
     def savelog(self):
@@ -68,10 +69,12 @@ class Experiment(object):
     def iterateaggregations(self, func, column, overwrite = False, kwargs = {}):
         """
         Wrapper that calls the function with a specific spaceagg and timeagg and writes the returns of the function to the column if a name was given
+        Invokes the quantile multiplier if the desired column has multiple quantiles
         """
         for spaceagg, timeagg in itertools.product(self.spaceaggregations[::-1],self.timeaggregations[::-1]):
             if self.log.loc[(spaceagg, timeagg),column].isna().any() or overwrite:
-                f = getattr(self, func)
+                multicolumns = len(self.log.loc[(spaceagg, timeagg),column]) > 1
+                f = self.quantile_decorator(getattr(self, func), multiply= multicolumns)
                 ret = f(spaceagg, timeagg, **kwargs)
                 if (ret is not None):
                     self.log.loc[(spaceagg, timeagg),column] = ret
@@ -104,7 +107,6 @@ class Experiment(object):
         return(obs.name)
     
     def match(self, spaceagg, timeagg, loadkwargs = {}):
-
         """
         Writes the intermediate files. And returns the (possibly appended) booksname
         """
@@ -132,7 +134,7 @@ class Experiment(object):
 
         return(alignment.books_name)
     
-    def makeclim(self, spaceagg, timeagg, climtmin, climtmax, llcrnr = (25,-30), rucrnr = (75,75)):
+    def makeclim(self, spaceagg, timeagg, climtmin, climtmax, llcrnr = (25,-30), rucrnr = (75,75), quantile = ''):
         """
         Possibility to make climatologies based on a longer period than the observations,
         when climtmin and climtmax are supplied.
@@ -158,23 +160,17 @@ class Experiment(object):
         if self.newvar is not None and self.newvar != 'anom':
             getattr(EventClassification(obs), self.newvar)(inplace = True) # Only the observation needs to be transformed. Daily_obs are transformed after aggregation in local_climatology
     
-        if self.quantiles is not None:
-            climnames = np.repeat(None,len(self.quantiles))
-            for quantile in self.quantiles:
-                climatology = Climatology(self.basevar if self.newvar is None else self.basevar + '-' + self.newvar )
-                climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = quantile, daily_obs = dailyobs)
-                climatology.savelocalclim()
-                climnames[self.quantiles.index(quantile)] = climatology.name
+        climatology = Climatology(self.basevar if self.newvar is None else self.basevar + '-' + self.newvar )
+        if isinstance(quantile, float):
+            climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = quantile, daily_obs = dailyobs)
         else:
-            climatology = Climatology(self.basevar if self.newvar is None else self.basevar + '-' + self.newvar )
             if self.newvar is not None and self.newvar != 'anom': # Making a probability climatology of the binary newvar
                 climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = True, quant = None, daily_obs = dailyobs)           
             else: # Make a 'random draws' climatology.
                 climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = None, n_draws = 11, daily_obs = dailyobs)
-            climatology.savelocalclim()
-            climnames = climatology.name
+        climatology.savelocalclim()
 
-        return(climnames)
+        return(climatology.name)
     
     def makehighresmodelclim(self, spaceagg, timeagg, climtmin, climtmax, llcrnr = (None,None), rucrnr = (None,None)):
         """
@@ -210,7 +206,7 @@ class Experiment(object):
             climnames = self.log.loc[(self.spaceaggregations[-1], self.timeaggregations[-1]), ('obsclim','')]
         return(climnames)
     
-    def score(self, spaceagg, timeagg, pp_model = None):
+    def score(self, spaceagg, timeagg, pp_model = None, quantile = ''):
         """
         Read the obs and clim. make a comparison object which computes the scores in the dask dataframe. 
         This dask dataframe is exported.
@@ -220,32 +216,26 @@ class Experiment(object):
         alignment = ForecastToObsAlignment(season = self.season, cycle=self.cycle)
         alignment.recollect(booksname = self.log.loc[(spaceagg, timeagg),('booksname','')])
         
-        if self.quantiles is not None:
-            result = np.repeat(None,len(self.quantiles))
-            for quantile in self.quantiles:    
-                climatology = Climatology(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('climname', quantile)]})
-                climatology.localclim() # loading in this case. Creation was done in the makeclim method.
-                comp = Comparison(alignment = alignment, climatology = climatology)
-                # Only in the first instance we are going to fit a model. Attributes are stored in memory and joined to the comp objects for other quantiles.
-                if not pp_model is None:
-                    if self.quantiles.index(quantile) == 0:
-                        comp.fit_pp_models(pp_model= pp_model, groupers = ['leadtime','latitude','longitude'])
-                        firstfitname = comp.export(fits = True, frame = False)
-                        firstfitgroupers = comp.fitgroupers
-                        firstfitcoefcols = comp.coefcols
-                    else:
-                        comp.fits = pd.read_hdf(comp.basedir + firstfitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
-                        comp.fitgroupers = firstfitgroupers
-                        comp.coefcols = firstfitcoefcols
-                    comp.make_pp_forecast(pp_model = pp_model)
-                comp.brierscore()
-                scorefile = comp.export(fits=False, frame = True)
-    
-                result[self.quantiles.index(quantile)] = scorefile
+        climatology = Climatology(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('climname', quantile)]})
+        climatology.localclim() # loading in this case. Creation was done in the makeclim method.
+        comp = Comparison(alignment = alignment, climatology = climatology)
+                
+        if isinstance(quantile, float):
+            # Only in the first instance we are going to fit a model. Attributes are stored in memory and joined to the comp objects for other quantiles.
+            if not pp_model is None:
+                if self.quantiles.index(quantile) == 0:
+                    comp.fit_pp_models(pp_model= pp_model, groupers = ['leadtime','latitude','longitude'])
+                    firstfitname = comp.export(fits = True, frame = False)
+                    firstfitgroupers = comp.fitgroupers
+                    firstfitcoefcols = comp.coefcols
+                else:
+                    comp.fits = pd.read_hdf(comp.basedir + firstfitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
+                    comp.fitgroupers = firstfitgroupers
+                    comp.coefcols = firstfitcoefcols
+                comp.make_pp_forecast(pp_model = pp_model)
+            comp.brierscore()
+            scorefile = comp.export(fits=False, frame = True)
         else:
-            climatology = Climatology(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('climname','')]})
-            climatology.localclim()
-            comp = Comparison(alignment = alignment, climatology = climatology)
             if not pp_model is None:
                 comp.fit_pp_models(pp_model = pp_model, groupers = ['leadtime','latitude','longitude'])
                 comp.export(fits=True, frame = False)
@@ -254,31 +244,64 @@ class Experiment(object):
                 comp.crpsscore()
             else:
                 comp.brierscore()
-            result = comp.export(fits=False, frame = True)
+            scorefile = comp.export(fits=False, frame = True)
             
+        return(scorefile)
+    
+    def bootstrap_scores(self, spaceagg, timeagg, bootstrapkwargs = dict(n_samples = 200, fixsize = 60), quantile = ''):
+        """
+        Will bootstrap the scores in the scoreanalysis files and export these samples 
+        Such that these can be later analyzed in the skill function.
+        """
+        scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
+        scoreanalysis.load()
+        result = scoreanalysis.block_bootstrap_local_skills(**bootstrapkwargs)
         return(result)
     
-    def skill(self, spaceagg, timeagg):
+    def save_charlengths(self, spaceagg, timeagg, quantile = ''):
         """
-        Reads the exported file and calls upon several possible methods to compute (bootstrapped) skill scores
+        Invokes characteristic timescale computation in the ScoreAnalysis object and returns the field
         """
-        if self.quantiles is not None:
-            result = np.repeat(None,len(self.quantiles))
-            
-            for quantile in self.quantiles:    
-                scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
-                scoreanalysis.load()
-                #skillscore = scoreanalysis.bootstrap_skill_score(groupers=['leadtime'])
-                skillscore = scoreanalysis.mean_skill_score(groupers=['leadtime','latitude','longitude']) # Uses the new scoring. Apply bootstrapping later on.
-                result[self.quantiles.index(quantile)] = skillscore
+        scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
+        scoreanalysis.load()
+        scoreanalysis.characteristiclength()
+        return(scoreanalysis.charlengths)
+    
+    def skill(self, spaceagg, timeagg, usebootstrapped = False, analysiskwargs = {}, quantile = ''):
+        """
+        Reads the exported scoreanalysis file and analyses it. 
+        Standard is to compute the mean score. But when bootstrapping has been performed in the previous step
+        and when usebootstrapped is set to True then quantiles, forecast horizons, 
+        can all be computed. These options are controlled with analysiskwargs
+        """
+        scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
+        bootstrap_ready = [(spaceagg, timeagg),('bootstrap', quantile)]
+        if usebootstrapped and bootstrap_ready:
+            skillscore = scoreanalysis.process_bootstrapped_skills(**analysiskwargs)
         else:
-            result = np.repeat(None,1)
-            scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', '')], timeagg = timeagg)
+            print('mean scoring')
             scoreanalysis.load()
-            #result[0] = scoreanalysis.mean_skill_score()
-            result[0] = scoreanalysis.block_bootstrap_local_skills(n_samples = 200)
-        return(result)
+            skillscore = scoreanalysis.mean_skill_score(**analysiskwargs)
+            
+        return(skillscore)
         
+    def quantile_decorator(self, f, multiply = False):
+        """
+        Multiplying the returns with the amount of desired quantiles. And supplying this quantile to the function.
+        Always making sure that an array is returned which is easily written to the pandas log
+        """
+        def wrapped(*args, **kwargs):
+            if multiply:
+                res = np.repeat(None,len(self.quantiles))
+                for quantile in self.quantiles:
+                    res[self.quantiles.index(quantile)] = f(*args, **kwargs, quantile = quantile)
+                return(res)
+            else:
+                res = np.repeat(None,1)
+                res[0] = f(*args, **kwargs)
+                return(res)
+        return(wrapped)
+
 
 """
 Max temperature benchmarks.
@@ -374,12 +397,15 @@ Experiment 4 setup. Western europe only. Same climatology period.
 Experiment 5 setup Probability of Precipitation.
 """
 #self = Experiment(expname = 'test5', basevar = 'rr', newvar = 'pop', cycle = '41r1', season = 'DJF', method = 'mean', 
-#                   timeaggregations = ['7D'], spaceaggregations = [0.25], quantiles = None)
+#                   timeaggregations = ['7D'], spaceaggregations = [3], quantiles = None)
 #self.setuplog()
-#self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '2000-01-01',tmax = '2000-02-10'))
-#self.iterateaggregations(func = 'match', column = 'booksname')
-#self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = {'climtmin':'1990-01-01','climtmax':'2000-02-28'})
-#self.iterateaggregations(func = 'score', columns = 'scorefiles', kwargs = {'pp_model':Logistic()})
+#self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-02-10',  llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '2000-01-01', climtmax = '2010-02-10', llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic()})
+#self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = True)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime'])})
 
 """
 Experiment 6 anomalies test for western Europe
@@ -393,7 +419,9 @@ Experiment 6 anomalies test for western Europe
 #self.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
 #self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
 #self.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform = True)})
-#self.iterateaggregations(func = 'skill', column = 'scores')
+#self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = True)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
+#t = pd.concat(self.log['scores'].tolist(), keys = self.log.index, names=['spaceagg','timeagg'])
 
 """
 Experiment 7 Maximum temperature for western Europe
@@ -412,7 +440,7 @@ Experiment 7 Maximum temperature for western Europe
 Experiment 8 anomalies maximum temperatures test for western Europe
 """
 #test8 = Experiment(expname = 'westtxa8', basevar = 'tx', newvar = 'anom', cycle = '41r1', season = 'JJA', method = 'max', 
-#                   timeaggregations = ['1D','2D','3D','4D'], spaceaggregations = [0.25,0.75,1.25,2], quantiles = None)
+#                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25,0.75,1.25,2,3], quantiles = None)
 #test8.setuplog()
 #test8.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
 #test8.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
@@ -420,4 +448,20 @@ Experiment 8 anomalies maximum temperatures test for western Europe
 #test8.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-11', llcrnr = (45,0), rucrnr = (55,6)))
 #test8.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
 #test8.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform = True)})
-#test8.iterateaggregations(func = 'skill', column = 'scores')
+#test8.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = 60)})
+#test8.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.4, average_afterwards = True)})
+#test8.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = False, fitquantiles = False, forecast_horizon = False)})
+"""
+Europe wide highres characteristic timescales
+"""
+# Would there be a difference between the characteristic timescales of the anomalies and of the regular values? The first have removed seasonality?
+# Do this through the created scorefiles at high resolution. No post-processing.
+#test9 = Experiment(expname = 'chartimescale', basevar = 'tg', cycle = '41r1', season = 'DJF', method = 'mean', 
+#                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25], quantiles = None) # 
+#test9.setuplog()
+#test9.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01', tmax = None, llcrnr = (None,-30), rucrnr = (None,48)))
+#test9.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '1999-01-11', llcrnr = (None,-30), rucrnr = (None,48))) 
+#test9.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (None,-30), rucrnr = (None,48))})
+#test9.iterateaggregations(func = 'score', column = 'scorefiles')
+#test9.log['charlengths'] = None
+#test9.iterateaggregations(func = 'save_charlengths', column = 'charlengths')

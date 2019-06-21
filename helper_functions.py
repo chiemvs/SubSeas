@@ -191,3 +191,42 @@ def auto_cor(df, column, cutofflag = 15, return_lag_last_abovezero = False, retu
         return(((1 - np.arange(1, cutofflag + 1)/cutofflag) * res * 2).sum() + 1)
     else:
         return(res)
+
+def lastconsecutiveabove(series, threshold = 0):
+    """
+    Provides the leadtime index of the last positive value in the first consecutively positive series
+    So input is a multi-index pandas series (of which one level is the leadtime index)
+    Returns a float or integer.
+    """
+    gtzero = series.gt(threshold)
+    leadtimeindexlevel = series.index.names.index('leadtime')
+    if not gtzero.iloc[0]:
+        leadtime = 0
+    elif gtzero.all():
+        leadtime = gtzero.index.get_level_values(level = leadtimeindexlevel)[-1]
+    else:
+        tupfirst = gtzero.idxmin()
+        locfirst = gtzero.index.get_loc(tupfirst)
+        tup = gtzero.index.get_values()[locfirst - 1]
+        if isinstance(tup, tuple):
+            leadtime = tup[leadtimeindexlevel]
+        else: # In this case we actually didn't have a multi-index.
+            leadtime = tup
+    return(leadtime)
+
+def assignmidpointleadtime(frame, timeagg = None):
+    """
+    To correct the leadtime index for the fact that leadtime was assigned to the first day.
+    Now we assign it to the midpoint of the temporal aggregation. Acts on groupedby timeagg.
+    Or on a unique frame and with the string timeagg supplied.
+    """
+    temp = frame.reset_index()
+    pos_uncor_indices = ['spaceagg','latitude','longitude','quantile']
+    try:
+        midpointday = (int(temp['timeagg'].values[0][0]) - 1) / 2
+    except KeyError:
+        midpointday = (int(timeagg[0]) - 1) / 2
+    print(midpointday)
+    correctedleadtimes = temp['leadtime'].values + midpointday
+    frame.index = pd.MultiIndex.from_arrays([temp[i].values for i in pos_uncor_indices if (i in temp.columns)] + [correctedleadtimes], names = [i for i in pos_uncor_indices if (i in temp.columns)] + ['leadtime'])
+    return(frame)
