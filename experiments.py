@@ -426,15 +426,15 @@ Experiment 6 anomalies test for western Europe
 """
 Experiment 7 Maximum temperature for western Europe
 """
-#
+
 #test7 = Experiment(expname = 'westtx7', basevar = 'tx', cycle = '41r1', season = 'JJA', method = 'max',
-#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25], quantiles = None)
+#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25,0.75,1.25,2,3], quantiles = None)
 #test7.setuplog()
 #test7.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
 #test7.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-10', llcrnr = (45,0), rucrnr = (55,6)))
 #test7.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
 #test7.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
-#test7.iterateaggregations(func = 'skill', column = 'scores', overwrite = True)
+#test7.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
 
 """
 Experiment 8 anomalies maximum temperatures test for western Europe

@@ -31,8 +31,8 @@ for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.002, 'add_off
                    'doy': {'dtype': 'int16'},
                    'leadtime': {'dtype': 'int16'}}
 
-model_cycles = pd.DataFrame(data = {'firstday':pd.to_datetime(['2015-05-12','2016-03-08','2016-11-22','2017-07-11','2018-06-05','']),
-                             'lastday':pd.to_datetime(['2016-03-07','2016-11-21','2017-07-10','2018-06-04','2019-06-30','']),
+model_cycles = pd.DataFrame(data = {'firstday':pd.to_datetime(['2015-05-12','2016-03-08','2016-11-22','2017-07-11','2018-06-05','2019-06-11']),
+                             'lastday':pd.to_datetime(['2016-03-07','2016-11-21','2017-07-10','2018-06-04','2019-06-10','']),
                              'cycle':['41r1','41r2','43r1','43r3','45r1','46r1'],
                              'stepbeforeresswitch':[240,360,360,360,360,360]})
 
@@ -580,15 +580,3 @@ class ModelClimatology(object):
 #self.local_clim(tmin = '2000-01-01',tmax = '2001-01-21', timemethod = '1D', daysbefore = 3, daysafter = 3)
 
 #start_batch(tmin = '2018-08-02', tmax = '2018-08-08')
-#start_batch(tmin = '2018-08-13', tmax = '2018-08-31')
-#start_batch(tmin = '2018-06-05', tmax = '2018-07-31')
-#start_batch(tmin = '2018-11-01', tmax = '2018-11-05')
-#start_batch(tmin = '2018-11-06', tmax = '2018-11-11')
-#start_batch(tmin = '2018-11-12', tmax = '2018-11-18')
-#start_batch(tmin = '2018-11-19', tmax = '2018-11-22')
-#start_batch(tmin = '2018-12-20', tmax = '2018-12-20')
-#start_batch(tmin = '2018-12-04', tmax = '2018-12-15')
-#start_batch(tmin = '2018-12-21', tmax = '2018-12-31')
-#start_batch(tmin = '2019-01-01', tmax = '2019-01-10')
-#start_batch(tmin = '2019-01-11', tmax = '2019-01-15')
-#start_batch(tmin = '2019-01-16', tmax = '2019-01-20')
