@@ -134,7 +134,7 @@ class SurfaceObservations(object):
         
         self.array = self.array.where(seasononly.count('time') >= n_seasons * n_min_per_seas, np.nan)
         
-    def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = False):
+    def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = False, rolling = False):
         """
         Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
         In the case of degree grouping the groups might not contain an equal number of cells.
@@ -147,7 +147,7 @@ class SurfaceObservations(object):
         self.array, self.spacemethod = agg_space(array = self.array, 
                                                  orlats = self.array.latitude.load(),
                                                  orlons = self.array.longitude.load(),
-                                                 step = step, method = method, by_degree = by_degree, skipna = skipna)
+                                                 step = step, method = method, by_degree = by_degree, skipna = skipna, rolling = rolling)
     
     def aggregatetime(self, freq = 'w' , method = 'mean'):
         """

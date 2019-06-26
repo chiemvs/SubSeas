@@ -451,6 +451,7 @@ Experiment 8 anomalies maximum temperatures test for western Europe
 #test8.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = 60)})
 #test8.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.4, average_afterwards = True)})
 #test8.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = False, fitquantiles = False, forecast_horizon = False)})
+
 """
 Europe wide highres characteristic timescales
 """
@@ -465,3 +466,32 @@ Europe wide highres characteristic timescales
 #test9.iterateaggregations(func = 'score', column = 'scorefiles')
 #test9.log['charlengths'] = None
 #test9.iterateaggregations(func = 'save_charlengths', column = 'charlengths')
+
+"""
+Experiment 10 Mean summer temperature for western Europe
+"""
+
+#test10 = Experiment(expname = 'westtg10', basevar = 'tg', cycle = '41r1', season = 'JJA', method = 'mean',
+#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25,0.75,1.25,2,3], quantiles = None)
+#test10.setuplog()
+#test10.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test10.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test10.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#test10.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
+#test10.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = 60)})
+#test10.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
+
+"""
+Experiment 11 Mean summer temperatures anomalies for western Europe
+"""
+#test11 = Experiment(expname = 'westtga11', basevar = 'tg', newvar = 'anom', cycle = '41r1', season = 'JJA', method = 'mean', 
+#                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25,0.75,1.25,2,3], quantiles = None)
+#test11.setuplog()
+#test11.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test11.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test11.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test11.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test11.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#test11.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform = True)})
+#test11.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = 60)})
+#test11.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.4, average_afterwards = True)})
