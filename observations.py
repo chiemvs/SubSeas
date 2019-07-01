@@ -149,7 +149,7 @@ class SurfaceObservations(object):
                                                  orlons = self.array.longitude.load(),
                                                  step = step, method = method, by_degree = by_degree, skipna = skipna, rolling = rolling)
     
-    def aggregatetime(self, freq = 'w' , method = 'mean'):
+    def aggregatetime(self, freq = '7D' , method = 'mean', rolling = False):
         """
         Uses the pandas frequency indicators. Method can be mean, min, max, std
         Completely lazy when loading is lazy.
@@ -158,7 +158,7 @@ class SurfaceObservations(object):
         if not hasattr(self, 'array'):
             self.load(lazychunk = {'time': 365})
         
-        self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
+        self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, rolling = rolling)
 
         # To access days of week: self.array.time.dt.timeofday
         # Also possible is self.array.time.dt.floor('D')
@@ -216,7 +216,7 @@ class Climatology(object):
         It can also compute a quantile on a continuous variables. Returns fields of this for all supplied day-of-year (doy) and space.
         Daysbefore and daysafter are inclusive.
         For non-daily aggregations the procedure is the same, as the climatology needs to be still derived from daily values. 
-        Therefore the amount of aggregated dats is inferred.
+        Therefore the amount of aggregated dats is inferred from the timemethod frequency.
         For event-based variables: the obs should have the transformation already. 
         The daily obs should have the original continuous variable (only space aggregated) and is transformed here 
         """
@@ -242,13 +242,13 @@ class Climatology(object):
             self.clim = xr.open_dataarray(self.filepath)
             print('climatology directly loaded')
         except OSError:
-            self.ndayagg = (obs.array.time.values[1] - obs.array.time.values[0]).astype('timedelta64[D]').item().days
+            self.ndayagg = int(pd.date_range('2000-01-01','2000-12-31', freq = obs.timemethod.split('-')[0]).to_series().diff().dt.days.mode())
         
             if quant is not None:
                 from helper_functions import nanquantile
             
             if (self.ndayagg > 1):
-                freq, method = obs.timemethod.split('-')
+                freq, rolling, method = obs.timemethod.split('-')
                 doygroups = daily_obs.array.groupby('time.dayofyear')
             else:
                 doygroups = obs.array.groupby('time.dayofyear')
@@ -265,14 +265,14 @@ class Climatology(object):
                 window[ window > maxday ] -= maxday
                 
                 complete = xr.concat([doygroups[str(key)] for key in window if str(key) in doygroups.keys()], dim = 'time')
-                # Call for the same aggregation on the daily complete by slicing up each past sequence of our doy-window, and progressively removing them from the complete set, such that the minimum time can be used for each slice. 
+                # Call for the same aggregation on the daily complete by slicing up each past sequence of our doy-window, and progressively removing them from the complete set, such that the minimum time can be used for each slice. However, the aggregation is always non-rolling even though obs might be.
                 if (self.ndayagg > 1):
                     aggregated_slices = []
                     while len(complete.time) > 0:
                         slice_tmin = complete.time.min().values
                         print(slice_tmin)
                         slice_arr = complete.sortby('time').sel(time = slice(str(slice_tmin), str(slice_tmin + np.timedelta64(len(window), 'D')))) # Soft searching method. Based on the minimum found in the set. Does not crash if certain doys are less present (like 366)
-                        aggregated_slices.append(agg_time(array = slice_arr, freq = freq, method = method, ndayagg = self.ndayagg)[0]) # [0] for only the returned array. not the timemethod             
+                        aggregated_slices.append(agg_time(array = slice_arr, freq = freq, method = method, ndayagg = self.ndayagg, rolling = False)[0]) # [0] for only the returned array. not the timemethod             
                         complete = complete.drop(slice_arr.time.values, dim = 'time') # remove so new minimum can be found.
                     complete = xr.concat(aggregated_slices, dim = 'time')
                     

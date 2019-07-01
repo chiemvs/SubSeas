@@ -255,7 +255,7 @@ class Forecast(object):
         self.spacemethod = '0.38-degrees'
         self.basevar = variable
         
-    def aggregatetime(self, freq = 'w' , method = 'mean', ndayagg = None, keep_leadtime = False):
+    def aggregatetime(self, freq = '7D' , method = 'mean', ndayagg = None, rolling = False, keep_leadtime = False):
         """
         Uses the pandas frequency indicators. Method can be mean, min, max, std
         Completely lazy when loading is lazy. Array needs to be already loaded because of variable choice.
@@ -265,14 +265,21 @@ class Forecast(object):
         if keep_leadtime:
             leadtimes = self.array.coords['leadtime']
             if ndayagg is None:
-                self.array, self.timemethod, ndayagg = agg_time(array = self.array, freq = freq, method = method, returnndayagg = True)
+                self.array, self.timemethod, ndayagg = agg_time(array = self.array, freq = freq, method = method, rolling = rolling, returnndayagg = True)
             else:
-                self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, ndayagg = ndayagg)
-            self.array.coords.update({'leadtime':leadtimes[slice(0,None,ndayagg)]})
+                self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, rolling = rolling, ndayagg = ndayagg)
+            if rolling:
+                self.array.coords.update({'leadtime':leadtimes[slice(0,-(ndayagg - 1),None)]}) # Inclusive slicing. For 7day aggregation and max leadtime 46 the last one will be 40.
+            else:
+                self.array.coords.update({'leadtime':leadtimes[slice(0,None,ndayagg)]})
         else:
-            self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, ndayagg = ndayagg)
+            self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, rolling = rolling, ndayagg = ndayagg)
+            try:
+                self.array = self.array.drop('leadtime')
+            except ValueError:
+                pass
     
-    def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = True):
+    def aggregatespace(self, step, method = 'mean', by_degree = False, rolling = False, skipna = True):
         """
         Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
         In the case of degree grouping the groups might not contain an equal number of cells.
@@ -284,7 +291,7 @@ class Forecast(object):
         self.array, self.spacemethod = agg_space(array = self.array, 
                                                  orlats = self.array.latitude.load(),
                                                  orlons = self.array.longitude.load(),
-                                                 step = step, method = method, by_degree = by_degree, skipna = skipna)
+                                                 step = step, method = method, by_degree = by_degree, rolling = rolling, skipna = skipna)
     
         
 class Hindcast(object):
@@ -480,8 +487,7 @@ class ModelClimatology(object):
             self.clim = xr.open_dataarray(self.filepath)
             print('climatology directly loaded')
         except OSError:
-            self.time_agg = int(timemethod[0]) # Will not work for '1W' Alternative is to infer from data
-            # self.time_agg = int(self.dates.diff().dt.days.mode())
+            self.time_agg = int(pd.date_range('2000-01-01','2000-12-31', freq = timemethod.split('-')[0]).to_series().diff().dt.days.mode())
             
             eval_time_axis = pd.date_range(self.tmin, self.tmax, freq = 'D')
             
@@ -543,8 +549,8 @@ class ModelClimatology(object):
                         forecasts[0].load(self.var, tmin = overlap.min(), tmax = overlap.max(), n_members = n_members, **loadkwargs)
                         # Aggregate. What to do with leadtime? Assigned to first day as this is also done in the matching.
                         if forecasts[0].timemethod != self.timemethod:
-                            freq, method = self.timemethod.split('-')
-                            forecasts[0].aggregatetime(freq = freq, method = method, ndayagg = self.time_agg, keep_leadtime = True) # Array becomes empty when overlap loaded is less than the time aggregation.
+                            freq, rolling, method = self.timemethod.split('-')
+                            forecasts[0].aggregatetime(freq = freq, method = method, ndayagg = self.time_agg, rolling = False, keep_leadtime = True) # Array becomes empty when overlap loaded is less than the time aggregation.
                             print('aligned time')
                             
                         forecast_collection.append(forecasts[0].array)
@@ -579,4 +585,6 @@ class ModelClimatology(object):
 #self = ModelClimatology('41r1', 'tg')
 #self.local_clim(tmin = '2000-01-01',tmax = '2001-01-21', timemethod = '1D', daysbefore = 3, daysafter = 3)
 
-#start_batch(tmin = '2018-08-02', tmax = '2018-08-08')
+#start_batch(tmin = '2019-02-19', tmax = '2019-02-21')
+#start_batch(tmin = '2019-02-28', tmax = '2019-02-28')
+#start_batch(tmin = '2019-02-25', tmax = '2019-02-28')

@@ -88,17 +88,21 @@ def agg_space(array, orlats, orlons, step, skipna = False, method = 'mean', by_d
         # Approach of rolling first along one dimension then along the other spatial one. (Will slightly affect the weighting of values near coastlines as we have non-equal group-sizes)
         # For even nr of cells stepsizes the rolling operator takes [i-1, i] for 2 and [i-2, i-1, i, i+1] for 4 
         if by_degree:
-            original_size = np.diff(orlats)[int(len(orlats)/2)]
+            original_size = np.diff(orlons)[int(len(orlons)/2)]
             cellstep = int(step // original_size) # conversion of degree step to step of ncells which are completely contained in the degree window.
         else:
-            cellstep = step
+            cellstep = int(step)
             
-        if step <= 1:
+        if cellstep <= 1:
             raise ValueError('Stepsize in rolling aggregation should contain more than one cell, for by degree this means fully containing')
-            
+        
+        attrs = array.attrs
+        name = array.name
         f1 = getattr(array.rolling(dim = {'latitude':cellstep}, min_periods = int(np.ceil((1 - maxnafrac) * cellstep)), center = True), method)
         f2 = getattr(f1().rolling(dim = {'longitude':cellstep}, min_periods = int(np.ceil((1 - maxnafrac) * cellstep)), center = True), method)
         array = f2()
+        array.attrs = attrs
+        array.name = name
         # Other approaches, based on multi-dimensional array methods:
         #from scipy.ndimage.filters import generic_filter
         #f = getattr(np, 'nan'+method)
@@ -149,21 +153,37 @@ def agg_space(array, orlats, orlons, step, skipna = False, method = 'mean', by_d
     spacemethod = '-'.join([str(step), char_degree, char_rol, method])
     return(array, spacemethod)
 
-def agg_time(array, freq = 'w', method = 'mean', ndayagg = None, returnndayagg = False):
+def agg_time(array, freq = 'w', method = 'mean', ndayagg = None, returnndayagg = False, rolling = False):
     """
     Assumes an input array with a regularly spaced daily time index. Uses the pandas frequency indicators. Method can be mean, min, max, std
     Completely lazy when loading is lazy. Returns an adapted array and a timemethod string for documentation.
     Skipna is false so no non-observations within the period allowed.
     Returns array with the last (incomplete) interval removed if the input length is not perfectly divisible.
     """
-    input_length = len(array.time)
-    f = getattr(array.resample(time = freq, closed = 'left', label = 'left'), method) # timestamp is left and can be changed with label = 'right'
-    array = f('time', keep_attrs=True, skipna = False)
-    if ndayagg is None:
-        ndayagg = (array.time.values[1] - array.time.values[0]).astype('timedelta64[D]').item().days # infer the interval length.
-    timemethod = '-'.join([freq,method])
-    if (input_length % ndayagg) != 0:
-        array = array.isel(time = slice(0,-1,None))
+    if rolling:
+        if ndayagg is None:
+            # Translate the frequency to a number of days window.
+            ndayagg = int(pd.date_range('2000-01-01','2000-12-31', freq = freq).to_series().diff().dt.days.mode())
+        
+        name = array.name
+        attrs = array.attrs
+        f = getattr(array.rolling({'time':ndayagg}, center = False), method) # Stamped right
+        array = f()
+        # Left timestamping, and keeping the attributes
+        array = array.assign_coords(time = array.time - pd.Timedelta(str(ndayagg - 1) + 'D'))
+        array.name = name
+        array.attrs = attrs
+        
+    else:
+        input_length = len(array.time)
+        f = getattr(array.resample(time = freq, closed = 'left', label = 'left'), method) # timestamp is left and can be changed with label = 'right'
+        array = f('time', keep_attrs=True, skipna = False)
+        if ndayagg is None:
+            ndayagg = (array.time.values[1] - array.time.values[0]).astype('timedelta64[D]').item().days # infer the interval length.
+        if (input_length % ndayagg) != 0:
+            array = array.isel(time = slice(0,-1,None))
+    
+    timemethod = '-'.join([freq,'roll',method]) if rolling else '-'.join([freq,'norm',method]) 
     if returnndayagg:
         return(array, timemethod, ndayagg)
     else:    

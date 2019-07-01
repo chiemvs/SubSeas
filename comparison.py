@@ -37,7 +37,8 @@ class ForecastToObsAlignment(object):
             self.dates = self.obs.array.coords['time'].to_series() # Left stamped
             self.dates = self.dates[monthtoseasonlookup(self.dates.index.month) == self.season]
             # infer dominant time aggregation in days
-            self.time_agg = int(self.dates.diff().dt.days.mode())
+            timefreq = self.obs.timemethod.split('-')[0]
+            self.time_agg = int(pd.date_range('2000-01-01','2000-12-31', freq = timefreq).to_series().diff().dt.days.mode())
             self.maxleadtime = 46
         
         for key in kwds.keys():
@@ -81,8 +82,8 @@ class ForecastToObsAlignment(object):
      
     def force_resolution(self, forecast, time = True, space = True):
         """
-        Force the observed resolution onto the supplied Forecast. Checks if the same resolution and force spatial/temporal aggregation if that is not the case.
-        Makes use of the methods of each Forecast class. Checks can be switched on and off.
+        Force the observed resolution onto the supplied Forecast. Checks if the same resolution and force spatial/temporal aggregation if that is not the case. Checks will fail on the roll-norm difference, e.g. 2D-roll-mean observations and .
+        Makes use of the methods of each Forecast class. Checks can be switched on and off. Time-rolling is never applied to the forecasts as for each date already the precise window was loaded, but space-rolling is.
         """                
         if time:
             # Check time aggregation
@@ -96,8 +97,8 @@ class ForecastToObsAlignment(object):
                     print('Time already aligned')
             except AttributeError:
                 print('Aligning time aggregation')
-                freq, method = obstimemethod.split('-')
-                forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True, ndayagg = self.time_agg)
+                freq, rolling, method = obstimemethod.split('-')
+                forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True, ndayagg = self.time_agg, rolling = False)
         
         if space:
             # Check space aggregation
@@ -111,8 +112,8 @@ class ForecastToObsAlignment(object):
                     print('Space already aligned')
             except AttributeError:
                 print('Aligning space aggregation')
-                step, what, method = obsspacemethod.split('-')
-                forecast.aggregatespace(step = float(step), method = method, by_degree = (what == 'degrees'))
+                step, what, rolling, method = obsspacemethod.split('-')
+                forecast.aggregatespace(step = float(step), method = method, by_degree = (what == 'degrees'), rolling = (rolling == 'roll'))
     
     def force_units(self, forecast):
         """
