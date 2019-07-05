@@ -498,14 +498,27 @@ Experiment 11 Mean summer temperatures anomalies for western Europe
 #test11.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.15, average_afterwards = True)})
 
 """
-Experiment 12 Rolling mean summer temperature. No post-processing, as all remain at the highest resolution.
+Experiment 12 Rolling mean summer temperature. No post-processing, as all remain at the highest resolution. 0.8 degree resolution such that rolling of forecast contains two cells of 0.38
 """
-self = Experiment(expname = 'westtg12', basevar = 'tg', rolling = True, cycle = '41r1', season = 'JJA', method = 'mean', 
-                  timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25,0.75,1.25,2,3], quantiles = None)
+#self = Experiment(expname = 'westtg12', basevar = 'tg', rolling = True, cycle = '41r1', season = 'JJA', method = 'mean', 
+#                  timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25,0.8,1.25,2,3], quantiles = None)
+#self.setuplog()
+#self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#self.iterateaggregations(func = 'score', column = 'scorefiles')
+#self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.15, average_afterwards = True)})
+
+"""
+Experiment 13 Rolling max summer rainfall. Bit of post-processing, as all remain at the highest resolution. 0.8 degree resolution such that rolling of forecast contains two cells of 0.38
+"""
+self = Experiment(expname = 'westrr13', basevar = 'rr', newvar = 'pod', rolling = True, cycle = '41r1', season = 'JJA', method = 'max', 
+                  timeaggregations = ['1D','5D'], spaceaggregations = [0.25], quantiles = None)
 self.setuplog()
 self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
 self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
 self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
-self.iterateaggregations(func = 'score', column = 'scorefiles')
-self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.15, average_afterwards = True)})
+self.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic()})
+#self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+self.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})

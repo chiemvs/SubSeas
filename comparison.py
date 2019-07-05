@@ -193,7 +193,7 @@ class ForecastToObsAlignment(object):
                             self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = True) # If newvar is anomaly then first new variable and then aggregation. If e.g. newvar is pop then first aggregation then transformation
                             self.force_resolution(forecast, time = matchtime, space = matchspace)
                             forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
-                        elif self.obs.newvar == 'pop': # This could even be some sort of 'binary newvariable' criterion.
+                        elif self.obs.newvar in ['pop','pod']: # This could even be some sort of 'binary newvariable' criterion.
                             self.force_resolution(forecast, time = matchtime, space = matchspace)
                             forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
                             try:

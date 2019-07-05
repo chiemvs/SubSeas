@@ -159,6 +159,7 @@ def agg_time(array, freq = 'w', method = 'mean', ndayagg = None, returnndayagg =
     Completely lazy when loading is lazy. Returns an adapted array and a timemethod string for documentation.
     Skipna is false so no non-observations within the period allowed.
     Returns array with the last (incomplete) interval removed if the input length is not perfectly divisible.
+    For rolling the first incomplete fields (that lie previous in time) are also removed.
     """
     if rolling:
         if ndayagg is None:
@@ -170,7 +171,7 @@ def agg_time(array, freq = 'w', method = 'mean', ndayagg = None, returnndayagg =
         f = getattr(array.rolling({'time':ndayagg}, center = False), method) # Stamped right
         array = f()
         # Left timestamping, and keeping the attributes
-        array = array.assign_coords(time = array.time - pd.Timedelta(str(ndayagg - 1) + 'D'))
+        array = array.assign_coords(time = array.time - pd.Timedelta(str(ndayagg - 1) + 'D')).isel(time = slice(ndayagg - 1, None))
         array.name = name
         array.attrs = attrs
         
