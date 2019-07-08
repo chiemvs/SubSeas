@@ -508,17 +508,33 @@ Experiment 12 Rolling mean summer temperature. No post-processing, as all remain
 #self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
 #self.iterateaggregations(func = 'score', column = 'scorefiles')
 #self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.15, average_afterwards = True)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = False, fitquantiles = False, forecast_horizon = False)})
 
 """
 Experiment 13 Rolling max summer rainfall. Bit of post-processing, as all remain at the highest resolution. 0.8 degree resolution such that rolling of forecast contains two cells of 0.38
 """
-self = Experiment(expname = 'westrr13', basevar = 'rr', newvar = 'pod', rolling = True, cycle = '41r1', season = 'JJA', method = 'max', 
-                  timeaggregations = ['1D','5D'], spaceaggregations = [0.25], quantiles = None)
-self.setuplog()
-self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
-self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
-self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
-self.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic()})
+#self = Experiment(expname = 'westrr13', basevar = 'rr', newvar = 'pod', rolling = True, cycle = '41r1', season = 'JJA', method = 'max', 
+#                  timeaggregations = ['1D','5D'], spaceaggregations = [0.25], quantiles = None)
+#self.setuplog()
+#self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#self.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic()})
 #self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-self.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime'])})
+
+"""
+Test 13 West Europe test of rolling highres characteristic timescales, to see if these are different from ones in exp 9
+"""
+# Would there be a difference between the characteristic timescales of the anomalies and of the regular values? The first have removed seasonality?
+# Do this through the created scorefiles at high resolution. No post-processing.
+test13 = Experiment(expname = 'chartimeroll', basevar = 'tg', rolling = True, cycle = '41r1', season = 'DJF', method = 'mean', 
+                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25], quantiles = None) # 
+test13.setuplog()
+test13.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-02', tmax = None, llcrnr = (45,0), rucrnr = (55,6)))
+test13.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '1999-01-02', llcrnr = (45,0), rucrnr = (55,6))) 
+test13.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (45,0), rucrnr = (55,6))})
+test13.iterateaggregations(func = 'score', column = 'scorefiles')
+test13.log['charlengths'] = None
+test13.iterateaggregations(func = 'save_charlengths', column = 'charlengths')
+
