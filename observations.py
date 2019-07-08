@@ -14,6 +14,7 @@ obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValu
                    'tx-anom': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'tg-anom': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'rr-pop': {'dtype': 'int16', 'scale_factor': 0.0001, '_FillValue': -32767},
+                   'rr-pod': {'dtype': 'int16', 'scale_factor': 0.0001, '_FillValue': -32767},
                    'time': {'dtype': 'int64'},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
@@ -134,7 +135,7 @@ class SurfaceObservations(object):
         
         self.array = self.array.where(seasononly.count('time') >= n_seasons * n_min_per_seas, np.nan)
         
-    def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = False):
+    def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = False, rolling = False):
         """
         Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
         In the case of degree grouping the groups might not contain an equal number of cells.
@@ -147,9 +148,9 @@ class SurfaceObservations(object):
         self.array, self.spacemethod = agg_space(array = self.array, 
                                                  orlats = self.array.latitude.load(),
                                                  orlons = self.array.longitude.load(),
-                                                 step = step, method = method, by_degree = by_degree, skipna = skipna)
+                                                 step = step, method = method, by_degree = by_degree, skipna = skipna, rolling = rolling)
     
-    def aggregatetime(self, freq = 'w' , method = 'mean'):
+    def aggregatetime(self, freq = '7D' , method = 'mean', rolling = False):
         """
         Uses the pandas frequency indicators. Method can be mean, min, max, std
         Completely lazy when loading is lazy.
@@ -158,7 +159,7 @@ class SurfaceObservations(object):
         if not hasattr(self, 'array'):
             self.load(lazychunk = {'time': 365})
         
-        self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method)
+        self.array, self.timemethod = agg_time(array = self.array, freq = freq, method = method, rolling = rolling)
 
         # To access days of week: self.array.time.dt.timeofday
         # Also possible is self.array.time.dt.floor('D')
@@ -216,7 +217,7 @@ class Climatology(object):
         It can also compute a quantile on a continuous variables. Returns fields of this for all supplied day-of-year (doy) and space.
         Daysbefore and daysafter are inclusive.
         For non-daily aggregations the procedure is the same, as the climatology needs to be still derived from daily values. 
-        Therefore the amount of aggregated dats is inferred.
+        Therefore the amount of aggregated dats is inferred from the timemethod frequency. And also if rolling needs to take place. (rolling obs gives rolling time agg in the doy windows)
         For event-based variables: the obs should have the transformation already. 
         The daily obs should have the original continuous variable (only space aggregated) and is transformed here 
         """
@@ -242,13 +243,13 @@ class Climatology(object):
             self.clim = xr.open_dataarray(self.filepath)
             print('climatology directly loaded')
         except OSError:
-            self.ndayagg = (obs.array.time.values[1] - obs.array.time.values[0]).astype('timedelta64[D]').item().days
+            self.ndayagg = int(pd.date_range('2000-01-01','2000-12-31', freq = obs.timemethod.split('-')[0]).to_series().diff().dt.days.mode())
         
             if quant is not None:
                 from helper_functions import nanquantile
             
             if (self.ndayagg > 1):
-                freq, method = obs.timemethod.split('-')
+                freq, rolling, method = obs.timemethod.split('-')
                 doygroups = daily_obs.array.groupby('time.dayofyear')
             else:
                 doygroups = obs.array.groupby('time.dayofyear')
@@ -265,14 +266,15 @@ class Climatology(object):
                 window[ window > maxday ] -= maxday
                 
                 complete = xr.concat([doygroups[str(key)] for key in window if str(key) in doygroups.keys()], dim = 'time')
-                # Call for the same aggregation on the daily complete by slicing up each past sequence of our doy-window, and progressively removing them from the complete set, such that the minimum time can be used for each slice. 
+                # Call for the same aggregation on the daily complete by slicing up each past sequence of our doy-window, and progressively removing them from the complete set, such that the minimum time can be used for each slice. However, the aggregation is always non-rolling even though obs might be.
                 if (self.ndayagg > 1):
                     aggregated_slices = []
                     while len(complete.time) > 0:
                         slice_tmin = complete.time.min().values
                         print(slice_tmin)
                         slice_arr = complete.sortby('time').sel(time = slice(str(slice_tmin), str(slice_tmin + np.timedelta64(len(window), 'D')))) # Soft searching method. Based on the minimum found in the set. Does not crash if certain doys are less present (like 366)
-                        aggregated_slices.append(agg_time(array = slice_arr, freq = freq, method = method, ndayagg = self.ndayagg)[0]) # [0] for only the returned array. not the timemethod             
+                        if len(slice_arr.time) >= self.ndayagg:
+                            aggregated_slices.append(agg_time(array = slice_arr, freq = freq, method = method, ndayagg = self.ndayagg, rolling = (rolling == 'roll'))[0]) # [0] for only the returned array. not the timemethod             
                         complete = complete.drop(slice_arr.time.values, dim = 'time') # remove so new minimum can be found.
                     complete = xr.concat(aggregated_slices, dim = 'time')
                     
@@ -367,7 +369,27 @@ class EventClassification(object):
             self.obs.newvar = 'pop'
         else:
             return(result)
-    
+
+    def pod(self, threshold = 0.3, inplace = True):
+        """
+        Method to change rainfall accumulation arrays to a boolean variable of whether it is dry or not. Unit is mm / day.
+        Because we still like to incorporate np.NaN on the unobserved areas, the array has to be floats of 0 and 1
+        """
+        if hasattr(self, 'obsd'):
+            data = da.where(da.isnan(self.obsd.array.data), self.obsd.array.data, self.obsd.array.data < threshold)
+        else:
+            data = np.where(np.isnan(self.obs.array), self.obs.array, self.obs.array.data < threshold)
+        
+        result = xr.DataArray(data = data, coords = self.obs.array.coords, dims= self.obs.array.dims,
+                                attrs = {'long_name':'probability_of_dryness', 'threshold_mm_day':threshold, 'units':self.old_units, 'new_units':''},
+                                name = '-'.join([self.obs.basevar, 'pod']))
+        
+        if inplace:
+            self.obs.array = result
+            self.obs.newvar = 'pod'
+        else:
+            return(result)
+            
     def stefanon2012(self):
         """
         First a climatology. Then local exceedence, 4 consecutive days, 60% in sliding square of 3.75 degree.

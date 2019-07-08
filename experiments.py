@@ -21,7 +21,7 @@ from copy import copy
 
 class Experiment(object):
     
-    def __init__(self, expname, basevar, cycle, season, newvar = None, method = 'mean', timeaggregations = ['1D', '2D', '3D', '4D', '7D'], spaceaggregations = [0.25, 0.75, 1.5, 3], quantiles = [0.5, 0.9, 0.95]):
+    def __init__(self, expname, basevar, cycle, season, newvar = None, method = 'mean', rolling = False, timeaggregations = ['1D', '2D', '3D', '4D', '7D'], spaceaggregations = [0.25, 0.75, 1.5, 3], quantiles = [0.5, 0.9, 0.95]):
         """
         Setting the relevant attributes. Timeaggregations are pandas frequency strings, spaceaggregations are floats in degrees.
         Quantiles can be None if you are already investigating an event variable and if you want to crps-score the whole distribution.
@@ -34,6 +34,7 @@ class Experiment(object):
         self.cycle = cycle
         self.season = season
         self.method = method
+        self.rolling = rolling
         self.timeaggregations = timeaggregations
         self.spaceaggregations = spaceaggregations
         self.quantiles = quantiles
@@ -96,9 +97,9 @@ class Experiment(object):
             getattr(EventClassification(obs, **{'climatology':highresclim}), self.newvar)(inplace = True) # Gives newvar attribute to the observations. Read in climatology.
 
         if timeagg != '1D':
-            obs.aggregatetime(freq = timeagg, method = self.method)
+            obs.aggregatetime(freq = timeagg, method = self.method, rolling = self.rolling)
         if spaceagg != 0.25:
-            obs.aggregatespace(step = spaceagg, method = self.method, by_degree = True)
+            obs.aggregatespace(step = spaceagg, method = self.method, by_degree = True, rolling = self.rolling)
         
         if self.newvar is not None and self.newvar != 'anom':
             getattr(EventClassification(obs), self.newvar)(inplace = True)
@@ -152,10 +153,10 @@ class Experiment(object):
             dailyobs = copy(obs) # Saves some computation time
 
         if timeagg != '1D':
-            obs.aggregatetime(freq = timeagg, method = self.method)
+            obs.aggregatetime(freq = timeagg, method = self.method, rolling = self.rolling)
         if spaceagg != 0.25:
-            obs.aggregatespace(step = spaceagg, method = self.method, by_degree = True)
-            dailyobs.aggregatespace(step = spaceagg, method = self.method, by_degree = True) # Aggregate the dailyobs for the climatology, daily_obs are temporally aggregated in the climatology.
+            obs.aggregatespace(step = spaceagg, method = self.method, by_degree = True, rolling = self.rolling)
+            dailyobs.aggregatespace(step = spaceagg, method = self.method, by_degree = True, rolling = self.rolling) # Aggregate the dailyobs for the climatology, daily_obs are temporally aggregated in the climatology.
         
         if self.newvar is not None and self.newvar != 'anom':
             getattr(EventClassification(obs), self.newvar)(inplace = True) # Only the observation needs to be transformed. Daily_obs are transformed after aggregation in local_climatology
@@ -451,6 +452,7 @@ Experiment 8 anomalies maximum temperatures test for western Europe
 #test8.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = 60)})
 #test8.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.4, average_afterwards = True)})
 #test8.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = False, fitquantiles = False, forecast_horizon = False)})
+
 """
 Europe wide highres characteristic timescales
 """
@@ -465,3 +467,74 @@ Europe wide highres characteristic timescales
 #test9.iterateaggregations(func = 'score', column = 'scorefiles')
 #test9.log['charlengths'] = None
 #test9.iterateaggregations(func = 'save_charlengths', column = 'charlengths')
+
+"""
+Experiment 10 Mean summer temperature for western Europe
+"""
+
+#test10 = Experiment(expname = 'westtg10', basevar = 'tg', cycle = '41r1', season = 'JJA', method = 'mean',
+#                   timeaggregations = ['1D', '2D', '3D', '4D', '5D', '6D', '7D'], spaceaggregations = [0.25,0.75,1.25,2,3], quantiles = None)
+#test10.setuplog()
+#test10.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test10.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test10.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#test10.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform=True)})
+#test10.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = 60)})
+#test10.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.15, average_afterwards = True)})
+
+"""
+Experiment 11 Mean summer temperatures anomalies for western Europe
+"""
+#test11 = Experiment(expname = 'westtga11', basevar = 'tg', newvar = 'anom', cycle = '41r1', season = 'JJA', method = 'mean', 
+#                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25,0.75,1.25,2,3], quantiles = None)
+#test11.setuplog()
+#test11.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test11.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test11.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test11.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-09', llcrnr = (45,0), rucrnr = (55,6)))
+#test11.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#test11.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(double_transform = True)})
+#test11.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = 60)})
+#test11.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.15, average_afterwards = True)})
+
+"""
+Experiment 12 Rolling mean summer temperature. No post-processing, as all remain at the highest resolution. 0.8 degree resolution such that rolling of forecast contains two cells of 0.38
+"""
+#self = Experiment(expname = 'westtg12', basevar = 'tg', rolling = True, cycle = '41r1', season = 'JJA', method = 'mean', 
+#                  timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25,0.8,1.25,2,3], quantiles = None)
+#self.setuplog()
+#self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#self.iterateaggregations(func = 'score', column = 'scorefiles')
+#self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = False, fitquantiles = False, forecast_horizon = False)})
+
+"""
+Experiment 13 Rolling max summer rainfall. Bit of post-processing, as all remain at the highest resolution. 0.8 degree resolution such that rolling of forecast contains two cells of 0.38
+"""
+#self = Experiment(expname = 'westrr13', basevar = 'rr', newvar = 'pod', rolling = True, cycle = '41r1', season = 'JJA', method = 'max', 
+#                  timeaggregations = ['1D','5D'], spaceaggregations = [0.25], quantiles = None)
+#self.setuplog()
+#self.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01',tmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2015-01-05', llcrnr = (45,0), rucrnr = (55,6)))
+#self.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (55,6))})
+#self.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic()})
+#self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime'])})
+
+"""
+Test 13 West Europe test of rolling highres characteristic timescales, to see if these are different from ones in exp 9
+"""
+# Would there be a difference between the characteristic timescales of the anomalies and of the regular values? The first have removed seasonality?
+# Do this through the created scorefiles at high resolution. No post-processing.
+test13 = Experiment(expname = 'chartimeroll', basevar = 'tg', rolling = True, cycle = '41r1', season = 'DJF', method = 'mean', 
+                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25], quantiles = None) # 
+test13.setuplog()
+test13.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-02', tmax = None, llcrnr = (45,0), rucrnr = (55,6)))
+test13.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '1999-01-02', llcrnr = (45,0), rucrnr = (55,6))) 
+test13.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (45,0), rucrnr = (55,6))})
+test13.iterateaggregations(func = 'score', column = 'scorefiles')
+test13.log['charlengths'] = None
+test13.iterateaggregations(func = 'save_charlengths', column = 'charlengths')
+
