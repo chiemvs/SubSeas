@@ -254,7 +254,7 @@ class Experiment(object):
         Will bootstrap the scores in the scoreanalysis files and export these samples 
         Such that these can be later analyzed in the skill function.
         """
-        scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
+        scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg, rolling = self.rolling)
         scoreanalysis.load()
         result = scoreanalysis.block_bootstrap_local_skills(**bootstrapkwargs)
         return(result)
@@ -263,7 +263,7 @@ class Experiment(object):
         """
         Invokes characteristic timescale computation in the ScoreAnalysis object and returns the field
         """
-        scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
+        scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg, rolling = self.rolling)
         scoreanalysis.load()
         scoreanalysis.characteristiclength()
         return(scoreanalysis.charlengths)
@@ -275,7 +275,7 @@ class Experiment(object):
         and when usebootstrapped is set to True then quantiles, forecast horizons, 
         can all be computed. These options are controlled with analysiskwargs
         """
-        scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg)
+        scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg, rolling = self.rolling)
         bootstrap_ready = [(spaceagg, timeagg),('bootstrap', quantile)]
         if usebootstrapped and bootstrap_ready:
             skillscore = scoreanalysis.process_bootstrapped_skills(**analysiskwargs)
@@ -524,17 +524,17 @@ Experiment 13 Rolling max summer rainfall. Bit of post-processing, as all remain
 #self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime'])})
 
 """
-Test 13 West Europe test of rolling highres characteristic timescales, to see if these are different from ones in exp 9
+Test 14 West Europe test of rolling highres characteristic timescales, to see if these are different from ones in exp 9
 """
 # Would there be a difference between the characteristic timescales of the anomalies and of the regular values? The first have removed seasonality?
 # Do this through the created scorefiles at high resolution. No post-processing.
-test13 = Experiment(expname = 'chartimeroll', basevar = 'tg', rolling = True, cycle = '41r1', season = 'DJF', method = 'mean', 
+test14 = Experiment(expname = 'chartimeroll', basevar = 'tg', rolling = True, cycle = '41r1', season = 'DJF', method = 'mean', 
                    timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25], quantiles = None) # 
-test13.setuplog()
-test13.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-02', tmax = None, llcrnr = (45,0), rucrnr = (55,6)))
-test13.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '1999-01-02', llcrnr = (45,0), rucrnr = (55,6))) 
-test13.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (45,0), rucrnr = (55,6))})
-test13.iterateaggregations(func = 'score', column = 'scorefiles')
-test13.log['charlengths'] = None
-test13.iterateaggregations(func = 'save_charlengths', column = 'charlengths')
+test14.setuplog()
+#test14.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-02', tmax = None, llcrnr = (45,0), rucrnr = (55,6)))
+#test14.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '1999-01-02', llcrnr = (45,0), rucrnr = (55,6))) 
+#test14.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (45,0), rucrnr = (55,6))})
+#test14.iterateaggregations(func = 'score', column = 'scorefiles')
+#test14.log['charlengths'] = None
+test14.iterateaggregations(func = 'save_charlengths', column = 'charlengths', overwrite = True)
 

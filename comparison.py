@@ -535,7 +535,7 @@ class ScoreAnalysis(object):
     It can export bootstrapped skillscore samples and later analyze these
     For spatial mean scores and forecast horizons.
     """
-    def __init__(self, scorefile, timeagg):
+    def __init__(self, scorefile, timeagg, rolling = False):
         """
         Provide the name of the exported file with the scores.
         Change here the quantiles that are exported by bootstrapping procedures.
@@ -544,6 +544,7 @@ class ScoreAnalysis(object):
         self.scorefile = scorefile
         self.filepath = self.basedir + self.scorefile + '.h5'
         self.timeagg = timeagg
+        self.rolling = rolling
         self.quantiles = [0.025,0.5,0.975]
         
     def load(self):
@@ -598,7 +599,7 @@ class ScoreAnalysis(object):
         Computes a characteristic length per location to use as bootstrapping block length.
         According the formula of Leith 1973 which is reference in Feng (2011)
         T_0 = 1 + 2 * \sum_{\tau= 1}^D (1 - \tau/D) * \rho_\tau
-        The number is in the unit of the time-aggregation of the variable. (nr days if daily values)
+        The number is in the unit of the time-aggregation of the variable. (nr days if daily timeseries, which rolling aggregated ones are)
         Note: should the use of the charlengths have to be adapted for the small datasets? Cannot be 7 weeks or something.
         """
         def auto_cor(df, freq, cutofflag = 20, return_char_length = True):
@@ -612,7 +613,7 @@ class ScoreAnalysis(object):
             for i in range(cutofflag):
                 series = df[['observation','time']].drop_duplicates().set_index('time')['observation']
                 # Use pd.Series capabilities.
-                res[i] = series.corr(series.shift(periods = i + 1, freq = freq).reindex(series.index))
+                res[i] = series.corr(series.shift(periods = i + 1, freq = '1D' if self.rolling else freq).reindex(series.index))
                     
             if return_char_length: # Formula by Leith 1973, referenced in Feng (2011)
                 return(np.nansum(((1 - np.arange(1, cutofflag + 1)/cutofflag) * res * 2)) + 1)

@@ -586,5 +586,7 @@ class ModelClimatology(object):
 #self.local_clim(tmin = '2000-01-01',tmax = '2001-01-21', timemethod = '1D', daysbefore = 3, daysafter = 3)
 
 #start_batch(tmin = '2018-06-07', tmax = '2018-07-10')
-#start_batch(tmin = '2018-07-11', tmax = '2018-08-10')
-#start_batch(tmin = '2019-04-15', tmax = '2019-04-30')
+#start_batch(tmin = '2018-07-11', tmax = '2018-08-31')
+#start_batch(tmin = '2018-11-01', tmax = '2018-11-30')
+#start_batch(tmin = '2019-04-15', tmax = '2019-04-22')
+#start_batch(tmin = '2019-04-23', tmax = '2019-04-30')

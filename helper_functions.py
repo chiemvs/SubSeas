@@ -318,9 +318,11 @@ def assignmidpointleadtime(frame, timeagg = None):
     temp = frame.reset_index()
     pos_uncor_indices = ['spaceagg','latitude','longitude','quantile']
     try:
-        midpointday = (int(temp['timeagg'].values[0][0]) - 1) / 2
+        timeagg = temp['timeagg'].values[0]
     except KeyError:
-        midpointday = (int(timeagg[0]) - 1) / 2
+        assert timeagg is not None
+    ndayagg = int(pd.date_range('2000-01-01','2000-12-31', freq = timeagg).to_series().diff().dt.days.mode())
+    midpointday = (ndayagg - 1) / 2
     print(midpointday)
     correctedleadtimes = temp['leadtime'].values + midpointday
     frame.index = pd.MultiIndex.from_arrays([temp[i].values for i in pos_uncor_indices if (i in temp.columns)] + [correctedleadtimes], names = [i for i in pos_uncor_indices if (i in temp.columns)] + ['leadtime'])
