@@ -509,6 +509,7 @@ Experiment 12 Rolling mean summer temperature. No post-processing, as all remain
 #self.iterateaggregations(func = 'score', column = 'scorefiles')
 #self.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
 #self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = False, fitquantiles = False, forecast_horizon = False)})
+#self.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.2, average_afterwards = True)})
 
 """
 Experiment 13 Rolling max summer rainfall. Bit of post-processing, as all remain at the highest resolution. 0.8 degree resolution such that rolling of forecast contains two cells of 0.38
@@ -528,13 +529,26 @@ Test 14 West Europe test of rolling highres characteristic timescales, to see if
 """
 # Would there be a difference between the characteristic timescales of the anomalies and of the regular values? The first have removed seasonality?
 # Do this through the created scorefiles at high resolution. No post-processing.
-test14 = Experiment(expname = 'chartimeroll', basevar = 'tg', rolling = True, cycle = '41r1', season = 'DJF', method = 'mean', 
-                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25], quantiles = None) # 
-test14.setuplog()
+#test14 = Experiment(expname = 'chartimeroll', basevar = 'tg', rolling = True, cycle = '41r1', season = 'DJF', method = 'mean', 
+#                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25], quantiles = None) # 
+#test14.setuplog()
 #test14.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-02', tmax = None, llcrnr = (45,0), rucrnr = (55,6)))
 #test14.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '1999-01-02', llcrnr = (45,0), rucrnr = (55,6))) 
 #test14.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (45,0), rucrnr = (55,6))})
 #test14.iterateaggregations(func = 'score', column = 'scorefiles')
 #test14.log['charlengths'] = None
-test14.iterateaggregations(func = 'save_charlengths', column = 'charlengths', overwrite = True)
+#test14.iterateaggregations(func = 'save_charlengths', column = 'charlengths', overwrite = True)
 
+"""
+Experiment 15, Larger domain, anomalie rolling mean summer temperature. No post-processing. Try to go to limit of european aggregation
+"""
+# Anomalies are a fairer way of doing very large spatial aggregations. We try first only with the mean score. No bootstrapping saves time.
+test15 = Experiment(expname = 'eutga15', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '41r1', season = 'JJA', method = 'mean', 
+                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25,0.8,2,5,10,20,30], quantiles = None)
+test15.setuplog()
+test15.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
+test15.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01', tmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
+test15.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45))) 
+test15.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
+test15.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (37,-10), rucrnr = (70,45))})
+test15.iterateaggregations(func = 'score', column = 'scorefiles')

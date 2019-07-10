@@ -91,6 +91,9 @@ def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
 
 class CascadeError(Exception):
     pass
+
+class CascadeVarresError(Exception):
+    pass
                        
 class Forecast(object):
 
@@ -144,7 +147,7 @@ class Forecast(object):
             except OSError:
                 print('Combined varres file needs creation')
                 if prevent_cascade:
-                    raise CascadeError
+                    raise CascadeVarresError
                 self.join_members(pf_in = self.pffile_varres,
                                   cf_in = self.cffile_varres,
                                   comb_out = self.interfile_varres) # creates the combined varres interfile
@@ -327,6 +330,11 @@ class Hindcast(object):
             except CascadeError:
                 print('Combined files need creation. Do this from the single grib files')
                 self.crunch_gribfiles(pf_in = self.pffile, cf_in = self.cffile, comb_extension = '_comb.nc')
+                self.crunch_gribfiles(pf_in = self.pffile_varres, cf_in = self.cffile_varres, comb_extension = '_comb_varres.nc')
+                for hindcast in self.hindcasts:
+                    hindcast.create_processed(prevent_cascade = True)
+            except CascadeVarresError:
+                print('Only combined varres files need creation. Do this from the single grib files')
                 self.crunch_gribfiles(pf_in = self.pffile_varres, cf_in = self.cffile_varres, comb_extension = '_comb_varres.nc')
                 for hindcast in self.hindcasts:
                     hindcast.create_processed(prevent_cascade = True)
@@ -586,7 +594,7 @@ class ModelClimatology(object):
 #self.local_clim(tmin = '2000-01-01',tmax = '2001-01-21', timemethod = '1D', daysbefore = 3, daysafter = 3)
 
 #start_batch(tmin = '2018-06-07', tmax = '2018-07-10')
-#start_batch(tmin = '2018-07-11', tmax = '2018-08-31')
+#start_batch(tmin = '2018-07-11', tmax = '2018-08-31') # started first screen, 08-13 till end all not present.
 #start_batch(tmin = '2018-11-01', tmax = '2018-11-30')
-#start_batch(tmin = '2019-04-15', tmax = '2019-04-22')
+#start_batch(tmin = '2019-04-15', tmax = '2019-04-22') # started in second screen, working on 04-18
 #start_batch(tmin = '2019-04-23', tmax = '2019-04-30')
