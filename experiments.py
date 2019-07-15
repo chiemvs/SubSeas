@@ -207,7 +207,7 @@ class Experiment(object):
             climnames = self.log.loc[(self.spaceaggregations[-1], self.timeaggregations[-1]), ('obsclim','')]
         return(climnames)
     
-    def score(self, spaceagg, timeagg, pp_model = None, quantile = ''):
+    def score(self, spaceagg, timeagg, store_minimum = False, pp_model = None, quantile = ''):
         """
         Read the obs and clim. make a comparison object which computes the scores in the dask dataframe. 
         This dask dataframe is exported.
@@ -235,7 +235,7 @@ class Experiment(object):
                     comp.coefcols = firstfitcoefcols
                 comp.make_pp_forecast(pp_model = pp_model)
             comp.brierscore()
-            scorefile = comp.export(fits=False, frame = True)
+            scorefile = comp.export(fits=False, frame = True, store_minimum = store_minimum)
         else:
             if not pp_model is None:
                 comp.fit_pp_models(pp_model = pp_model, groupers = ['leadtime','latitude','longitude'])
@@ -245,7 +245,7 @@ class Experiment(object):
                 comp.crpsscore()
             else:
                 comp.brierscore()
-            scorefile = comp.export(fits=False, frame = True)
+            scorefile = comp.export(fits=False, frame = True, store_minimum = store_minimum)
             
         return(scorefile)
     
@@ -543,12 +543,85 @@ Test 14 West Europe test of rolling highres characteristic timescales, to see if
 Experiment 15, Larger domain, anomalie rolling mean summer temperature. No post-processing. Try to go to limit of european aggregation
 """
 # Anomalies are a fairer way of doing very large spatial aggregations. We try first only with the mean score. No bootstrapping saves time.
-test15 = Experiment(expname = 'eutga15', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '41r1', season = 'JJA', method = 'mean', 
-                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25,0.8,2,5,10,20,30], quantiles = None)
-test15.setuplog()
-test15.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
-test15.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01', tmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
-test15.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45))) 
-test15.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
-test15.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (37,-10), rucrnr = (70,45))})
-test15.iterateaggregations(func = 'score', column = 'scorefiles')
+# Due to space limitations I have not invoked the 0.25 degree one.
+#test15 = Experiment(expname = 'eutga15', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '41r1', season = 'JJA', method = 'mean', 
+#                   timeaggregations = ['1D','2D','3D','4D','5D','6D','7D'], spaceaggregations = [0.25,0.8,2,5,10,20,30], quantiles = None)
+#test15.setuplog()
+#test15.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
+#test15.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01', tmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
+#test15.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45))) 
+#test15.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
+#test15.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (37,-10), rucrnr = (70,45))})
+#test15.iterateaggregations(func = 'score', column = 'scorefiles')
+#test15.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
+
+"""
+Experiment 16,17,18,19, simple base variables, highres raw predictability, full domain, two different seasons. Prec possibly binarized
+Experiment 20,21 binarized prec. No use doing both pop and pod, as without aggregation they are each others inverse.
+"""
+#test16 = Experiment(expname = 'fulltgDJF16', basevar = 'tg', rolling = False, cycle = '41r1', season = 'DJF', method = 'mean', 
+#                   timeaggregations = ['1D'], spaceaggregations = [0.25], quantiles = None) # 
+#test16.setuplog()
+#test16.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-05-01', tmax = '2016-05-01', rucrnr = (None,47)))
+#test16.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-05-01', climtmax = '2016-05-01', rucrnr = (None,47))) 
+#test16.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(rucrnr = (None,47))})
+#test16.iterateaggregations(func = 'score', column = 'scorefiles')
+#test16.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
+
+#test17 = Experiment(expname = 'fulltgJJA17', basevar = 'tg', rolling = False, cycle = '41r1', season = 'JJA', method = 'mean', 
+#                   timeaggregations = ['1D'], spaceaggregations = [0.25], quantiles = None) # 
+#test17.setuplog()
+# Use same climatologies and observations as 16.
+#test17.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(rucrnr = (None,47))})
+#test17.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'store_minimum':True})
+#test17.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
+
+#test18 = Experiment(expname = 'fullrrDJF18', basevar = 'rr', rolling = False, cycle = '41r1', season = 'DJF', method = 'mean', 
+#                   timeaggregations = ['1D'], spaceaggregations = [0.25], quantiles = None) # 
+#test18.setuplog()
+#test18.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-05-01', tmax = '2016-05-01', rucrnr = (None,47)))
+#test18.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-05-01', climtmax = '2016-05-01', rucrnr = (None,47))) 
+#test18.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(rucrnr = (None,47))})
+#test18.iterateaggregations(func = 'score', column = 'scorefiles')
+#test18.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
+
+test19 = Experiment(expname = 'fullrrJJA19', basevar = 'rr', rolling = False, cycle = '41r1', season = 'JJA', method = 'mean', 
+                   timeaggregations = ['1D'], spaceaggregations = [0.25], quantiles = None) # 
+test19.setuplog()
+# Use same climatologies and observations as 18
+test19.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(rucrnr = (None,47))})
+test19.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'store_minimum':True})
+test19.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
+
+#test20 = Experiment(expname = 'fullrrpopDJF20', basevar = 'rr', newvar = 'pop', rolling = False, cycle = '41r1', season = 'DJF', method = 'mean', 
+#                   timeaggregations = ['1D'], spaceaggregations = [0.25], quantiles = None) # 
+#test20.setuplog()
+#test20.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-05-01', tmax = '2016-05-01', rucrnr = (None,47)))
+#test20.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-05-01', climtmax = '2016-05-01', rucrnr = (None,47))) 
+#test20.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(rucrnr = (None,47))})
+#test20.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'store_minimum':True})
+#test20.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
+
+#test21 = Experiment(expname = 'fullrrpopJJA21', basevar = 'rr', newvar = 'pop', rolling = False, cycle = '41r1', season = 'JJA', method = 'mean', 
+#                   timeaggregations = ['1D'], spaceaggregations = [0.25], quantiles = None) # 
+#test21.setuplog()
+## Use same climatologies and observations as 20
+#test21.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(rucrnr = (None,47))})
+#test21.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'store_minimum':True})
+#test21.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
+
+"""
+Experiment 22, Larger domain, anomalie rolling mean summer temperature. No post-processing. Try to go to limit of european aggregation
+"""
+# Anomalies are a fairer way of doing very large spatial aggregations. We try first only with the mean score. No bootstrapping saves time.
+# Due to space limitations I have not invoked the 0.25 degree one.
+#test22 = Experiment(expname = 'eutg22', basevar = 'tg', rolling = True, cycle = '41r1', season = 'JJA', method = 'mean', 
+#                   timeaggregations = ['1D','4D','7D'], spaceaggregations = [3,10,30], quantiles = None)
+#test22.setuplog()
+#test22.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-01-01',climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
+#test22.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-01-01', tmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
+#test22.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-01-01', climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45))) 
+#test22.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-01-01', climtmax = '2016-01-04', llcrnr = (37,-10), rucrnr = (70,45)))
+#test22.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (37,-10), rucrnr = (70,45))})
+#test22.iterateaggregations(func = 'score', column = 'scorefiles')
+#test22.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})

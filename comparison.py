@@ -29,7 +29,7 @@ class ForecastToObsAlignment(object):
         Temporal extend can be read from the attributes of the observation class. 
         Specify the season under inspection for subsetting.
         """
-        self.basedir = '/nobackup/users/straaten/match/'
+        self.basedir = '/nobackup_1/users/straaten/match/'
         self.cycle = cycle
         self.season = season
         if observations is not None:
@@ -290,9 +290,12 @@ class Comparison(object):
         This climatology can be a quantile (used as the threshold for brier scoring) or it is a climatological probability if we have an aligned event predictor like POP. Or it is a random draw used for CRPS scoring. which means that multiple 'numbers' will be present.
         """
         self.frame = alignment.alignedobject
-        self.basedir = '/nobackup/users/straaten/scores/'
+        self.basedir = '/nobackup_1/users/straaten/scores/'
         self.name = alignment.books_name[6:-4] + '_' + climatology.name
         self.grouperdowncasting = {'leadtime':'integer','latitude':'float','longitude':'float'}
+        self.coefcols = []
+        self.predcols = []
+        self.boolcols = []
         
         # Construction of climatology
         climatology.clim.name = 'climatology'
@@ -401,8 +404,10 @@ class Comparison(object):
         """
         if not 'ensmean' in self.frame.columns:
             self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
+            self.predcols.append('ensmean')
         if pp_model.need_std and (not 'ensstd' in self.frame.columns):
             self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
+            self.predcols.append('ensstd')
         
     def make_pp_forecast(self, pp_model, n_members = None):
         """
@@ -510,20 +515,21 @@ class Comparison(object):
                 self.frame[scorename] = self.frame.map_partitions(crps_wrap, **{'forecasttype':forecasttype}, meta = (scorename,'float32'))
         
     
-    def export(self, fits = True, frame = False):
+    def export(self, fits = True, frame = False, store_minimum = False):
         """
         Put both in the same hdf file, but different key. So append mode. If frame than writes one dataframe for self.frame
-        float 64 columns from the brierscoring are then downcasted and duplicated model coefficients are dropped if these are present. 
+        Columns have already been downcased in the previous steps. If store_minimum the function tries to drop forecast members, model coefficients, climatology column. Boolean columns are always dropped.
         """
 
         self.filepath = self.basedir + self.name + '.h5'
         if fits:
             self.fits.to_hdf(self.filepath, key = 'fits', format = 'table', **{'mode':'a'})
         if frame:
-            try:
-                self.frame.drop(self.boolcols, axis = 1).to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'a'})
-            except AttributeError:
-                self.frame.to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'a'})
+            if store_minimum:
+                discard = ['climatology','forecast', 'corrected', 'doy', 'pi', 'oi'] + self.boolcols + self.coefcols + self.predcols
+                self.frame = self.frame.drop(discard, axis = 1, errors = 'ignore')
+            
+            self.frame.to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'a'})
         
         return(self.name)
         
@@ -540,7 +546,7 @@ class ScoreAnalysis(object):
         Provide the name of the exported file with the scores.
         Change here the quantiles that are exported by bootstrapping procedures.
         """
-        self.basedir = '/nobackup/users/straaten/scores/'
+        self.basedir = '/nobackup_1/users/straaten/scores/'
         self.scorefile = scorefile
         self.filepath = self.basedir + self.scorefile + '.h5'
         self.timeagg = timeagg

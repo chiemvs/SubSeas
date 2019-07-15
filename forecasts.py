@@ -595,6 +595,4 @@ class ModelClimatology(object):
 
 #start_batch(tmin = '2018-06-07', tmax = '2018-07-10')
 #start_batch(tmin = '2018-07-11', tmax = '2018-08-31') # started first screen, 08-13 till end all not present.
-#start_batch(tmin = '2018-11-01', tmax = '2018-11-30')
-#start_batch(tmin = '2019-04-15', tmax = '2019-04-22') # started in second screen, working on 04-18
-#start_batch(tmin = '2019-04-23', tmax = '2019-04-30')
+#start_batch(tmin = '2019-04-23', tmax = '2019-04-30')# started in second screen
