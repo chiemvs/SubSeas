@@ -593,6 +593,4 @@ class ModelClimatology(object):
 #self = ModelClimatology('41r1', 'tg')
 #self.local_clim(tmin = '2000-01-01',tmax = '2001-01-21', timemethod = '1D', daysbefore = 3, daysafter = 3)
 
-#start_batch(tmin = '2018-06-07', tmax = '2018-07-10')
-#start_batch(tmin = '2018-07-11', tmax = '2018-08-31') # started first screen, 08-13 till end all not present.
-#start_batch(tmin = '2019-04-23', tmax = '2019-04-30')# started in second screen
+#start_batch(tmin = '2018-10-20', tmax = '2018-10-31')

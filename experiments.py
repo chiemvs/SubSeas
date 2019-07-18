@@ -585,13 +585,13 @@ Experiment 20,21 binarized prec. No use doing both pop and pod, as without aggre
 #test18.iterateaggregations(func = 'score', column = 'scorefiles')
 #test18.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
 
-test19 = Experiment(expname = 'fullrrJJA19', basevar = 'rr', rolling = False, cycle = '41r1', season = 'JJA', method = 'mean', 
-                   timeaggregations = ['1D'], spaceaggregations = [0.25], quantiles = None) # 
-test19.setuplog()
+#test19 = Experiment(expname = 'fullrrJJA19', basevar = 'rr', rolling = False, cycle = '41r1', season = 'JJA', method = 'mean', 
+#                   timeaggregations = ['1D'], spaceaggregations = [0.25], quantiles = None) # 
+#test19.setuplog()
 # Use same climatologies and observations as 18
-test19.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(rucrnr = (None,47))})
-test19.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'store_minimum':True})
-test19.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
+#test19.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(rucrnr = (None,47))})
+#test19.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'store_minimum':True})
+#test19.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
 
 #test20 = Experiment(expname = 'fullrrpopDJF20', basevar = 'rr', newvar = 'pop', rolling = False, cycle = '41r1', season = 'DJF', method = 'mean', 
 #                   timeaggregations = ['1D'], spaceaggregations = [0.25], quantiles = None) # 
@@ -611,7 +611,7 @@ test19.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'useboot
 #test21.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
 
 """
-Experiment 22, Larger domain, anomalie rolling mean summer temperature. No post-processing. Try to go to limit of european aggregation
+Experiment 22, Larger domain, anomalie rolling mean summer temperature. No post-processing. Try to go to limit of european aggregation NOT EXECUTED
 """
 # Anomalies are a fairer way of doing very large spatial aggregations. We try first only with the mean score. No bootstrapping saves time.
 # Due to space limitations I have not invoked the 0.25 degree one.
@@ -625,3 +625,29 @@ Experiment 22, Larger domain, anomalie rolling mean summer temperature. No post-
 #test22.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs':dict(llcrnr = (37,-10), rucrnr = (70,45))})
 #test22.iterateaggregations(func = 'score', column = 'scorefiles')
 #test22.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','latitude','longitude'])})
+
+"""
+Experiment 23,24 Local Rolling mean winter temperature. Post-processing, 0.8 degree resolution such that rolling of forecast contains two cells of 0.38
+Also an anomalie version. To compare the post-processing and the fact that aggregation in a non-homogeneous domain makes more sense for anomalies.
+"""
+#test23 = Experiment(expname = 'loctg23', basevar = 'tg', rolling = True, cycle = '41r1', season = 'DJF', method = 'mean', 
+#                  timeaggregations = ['1D','3D','5D','7D','9D','11D'], spaceaggregations = [0.25,0.8,1.5,3,5], quantiles = None)
+#test23.setuplog()
+#test23.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-12-01', tmax = '2016-05-01', llcrnr = (45,0), rucrnr = (50,5)))
+#test23.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-12-01', climtmax = '2016-05-01', llcrnr = (45,0), rucrnr = (50,5)))
+#test23.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (50,5))})
+#test23.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
+#test23.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#test23.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
+
+#test24 = Experiment(expname = 'loctga24', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '41r1', season = 'DJF', method = 'mean', 
+#                  timeaggregations = ['1D','3D','5D','7D','9D','11D'], spaceaggregations = [0.25,0.8,1.5,3,5], quantiles = None)
+#test24.setuplog()
+#test24.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1995-11-15', climtmax = '2016-05-01', llcrnr = (45,0), rucrnr = (50,5)))
+#test24.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1995-12-01', tmax = '2016-05-01', llcrnr = (45,0), rucrnr = (50,5)))
+#test24.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1995-12-01', climtmax = '2016-05-01', llcrnr = (45,0), rucrnr = (50,5)))
+#test24.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1995-11-15', climtmax = '2016-05-01', llcrnr = (45,0), rucrnr = (50,5)))
+#test24.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict( llcrnr = (45,0), rucrnr = (50,5))})
+#test24.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
+#test24.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#test24.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
