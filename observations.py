@@ -438,7 +438,8 @@ class EventClassification(object):
         else:
             return(result)
 
-test = SurfaceObservations('tg')
+test = SurfaceObservations('tx')
+test.basedir = '/home/jsn295/Documents/climtestdir/'
 test.load(tmax = '1960-01-01', llcrnr = (50,4)) 
 subsetaxis = test.array.time.dt.season == 'JJA'
 subset = test.array.sel(time = subsetaxis)
@@ -453,11 +454,16 @@ stackeddrop = stacked.dropna('latlon','all') # Can be supplied with a threshold.
 # Therefore we need to shift but also reindex.
 
 # https://waterprogramming.wordpress.com/2014/06/13/numpy-vectorized-correlation-coefficient/
+    
 def vcorrcoef(X,y):
-    Xm = np.reshape(np.mean(X,axis=1),(X.shape[0],1))
-    ym = np.mean(y)
-    r_num = np.sum((X-Xm)*(y-ym),axis=1)
-    r_den = np.sqrt(np.sum((X-Xm)**2,axis=1)*np.sum((y-ym)**2))
+    """
+    X is (m,n) with n the number of overvations, and y is (n,)
+    Can handle NA values.
+    """
+    Xm = np.nanmean(X,axis=0)
+    ym = np.nanmean(y)
+    r_num = np.nansum((X-Xm)*((y-ym)[:,np.newaxis]),axis=0)
+    r_den = np.sqrt(np.nansum((X-Xm)**2,axis=0)*np.nansum((y-ym)**2))
     r = r_num/r_den
     return(r)
 
@@ -465,14 +471,25 @@ ncells = stackeddrop.shape[-1]
 ori_timeaxis = stackeddrop.coords['time'].copy()
 
 maxcormat = np.full((ncells,ncells), -1.0, dtype = 'float32') # Initialize at the worst possible similarity.
+# In principle I could precompute the shifted matrices of (nobs,ncells) but 40 of these might be too heavy in the memory.
 
 # triangular loop
-for i in range(ncells):
+for i in [1,2]: #range(ncells):
     colindices = slice(i,ncells)
     cellseries = stackeddrop[:,i]
     for lag in range(-20, 21): # Lag in days
+        print(lag)
         lag_timeaxis = ori_timeaxis - pd.Timedelta(str(lag) + 'D')
-        lagaxis = stackeddrop[:,colindices].shift({'time':lag}).reindex_like(stackeddrop
+        # Change the time axis at each iteration, without altering data
+        stackeddrop.coords['time'] = lag_timeaxis
+        
+        lagged = stackeddrop[:,colindices].reindex_like(cellseries) # Reindexing removes the non-overlapping entries, but introduces NA at some timesteps.
+        lagcor = vcorrcoef(lagged, cellseries.values)
+        if lag == -20:
+            maxcor = lagcor
+        else:
+            maxcor = np.maximum(maxcor, lagcor)
+    maxcormat[i,colindices] = maxcor
 
 
 # Triangular loop could make use of this:
