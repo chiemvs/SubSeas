@@ -437,3 +437,43 @@ class EventClassification(object):
             self.obs.newvar = 'anom'
         else:
             return(result)
+
+test = SurfaceObservations('tg')
+test.load(tmax = '1960-01-01', llcrnr = (50,4)) 
+subsetaxis = test.array.time.dt.season == 'JJA'
+subset = test.array.sel(time = subsetaxis)
+
+# Probably I want to do this with dask arrays as I am going to use the whole observation dataset.
+
+# First remove all the sea cells.
+stacked = subset.stack({'latlon':['latitude','longitude']})
+stackeddrop = stacked.dropna('latlon','all') # Can be supplied with a threshold.
+
+# We are dealing with a seasonal subset so a non-continuous time axis
+# Therefore we need to shift but also reindex.
+
+# https://waterprogramming.wordpress.com/2014/06/13/numpy-vectorized-correlation-coefficient/
+def vcorrcoef(X,y):
+    Xm = np.reshape(np.mean(X,axis=1),(X.shape[0],1))
+    ym = np.mean(y)
+    r_num = np.sum((X-Xm)*(y-ym),axis=1)
+    r_den = np.sqrt(np.sum((X-Xm)**2,axis=1)*np.sum((y-ym)**2))
+    r = r_num/r_den
+    return(r)
+
+ncells = stackeddrop.shape[-1]
+ori_timeaxis = stackeddrop.coords['time'].copy()
+
+maxcormat = np.full((ncells,ncells), -1.0, dtype = 'float32') # Initialize at the worst possible similarity.
+
+# triangular loop
+for i in range(ncells):
+    colindices = slice(i,ncells)
+    cellseries = stackeddrop[:,i]
+    for lag in range(-20, 21): # Lag in days
+        lag_timeaxis = ori_timeaxis - pd.Timedelta(str(lag) + 'D')
+        lagaxis = stackeddrop[:,colindices].shift({'time':lag}).reindex_like(stackeddrop
+
+
+# Triangular loop could make use of this:
+# https://stackoverflow.com/questions/36250729/how-to-convert-triangle-matrix-to-square-in-numpy
