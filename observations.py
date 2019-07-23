@@ -5,7 +5,7 @@ import xarray as xr
 import pandas as pd
 import dask.array as da
 import warnings
-from helper_functions import agg_space, agg_time, monthtoseasonlookup
+from helper_functions import agg_space, agg_time, monthtoseasonlookup, vcorrcoef
 
 obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
                    'tx': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
@@ -438,59 +438,85 @@ class EventClassification(object):
         else:
             return(result)
 
-test = SurfaceObservations('tx')
-test.basedir = '/home/jsn295/Documents/climtestdir/'
-test.load(tmax = '1960-01-01', llcrnr = (50,4)) 
-subsetaxis = test.array.time.dt.season == 'JJA'
-subset = test.array.sel(time = subsetaxis)
 
-# Probably I want to do this with dask arrays as I am going to use the whole observation dataset.
-
-# First remove all the sea cells.
-stacked = subset.stack({'latlon':['latitude','longitude']})
-stackeddrop = stacked.dropna('latlon','all') # Can be supplied with a threshold.
-
-# We are dealing with a seasonal subset so a non-continuous time axis
-# Therefore we need to shift but also reindex.
-
-# https://waterprogramming.wordpress.com/2014/06/13/numpy-vectorized-correlation-coefficient/
+class Clustering(object):
     
-def vcorrcoef(X,y):
-    """
-    X is (m,n) with n the number of overvations, and y is (n,)
-    Can handle NA values.
-    """
-    Xm = np.nanmean(X,axis=0)
-    ym = np.nanmean(y)
-    r_num = np.nansum((X-Xm)*((y-ym)[:,np.newaxis]),axis=0)
-    r_den = np.sqrt(np.nansum((X-Xm)**2,axis=0)*np.nansum((y-ym)**2))
-    r = r_num/r_den
-    return(r)
-
-ncells = stackeddrop.shape[-1]
-ori_timeaxis = stackeddrop.coords['time'].copy()
-
-maxcormat = np.full((ncells,ncells), -1.0, dtype = 'float32') # Initialize at the worst possible similarity.
-# In principle I could precompute the shifted matrices of (nobs,ncells) but 40 of these might be too heavy in the memory.
-
-# triangular loop
-for i in [1,2]: #range(ncells):
-    colindices = slice(i,ncells)
-    cellseries = stackeddrop[:,i]
-    for lag in range(-20, 21): # Lag in days
-        print(lag)
-        lag_timeaxis = ori_timeaxis - pd.Timedelta(str(lag) + 'D')
-        # Change the time axis at each iteration, without altering data
-        stackeddrop.coords['time'] = lag_timeaxis
+    def __init__(self, season, **kwds):
+        """
+        Class to compute, contain and load hierarchal clusters of gridded observations.
+        Possibility to supply a name here for direct loading of a saved hierarchal cluster object.
+        """
+        self.season = season
+        self.basedir = '/nobackup/users/straaten/clusters/'
+        self.lags = list(range(-20,21)) # possible lags used in the association between gridpoints
+        for key in kwds.keys():
+            setattr(self, key, kwds[key])
+            
+    def compute_cormat(self, obs):
+        """
+        Method to compute the 1D triangular correlation matrix between all cells in the loaded array of the supplied observation class
+        The metric is the maximum correlation in a set of lagged timeseries between each pair of cells
+        Cells without any observations are removed, otherwise there is no minimum amount.
+        Only on timeseries within the season.
+        TODO: add parallel computation option
+        """
+        # Select season, flatten the space dimension to ncells and store the spatial index for later reconstruction
+        subsetaxis = obs.array.time.dt.season == self.season
+        subset = obs.array.sel(time = subsetaxis).stack({'latlon':['latitude','longitude']}).dropna('latlon','all')
+        self.spaceindex = subset.coords['latlon'].copy()
         
-        lagged = stackeddrop[:,colindices].reindex_like(cellseries) # Reindexing removes the non-overlapping entries, but introduces NA at some timesteps.
-        lagcor = vcorrcoef(lagged, cellseries.values)
-        if lag == -20:
-            maxcor = lagcor
-        else:
-            maxcor = np.maximum(maxcor, lagcor)
-    maxcormat[i,colindices] = maxcor
-
-
-# Triangular loop could make use of this:
-# https://stackoverflow.com/questions/36250729/how-to-convert-triangle-matrix-to-square-in-numpy
+        # Created multiple shifted version of the timeseries by shifting and reindexing
+        # because we are dealing with a seasonal subset so a non-continuous time axis
+        ori_timeaxis = subset.coords['time'].copy()
+        laggedmatrices = [None] * len(self.lags)
+        for lag in self.lags:
+            lag_timeaxis = ori_timeaxis - pd.Timedelta(str(lag) + 'D')
+            subset.coords['time'] = lag_timeaxis # Assign the shifted timeaxis
+            laggedmatrices[self.lags.index(lag)] = subset.reindex_like(ori_timeaxis).values
+        laggedmatrices = np.stack(laggedmatrices, axis = 0) # The lagged matrices object might get too large for memory (in that case memory mapping?)
+        
+        # Initialization of the square maximum correlation matrix, only the upper triangle, excluding the diagonal
+        ncells = len(self.spaceindex)
+        n_triangular = int((ncells**2 - ncells)/2)
+        self.maxcormat = np.full((n_triangular), -1.0, dtype = 'float32') # Initialize at the worst possible similarity
+                
+        # triangular loop. Write to the 1D maxcormat matrix
+        firstemptycell = 0
+        for i in range(ncells - 1):
+            colindices = slice(i+1,ncells) # Not the correlation with itself.
+            writelength = ncells - 1 - i
+            cormatindices = slice(firstemptycell, firstemptycell + writelength) # write indices to the 1D triangular matrix.
+            cellseries = laggedmatrices[self.lags.index(0),:,i]
+            self.maxcormat[cormatindices] = vcorrcoef(laggedmatrices[:,:,colindices], cellseries) 
+            firstemptycell += writelength
+            print('computed', str(writelength), 'links for cell', str(i + 1), 'of', str(ncells))
+    
+    def hierarchal_clustering(self):
+        """
+        Hierarchal clustering with a lagged correlation based distance metric (0 is perfect correlated, 2 is perfectly anticorrelated)
+        The triangular matrix is supplied to the scipy algorithm minimizing the intra cluster variance (Ward linkage)
+        """
+        import scipy.cluster.hierarchy as sch
+        Z = sch.ward(y = 1 - self.maxcormat)
+        sch.dendrogram(Z, truncate_mode='lastp')
+        
+        # As a test: visualize 5 clusters
+        ids = np.squeeze(sch.cut_tree(Z, n_clusters=5))
+        scclust = xr.Dataset({'clust':xr.DataArray(ids, dims = ['latlon']), 'latlon':self.spaceindex})['clust'].unstack('latlon')
+        
+        # Probably: cutting Z at multiple (predefined by spatial percentages?) and the lowest level
+        # But cluster sizes at a certain level are unequal. Perhaps cutting with the height of the distance metric?
+        
+        
+    def get_clusters(self, level = 1):
+        """
+        Method to extract 
+        """
+        pass
+        
+        
+obs = SurfaceObservations('tx')
+#test.basedir = '/home/jsn295/Documents/climtestdir/'
+obs.load(tmax = '1980-01-01') 
+self = Clustering(season = 'JJA')
+self.compute_cormat(obs = obs)

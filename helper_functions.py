@@ -327,3 +327,18 @@ def assignmidpointleadtime(frame, timeagg = None):
     correctedleadtimes = temp['leadtime'].values + midpointday
     frame.index = pd.MultiIndex.from_arrays([temp[i].values for i in pos_uncor_indices if (i in temp.columns)] + [correctedleadtimes], names = [i for i in pos_uncor_indices if (i in temp.columns)] + ['leadtime'])
     return(frame)
+
+def vcorrcoef(X,y):
+    """
+    Vectorized computation of the correlation coefficients betweeen 3D matrix and 1D vector
+    X is (d,n,m) with n the number of overvations, d the number of lags and m the number of cells, and y is (n,)
+    Takes maximum over first d axis. Thereby returning (m,)
+    Can handle NA values.
+    adaptation of https://waterprogramming.wordpress.com/2014/06/13/numpy-vectorized-correlation-coefficient/
+    """
+    Xm = np.nanmean(X,axis=1)
+    ym = np.nanmean(y)
+    r_num = np.nansum((X-Xm[:,np.newaxis,:])*((y-ym)[np.newaxis,:,np.newaxis]),axis=1) # Summing over n
+    r_den = np.sqrt(np.nansum((X-Xm[:,np.newaxis,:])**2,axis=1)*np.nansum((y-ym)**2)) # Summing over n
+    r = r_num/r_den
+    return(np.nanmax(r, axis = 0)) # Maximum over d
