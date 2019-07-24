@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 import os
+import sys
 import numpy as np
 import xarray as xr
 import pandas as pd
 import dask.array as da
 import warnings
-from helper_functions import agg_space, agg_time, monthtoseasonlookup, vcorrcoef
+from helper_functions import agg_space, agg_time, monthtoseasonlookup, vcorrcoef3D, vcorrcoef2D
 
 obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValue': -32767},
                    'tx': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
@@ -19,7 +20,9 @@ obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValu
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
                    'doy': {'dtype': 'int16'},
-                   'number': {'dtype': 'int16'}}
+                   'number': {'dtype': 'int16'},
+                   'clustid': {'dtype': 'int16', '_FillValue': -32767},
+                   'dissim_threshold': {'dtype':'float32'}} #{'dtype':'int16', 'scale_factor':0.0001,  '_FillValue': -32767}
 
 class SurfaceObservations(object):
     
@@ -125,7 +128,7 @@ class SurfaceObservations(object):
         self.tmin = pd.Series(self.array.time).min().strftime('%Y-%m-%d')
         self.tmax = pd.Series(self.array.time).max().strftime('%Y-%m-%d')
 
-    def minfilter(self, season, n_min_per_seas = 40):
+    def minfilter(self, season, n_min_per_seas = 50):
         """
         Requires on average a minimum amount of daily observations per season of interest (91 days). Assigns NaN all year round when this is not the case.
         """
@@ -449,10 +452,11 @@ class Clustering(object):
         self.season = season
         self.basedir = '/nobackup/users/straaten/clusters/'
         self.lags = list(range(-20,21)) # possible lags used in the association between gridpoints
+        self.dissim_thresholds = [0,0.005,0.01,0.025,0.05,0.1,0.2,0.3,0.4,0.5,1] # Average dissimilarity thresholds to cut the tree, into n clusters
         for key in kwds.keys():
             setattr(self, key, kwds[key])
             
-    def compute_cormat(self, obs):
+    def compute_cormat(self, obs, mapmemory = True, vectorize_lags = False):
         """
         Method to compute the 1D triangular correlation matrix between all cells in the loaded array of the supplied observation class
         The metric is the maximum correlation in a set of lagged timeseries between each pair of cells
@@ -460,6 +464,11 @@ class Clustering(object):
         Only on timeseries within the season.
         TODO: add parallel computation option
         """
+        # Storing information from the obs.
+        keys = ['basevar','tmin','tmax']
+        for key in keys:
+            setattr(self,key,getattr(obs,key))        
+        
         # Select season, flatten the space dimension to ncells and store the spatial index for later reconstruction
         subsetaxis = obs.array.time.dt.season == self.season
         subset = obs.array.sel(time = subsetaxis).stack({'latlon':['latitude','longitude']}).dropna('latlon','all')
@@ -473,7 +482,12 @@ class Clustering(object):
             lag_timeaxis = ori_timeaxis - pd.Timedelta(str(lag) + 'D')
             subset.coords['time'] = lag_timeaxis # Assign the shifted timeaxis
             laggedmatrices[self.lags.index(lag)] = subset.reindex_like(ori_timeaxis).values
-        laggedmatrices = np.stack(laggedmatrices, axis = 0) # The lagged matrices object might get too large for memory (in that case memory mapping?)
+        if mapmemory:
+            f = np.memmap('/tmp/memmapped.dat', dtype=np.float32, mode='w+', shape=(len(self.lags),) + laggedmatrices[0].shape)
+            np.stack(laggedmatrices, axis = 0, out = f)
+            laggedmatrices = f
+        else:
+            laggedmatrices = np.stack(laggedmatrices, axis = 0) # The lagged matrices object might get too large for memory (in that case memory mapping?)
         
         # Initialization of the square maximum correlation matrix, only the upper triangle, excluding the diagonal
         ncells = len(self.spaceindex)
@@ -481,42 +495,74 @@ class Clustering(object):
         self.maxcormat = np.full((n_triangular), -1.0, dtype = 'float32') # Initialize at the worst possible similarity
                 
         # triangular loop. Write to the 1D maxcormat matrix
+        # This is all sequential code. Both finding the maxima in non vectorized lags and the 
         firstemptycell = 0
         for i in range(ncells - 1):
             colindices = slice(i+1,ncells) # Not the correlation with itself.
             writelength = ncells - 1 - i
             cormatindices = slice(firstemptycell, firstemptycell + writelength) # write indices to the 1D triangular matrix.
             cellseries = laggedmatrices[self.lags.index(0),:,i]
-            self.maxcormat[cormatindices] = vcorrcoef(laggedmatrices[:,:,colindices], cellseries) 
+            if vectorize_lags:
+                self.maxcormat[cormatindices] = vcorrcoef3D(laggedmatrices[:,:,colindices], cellseries)
+            else:
+                for lag in self.lags:
+                    lagcor = vcorrcoef2D(laggedmatrices[self.lags.index(lag),:,colindices], cellseries)
+                    self.maxcormat[cormatindices] = np.maximum(self.maxcormat[cormatindices], lagcor)
             firstemptycell += writelength
             print('computed', str(writelength), 'links for cell', str(i + 1), 'of', str(ncells))
     
     def hierarchal_clustering(self):
         """
         Hierarchal clustering with a lagged correlation based distance metric (0 is perfect correlated, 2 is perfectly anticorrelated)
-        The triangular matrix is supplied to the scipy algorithm minimizing the intra cluster variance (Ward linkage)
+        The triangular matrix is supplied to the scipy algorithm linking the clusters with the least average distance.
+        The z matrix is stored for dendogram inspection. Cuts of the tree (based on dissimilarity heights) are put into the array format.
         """
         import scipy.cluster.hierarchy as sch
-        Z = sch.ward(y = 1 - self.maxcormat)
-        sch.dendrogram(Z, truncate_mode='lastp')
+        self.Z = sch.linkage(y = 1 - self.maxcormat, method = 'average')
+        #sch.dendrogram(self.Z, truncate_mode='lastp')
         
-        # As a test: visualize 5 clusters
-        ids = np.squeeze(sch.cut_tree(Z, n_clusters=5))
-        scclust = xr.Dataset({'clust':xr.DataArray(ids, dims = ['latlon']), 'latlon':self.spaceindex})['clust'].unstack('latlon')
+        # Extract the clusters from the tree at the average dissimilarity thresholds
+        ids = np.squeeze(sch.cut_tree(self.Z, height=self.dissim_thresholds))
+        self.clusters = xr.DataArray(ids, dims = ['latlon','dissim_threshold'], coords = {'dissim_threshold':self.dissim_thresholds,'latlon':self.spaceindex}, name = 'clustid').unstack('latlon')
         
-        # Probably: cutting Z at multiple (predefined by spatial percentages?) and the lowest level
-        # But cluster sizes at a certain level are unequal. Perhaps cutting with the height of the distance metric?
-        
-        
-    def get_clusters(self, level = 1):
+    def get_clusters_at(self, level = 0):
         """
-        Method to extract 
+        Method to get the georeferenced cluster array at a certain dissimilarity level
         """
-        pass
+        self.construct_name(force = False)
+        if not hasattr(self,'clusters'):
+            self.clusters = xr.open_dataarray(self.filepath)
+        try:
+            return(self.clusters.sel(dissim_threshold = level, method = 'nearest', tolerance = 1e-7))
+        except KeyError:
+            raise KeyError('desired level not present in the loaded clustering dataset')
+    
+    def construct_name(self, force = False):
+        """
+        Name and filepath are based on the base variable (or new variable) and the relevant attributes (if present).
+        The second position in the name is just 'clim' for easy recognition in the directories.
+        """
+        keys = ['basevar','season','tmin','tmax']
+        if hasattr(self, 'name') and (not force):
+            values = self.name.split(sep = '_')
+            for key in keys:
+                setattr(self, key, values[keys.index(key)])
+        else:
+            values = [ str(getattr(self,key)) for key in keys if hasattr(self, key)]
+            self.name = '_'.join(values)
         
-        
-obs = SurfaceObservations('tx')
-#test.basedir = '/home/jsn295/Documents/climtestdir/'
-obs.load(tmax = '1980-01-01') 
-self = Clustering(season = 'JJA')
-self.compute_cormat(obs = obs)
+        self.filepath = ''.join([self.basedir, self.name, ".nc"])
+    
+    def save_clusters(self):
+        self.construct_name(force = True)
+        particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clusters.to_dataset().variables.keys()} 
+        self.clusters.to_netcdf(self.filepath, encoding = particular_encoding)
+       
+#obs = SurfaceObservations('tg')
+#obs.load(tmin = '1980-01-01', tmax = '1985-01-01', llcrnr= (64,40))
+#obs.minfilter(season='JJA', n_min_per_seas=88)
+#self = Clustering(season = 'JJA', **{'name':'tx_JJA_1980-01-01_1985-01-01'})
+#self.save_clusters()
+#self.compute_cormat(obs = obs, mapmemory=False, vectorize_lags=True)
+#self.hierarchal_clustering()
+#self.save_clusters()
