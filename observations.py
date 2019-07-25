@@ -22,6 +22,7 @@ obs_netcdf_encoding = {'rr': {'dtype': 'int16', 'scale_factor': 0.05, '_FillValu
                    'doy': {'dtype': 'int16'},
                    'number': {'dtype': 'int16'},
                    'clustid': {'dtype': 'int16', '_FillValue': -32767},
+                   'clustidfield': {'dtype': 'int16', '_FillValue': -32767},
                    'dissim_threshold': {'dtype':'float32'}} #{'dtype':'int16', 'scale_factor':0.0001,  '_FillValue': -32767}
 
 class SurfaceObservations(object):
@@ -31,6 +32,7 @@ class SurfaceObservations(object):
         Sets the base E-OBS variable alias. And sets the base storage directory. 
         Additionally you can supply 'timemethod', 'spacemethod', 'tmin' and 
         'tmax', or the comple filename if you want to load a pre-existing adapted file.
+        When spatially aggregated using clusters the dimension of the observation array changes and the cluster field is saved in the dataset.
         """
         self.basevar = basevar
         self.basedir = "/nobackup/users/straaten/E-OBS/"
@@ -106,11 +108,19 @@ class SurfaceObservations(object):
             else:
                 raise FileNotFoundError("File for non-basevariable not found")
         
-        if lazychunk is None:
-            full = xr.open_dataarray(self.filepath)
-        else:
-            full = xr.open_dataarray(self.filepath,  chunks= lazychunk)
-        
+        # Load as a dataarray. If not possible because two variables are present than we assume there is also a clustidfield present.
+        try:
+            if lazychunk is None:
+                full = xr.open_dataarray(self.filepath)
+            else:
+                full = xr.open_dataarray(self.filepath,  chunks= lazychunk)
+        except ValueError:
+            if lazychunk is None:
+                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield')
+            else:
+                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield', chunks= lazychunk)
+            self.clusterarray = xr.open_dataarray(self.filepath, drop_variables = full.name)
+            
         # Full range if no timelimits were given
         if tmin is None:
             tmin = pd.Series(full.coords['time'].values).min()
@@ -118,7 +128,11 @@ class SurfaceObservations(object):
             tmax = pd.Series(full.coords['time'].values).max()
         
         freq = pd.infer_freq(full.coords['time'].values)
-        self.array = full.sel(time = pd.date_range(tmin, tmax, freq = freq), longitude = slice(llcrnr[1], rucrnr[1]), latitude = slice(llcrnr[0], rucrnr[0])) # slice gives an inexact lookup, everything within the range
+        # Subsetting only with time if loaded spatial coordinates are clustid:
+        if 'clustid' in full.coords:
+            self.array = full.sel(time = pd.date_range(tmin, tmax, freq = freq))
+        else:
+            self.array = full.sel(time = pd.date_range(tmin, tmax, freq = freq), longitude = slice(llcrnr[1], rucrnr[1]), latitude = slice(llcrnr[0], rucrnr[0])) # slice gives an inexact lookup, everything within the range
         
         if not hasattr(self, 'timemethod'): # Attribute is only missing if it has not been given upon initialization.
             self.timemethod = '1D'
@@ -138,20 +152,26 @@ class SurfaceObservations(object):
         
         self.array = self.array.where(seasononly.count('time') >= n_seasons * n_min_per_seas, np.nan)
         
-    def aggregatespace(self, step, method = 'mean', by_degree = False, skipna = False, rolling = False):
+    def aggregatespace(self, level, clustername = None, method = 'mean', skipna = False):
         """
-        Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
-        In the case of degree grouping the groups might not contain an equal number of cells.
+        Aggregation by grouping the cells defined at a certain level in the clustering object. This object was based on a certain season.
+        If the domain of the level's extracted clusterarray is smaller, the obs.array domain shrinks too.
+        The method deterimines the extracted statistic. With 1 cluster per cell nothing change Of course might not contain an equal number of cells.
         Completely lazy when supplied array is lazy.
         """
-        # Check if already loaded.
-        if not hasattr(self, 'array'):
-            self.load(lazychunk = {'latitude': 50, 'longitude': 50})
+        # Check if an object was already supplied otherwise, load it
+        if not hasattr(self, 'clusterobject'):
+            self.clusterobject = Clustering(**{'name':clustername})
+        else:
+            clustername = self.clusterobject.name
         
-        self.array, self.spacemethod = agg_space(array = self.array, 
-                                                 orlats = self.array.latitude.load(),
-                                                 orlons = self.array.longitude.load(),
-                                                 step = step, method = method, by_degree = by_degree, skipna = skipna, rolling = rolling)
+        self.clusterarray = self.clusterobject.get_clusters_at(level = level)
+        # Shrink both if one or the other has a smaller domain, 
+        self.clusterarray = self.clusterarray.sel(latitude = slice(self.array.latitude.min(),self.array.latitude.max()), longitude = slice(self.array.longitude.min(),self.array.longitude.max())) 
+        
+        self.array = self.array.sel(latitude = slice(self.clusterarray.latitude.min(),self.clusterarray.latitude.max()), longitude = slice(self.clusterarray.longitude.min(),self.clusterarray.longitude.max())) 
+        
+        self.array, self.spacemethod = agg_space(array = self.array, level = level, clusterarray = self.clusterarray, clustername = clustername, method = method, skipna = skipna)
     
     def aggregatetime(self, freq = '7D' , method = 'mean', rolling = False):
         """
@@ -167,17 +187,20 @@ class SurfaceObservations(object):
         # To access days of week: self.array.time.dt.timeofday
         # Also possible is self.array.time.dt.floor('D')
     
-
-    
     def savechanges(self):
         """
         Calls new name creation after writing tmin and tmax as attributes. Then writes the dask array to this file. 
         Can give a warning of all NaN slices encountered during writing.
+        If the particular encoding forces a downcast it is ignored.
         """
         self.construct_name(force = True)
+        if hasattr(self, 'clusterarray'):
+            dataset = xr.Dataset({'clustidfield':self.clusterarray,self.array.name:self.array})
+        else:
+            dataset = self.array.to_dataset()
         # invoke the computation (if loading was lazy) and writing
-        particular_encoding = {key : obs_netcdf_encoding[key] for key in self.array.to_dataset().keys()} 
-        self.array.to_netcdf(self.filepath, encoding = particular_encoding)
+        particular_encoding = {key : obs_netcdf_encoding[key] for key in dataset.keys()}
+        dataset.to_netcdf(self.filepath, encoding = particular_encoding)
         #delattr(self, 'array')
     
     # Define a detrend method? Look at the Toy weather data documentation of xarray. Scipy has a detrend method.
@@ -212,17 +235,14 @@ class Climatology(object):
         
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
         
-    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, n_draws = None, daily_obs = None):
+    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, n_draws = None):
         """
-        Load a local clim if one with corresponding basevar, tmin, tmax and method is found, or if name given at initialization is found.
-        Construct local climatological distribution within a rolling window, but with pooled years. 
+        Load a local clim if one with corresponding var, tmin, tmax and method is found, or if name given at initialization is found.
+        Construct local climatological distribution within a doy window, determined by daysbefore and daysafter, but with pooled years
         Extracts mean (giving probabilities if you have a binary variable). Or a random number of draws if these are given.
-        It can also compute a quantile on a continuous variables. Returns fields of this for all supplied day-of-year (doy) and space.
+        It can also compute a quantile on a continuous variables. Returns fields of this for all supplied day-of-year (doy) and space coordinates.
         Daysbefore and daysafter are inclusive.
-        For non-daily aggregations the procedure is the same, as the climatology needs to be still derived from daily values. 
-        Therefore the amount of aggregated dats is inferred from the timemethod frequency. And also if rolling needs to take place. (rolling obs gives rolling time agg in the doy windows)
-        For event-based variables: the obs should have the transformation already. 
-        The daily obs should have the original continuous variable (only space aggregated) and is transformed here 
+        For non-daily aggregations the procedure is the same, as these obs are already rolling and thus stamped daily. Meaning that all needed aggregation, both in space and time, and all needed event classification shoulg already have taken place.
         """
         
         keys = ['tmin','tmax','timemethod','spacemethod', 'daysbefore', 'daysafter']
@@ -241,68 +261,41 @@ class Climatology(object):
         
         # Overwrites possible nonsense attributes
         self.construct_name(force = False)
+        # Save the georeferenced locations of the clusters if present.
+        if hasattr(obs, 'clusterarray'):
+            self.clusterarray = getattr(obs, 'clusterarray')
                 
         try:
             self.clim = xr.open_dataarray(self.filepath)
             print('climatology directly loaded')
+        except ValueError:
+            self.clim = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield') # Also load the clustidfield if present??
         except OSError:
-            self.ndayagg = int(pd.date_range('2000-01-01','2000-12-31', freq = obs.timemethod.split('-')[0]).to_series().diff().dt.days.mode())
         
             if quant is not None:
                 from helper_functions import nanquantile
             
-            if (self.ndayagg > 1):
-                freq, rolling, method = obs.timemethod.split('-')
-                doygroups = daily_obs.array.groupby('time.dayofyear')
-            else:
-                doygroups = obs.array.groupby('time.dayofyear')
-            
+            doygroups = obs.array.groupby('time.dayofyear')
             doygroups = {str(key):value for key,value in doygroups} # Change to string
             maxday = 366
             results = []
             for doy in doygroups.keys():        
                 doy = int(doy)
                 # for aggregated values the day of year is the first day of the period. 
-                window = np.arange(doy - daysbefore, doy + daysafter + self.ndayagg, dtype = 'int64')
+                window = np.arange(doy - daysbefore, doy + daysafter + 1, dtype = 'int64')
                 # small corrections for overshooting into previous or next year.
                 window[ window < 1 ] += maxday
                 window[ window > maxday ] -= maxday
                 
                 complete = xr.concat([doygroups[str(key)] for key in window if str(key) in doygroups.keys()], dim = 'time')
-                # Call for the same aggregation on the daily complete by slicing up each past sequence of our doy-window, and progressively removing them from the complete set, such that the minimum time can be used for each slice. However, the aggregation is always non-rolling even though obs might be.
-                if (self.ndayagg > 1):
-                    aggregated_slices = []
-                    while len(complete.time) > 0:
-                        slice_tmin = complete.time.min().values
-                        print(slice_tmin)
-                        slice_arr = complete.sortby('time').sel(time = slice(str(slice_tmin), str(slice_tmin + np.timedelta64(len(window), 'D')))) # Soft searching method. Based on the minimum found in the set. Does not crash if certain doys are less present (like 366)
-                        if len(slice_arr.time) >= self.ndayagg:
-                            aggregated_slices.append(agg_time(array = slice_arr, freq = freq, method = method, ndayagg = self.ndayagg, rolling = (rolling == 'roll'))[0]) # [0] for only the returned array. not the timemethod             
-                        complete = complete.drop(slice_arr.time.values, dim = 'time') # remove so new minimum can be found.
-                    complete = xr.concat(aggregated_slices, dim = 'time')
-                    
-                    # Possible classification in the aggregated slices if the supplied obs was transformed, and this is not the same (pre-aggregation) transformation already present on the daily-obs.
-                    try:
-                        obsnewvar = getattr(obs, 'newvar')
-                        try:
-                            dailyobsnewvar = getattr(daily_obs, 'newvar')
-                            if obsnewvar != dailyobsnewvar:
-                                raise AttributeError
-                        except AttributeError:
-                            tempobs = SurfaceObservations(basevar= obs.basevar) # Assign to the class for alteraton
-                            tempobs.array = complete
-                            getattr(EventClassification(tempobs),getattr(obs, 'newvar'))() # Get the classifier capable of transforming the class
-                            complete = tempobs.array
-                    except AttributeError:
-                        pass
-    
+                # Prepare for removing the time dimension on this complete block, by computing the desired statistic
+                spatialdims = tuple(complete.drop('time').coords._names)
+                spatialcoords = {key:complete.coords[key].values for key in spatialdims}
                 if mean:
                     reduced = complete.mean('time', keep_attrs = True)
                 elif quant is not None:
-                    # nanquantile method based on sorting. So not compatible with xarray. Therefore feed values and restore coordinates.
-                    reduced = xr.DataArray(data = nanquantile(array = complete.values, q = quant),
-                                            coords = [complete.coords['latitude'], complete.coords['longitude']],
-                                            dims = ['latitude','longitude'], name = self.var)
+                    # invoke custom nanquantile method based on sorting. So not compatible with xarray. Therefore feed values and restore coordinates.
+                    reduced = xr.DataArray(data = nanquantile(array = complete.values, q = quant), coords = spatialcoords, dims = spatialdims, name = self.var)
                     reduced.attrs = complete.attrs
                     reduced.attrs['quantile'] = quant
                 else:
@@ -312,13 +305,13 @@ class Climatology(object):
                     except ValueError:
                         draws = complete.sel(time = np.random.choice(complete.time, size = n_draws, replace = True))
                     # Assign a number dimension to the draws.
-                    reduced = xr.DataArray(data = draws, coords = [np.arange(n_draws), complete.coords['latitude'], complete.coords['longitude']], dims = ['number','latitude','longitude'], name = self.var)
+                    spatialcoords.update({'number':np.arange(n_draws)})
+                    reduced = xr.DataArray(data = draws, coords = spatialcoords, dims = ('number',) + spatialdims, name = self.var)
                 
                 # Setting a minimum on the amount of observations that went into the mean and quantile computation, and report the number of locations that went to NaN
-                number_nan = reduced.isnull().sum(['latitude','longitude']).values
+                number_nan = reduced.isnull().sum(spatialdims).values
                 reduced = reduced.where(complete.count('time') >= 10, np.nan)
-                number_nan = reduced.isnull().sum(['latitude','longitude']).values - number_nan
-                
+                number_nan = reduced.isnull().sum(spatialdims).values - number_nan
                 
                 print('computed clim of', doy, ', removed', number_nan, 'locations with < 10 obs.')
                 reduced.coords['doy'] = doy
@@ -330,8 +323,13 @@ class Climatology(object):
     def savelocalclim(self):
         
         self.construct_name(force = True)
-        particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clim.to_dataset().variables.keys()} 
-        self.clim.to_netcdf(self.filepath, encoding = particular_encoding)
+        if hasattr(self, 'clusterarray'):
+            dataset = xr.Dataset({'clustidfield':self.clusterarray,self.clim.name:self.clim})
+        else:
+            dataset = self.clim.to_dataset()
+        
+        particular_encoding = {key : obs_netcdf_encoding[key] for key in dataset.variables.keys()} 
+        dataset.to_netcdf(self.filepath, encoding = particular_encoding)
         
         
 class EventClassification(object):
@@ -444,19 +442,18 @@ class EventClassification(object):
 
 class Clustering(object):
     
-    def __init__(self, season, **kwds):
+    def __init__(self,**kwds):
         """
         Class to compute, contain and load hierarchal clusters of gridded observations.
         Possibility to supply a name here for direct loading of a saved hierarchal cluster object.
         """
-        self.season = season
-        self.basedir = '/nobackup/users/straaten/clusters/'
+        self.basedir = '/home/jsn295/Documents/climtestdir/' #'/nobackup/users/straaten/clusters/'
         self.lags = list(range(-20,21)) # possible lags used in the association between gridpoints
         self.dissim_thresholds = [0,0.005,0.01,0.025,0.05,0.1,0.2,0.3,0.4,0.5,1] # Average dissimilarity thresholds to cut the tree, into n clusters
         for key in kwds.keys():
             setattr(self, key, kwds[key])
             
-    def compute_cormat(self, obs, mapmemory = True, vectorize_lags = False):
+    def compute_cormat(self, obs, season, mapmemory = True, vectorize_lags = False):
         """
         Method to compute the 1D triangular correlation matrix between all cells in the loaded array of the supplied observation class
         The metric is the maximum correlation in a set of lagged timeseries between each pair of cells
@@ -464,6 +461,7 @@ class Clustering(object):
         Only on timeseries within the season.
         TODO: add parallel computation option
         """
+        self.season = season
         # Storing information from the obs.
         keys = ['basevar','tmin','tmax']
         for key in keys:
@@ -528,6 +526,7 @@ class Clustering(object):
     def get_clusters_at(self, level = 0):
         """
         Method to get the georeferenced cluster array at a certain dissimilarity level
+        NOTE: Because NA's are probably present, xarray will convert the integer clustid's to the float32 dtype.
         """
         self.construct_name(force = False)
         if not hasattr(self,'clusters'):
@@ -542,14 +541,14 @@ class Clustering(object):
         Name and filepath are based on the base variable (or new variable) and the relevant attributes (if present).
         The second position in the name is just 'clim' for easy recognition in the directories.
         """
-        keys = ['basevar','season','tmin','tmax']
+        keys = ['basevar','season']
         if hasattr(self, 'name') and (not force):
-            values = self.name.split(sep = '_')
+            values = self.name.split(sep = '-')
             for key in keys:
                 setattr(self, key, values[keys.index(key)])
         else:
             values = [ str(getattr(self,key)) for key in keys if hasattr(self, key)]
-            self.name = '_'.join(values)
+            self.name = '-'.join(values)
         
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
@@ -557,12 +556,34 @@ class Clustering(object):
         self.construct_name(force = True)
         particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clusters.to_dataset().variables.keys()} 
         self.clusters.to_netcdf(self.filepath, encoding = particular_encoding)
-       
-#obs = SurfaceObservations('tg')
-#obs.load(tmin = '1980-01-01', tmax = '1985-01-01', llcrnr= (64,40))
-#obs.minfilter(season='JJA', n_min_per_seas=88)
-#self = Clustering(season = 'JJA', **{'name':'tx_JJA_1980-01-01_1985-01-01'})
-#self.save_clusters()
-#self.compute_cormat(obs = obs, mapmemory=False, vectorize_lags=True)
-#self.hierarchal_clustering()
-#self.save_clusters()
+
+#highresobs = SurfaceObservations('tg')
+#highresobs.basedir = '/home/jsn295/Documents/climtestdir/'
+#highresobs.load(tmin = '1980-01-01', tmax = '1990-01-01', llcrnr= (64,40))
+
+#clust = Clustering()
+#clust.basedir = '/home/jsn295/Documents/climtestdir/'
+#clust.compute_cormat(obs = highresobs, season = 'JJA', mapmemory=False, vectorize_lags=True)
+#clust.hierarchal_clustering()
+#clust.save_clusters()
+
+#highresclim = Climatology(highresobs.basevar)
+#highresclim.basedir = '/home/jsn295/Documents/climtestdir/'
+#highresclim.localclim(obs = highresobs, mean = True, daysbefore = 5, daysafter = 5)
+
+#clusterobs = SurfaceObservations('tg')
+#clusterobs.basedir = '/home/jsn295/Documents/climtestdir/'
+#clusterobs.load(tmin = '1980-01-01', tmax = '1985-01-01', llcrnr= (64,40))
+
+#clas = EventClassification(obs = clusterobs, climatology = highresclim)
+#clas.anom()
+
+#clusterobs.aggregatespace(level = 0.005, clustername = 'tg-JJA')
+#clusterobs.savechanges()
+
+#self = Climatology(clusterobs.basevar + '-' + clusterobs.newvar)
+#self.basedir = '/home/jsn295/Documents/climtestdir/'
+#self.localclim(obs = clusterobs, daysbefore = 5, daysafter = 5)
+#self.savelocalclim()
+
+

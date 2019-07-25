@@ -112,8 +112,8 @@ class ForecastToObsAlignment(object):
                     print('Space already aligned')
             except AttributeError:
                 print('Aligning space aggregation')
-                step, what, rolling, method = obsspacemethod.split('-')
-                forecast.aggregatespace(step = float(step), method = method, by_degree = (what == 'degrees'), rolling = (rolling == 'roll'))
+                level, clustername, method = obsspacemethod.split('-')
+                forecast.aggregatespace(level = level, clustername = clustername, clusterarray = self.obs.clusterarray, method = method, skipna = True) # Forecasts will not have NA values anywhere and this speeds up the computation.
     
     def force_units(self, forecast):
         """
@@ -136,7 +136,7 @@ class ForecastToObsAlignment(object):
                 
     def match_and_write(self, newvariable = False, newvarkwargs = {}, matchtime = True, matchspace = True):
         """
-        Neirest neighbouring to match pairs. Be careful when domain of observations is larger.
+        Neirest neighbouring to match the forecast grid to the observed grid in the form of the clusterarray belonging to the observations. Be careful when domain of the (clustered) observations is larger.
         Determines the order in which space-time aggregation and classification is done based on the potential newvar.
         Also calls unit conversion for the forecasts. (the observed units of a newvariable are actually its old units)
         Creates the dataset and writes it to disk. Possibly empties basket and writes to disk 
@@ -191,9 +191,11 @@ class ForecastToObsAlignment(object):
                     if newvariable:
                         if self.obs.newvar == 'anom':
                             self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = True) # If newvar is anomaly then first new variable and then aggregation. If e.g. newvar is pop then first aggregation then transformation
+                            forecast.array = forecast.array.reindex_like(self.obs.clusterarray, method = 'nearest')
                             self.force_resolution(forecast, time = matchtime, space = matchspace)
                             forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
                         elif self.obs.newvar in ['pop','pod']: # This could even be some sort of 'binary newvariable' criterion.
+                            forecast.array = forecast.array.reindex_like(self.obs.clusterarray, method = 'nearest')
                             self.force_resolution(forecast, time = matchtime, space = matchspace)
                             forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
                             try:
@@ -201,6 +203,7 @@ class ForecastToObsAlignment(object):
                             except NameError:
                                 listofbinaries = [self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False)]
                     else:
+                        forecast.array = forecast.array.reindex_like(self.obs.clusterarray, method = 'nearest')
                         self.force_resolution(forecast, time = matchtime, space = matchspace)
                         forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
                 
@@ -208,29 +211,26 @@ class ForecastToObsAlignment(object):
                 fieldobs = self.obs.array.sel(time = date).drop('time')
                 allleadtimes = xr.concat(objs = [f.array for f in listofforecasts], 
                                                  dim = 'leadtime') # concatenates over leadtime dimension.
-                exp = allleadtimes.reindex_like(fieldobs, method='nearest') # Select nearest neighbour forecast for each observed point in space.
                 
                 # When we have created a binary new_variable like pop, the forecastlist was appended with the not-inplace transformed ones 
-                # of These we only want to retain the ensemble probability (i.e. the mean).
+                # of These we only want to retain the ensemble probability (i.e. the mean). For the binaries we only retain the probability of the event over the members (i.e. the mean)
                 try:
-                    binary = xr.concat(objs = listofbinaries,
-                                       dim = 'leadtime') # concatenates over leadtime dimension.
+                    pi = xr.concat(objs = listofbinaries,dim = 'leadtime').mean(dim = 'number') # concatenates over leadtime dimension.
                     listofbinaries.clear() # Empty for next iteration
-                    pi = binary.reindex_like(fieldobs, method='nearest').mean(dim = 'number') # only the probability of the event over the members is retained
                     # Merging, exporting to pandas and masking by dropping on NA observations.
-                    combined = xr.Dataset({'forecast':exp.drop('time'),'observation':fieldobs, 'pi':pi.drop('time')}).to_dataframe().dropna(axis = 0)
+                    combined = xr.Dataset({'forecast':allleadtimes.drop('time'),'observation':fieldobs, 'pi':pi.drop('time')}).to_dataframe().dropna(axis = 0)
                     # Unstack creates duplicates. Two extra columns (obs and pi) need to be selected. Therefore the iloc
                     temp = combined.unstack('number').iloc[:,np.append(np.arange(0,self.n_members + 1), self.n_members * 2)]
-                    temp.reset_index(inplace = True) # places latitude and all in 
+                    temp.reset_index(inplace = True) # places spatial and time dimension in the columns
                     labels = temp.columns.labels[1].tolist()
                     labels[-2:] = np.repeat(self.n_members, 2)
                 except NameError:
                     # Merging, exporting to pandas and masking by dropping on NA observations.
-                    combined = xr.Dataset({'forecast':exp.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0)
+                    combined = xr.Dataset({'forecast':allleadtimes.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0)
                     # Handle the multi-index
                     # first puts number dimension into columns. observerations are duplicated so therefore selects up to n_members +1
                     temp = combined.unstack('number').iloc[:,:(self.n_members + 1)]
-                    temp.reset_index(inplace = True) # places latitude and all in 
+                    temp.reset_index(inplace = True) # places spatial and time dimension in the columns
                     labels = temp.columns.labels[1].tolist()
                     labels[-1] = self.n_members
                 
