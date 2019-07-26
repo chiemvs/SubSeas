@@ -13,8 +13,8 @@ import pandas as pd
 import dask.dataframe as dd
 import itertools
 import properscoring as ps
-from observations import SurfaceObservations, Climatology, EventClassification
-from forecasts import Forecast
+from observations import SurfaceObservations, Climatology, EventClassification, Clustering
+from forecasts import Forecast, ModelClimatology
 from helper_functions import monthtoseasonlookup, unitconversionfactors, lastconsecutiveabove, assignmidpointleadtime
 from fitting import NGR, Logistic, ExponentialQuantile
 
@@ -112,7 +112,9 @@ class ForecastToObsAlignment(object):
                     print('Space already aligned')
             except AttributeError:
                 print('Aligning space aggregation')
-                level, clustername, method = obsspacemethod.split('-')
+                breakdown = obsspacemethod.split('-')
+                level, method = breakdown[::len(breakdown)-1] # first and last entry
+                clustername = '-'.join(breakdown[1:-1])
                 forecast.aggregatespace(level = level, clustername = clustername, clusterarray = self.obs.clusterarray, method = method, skipna = True) # Forecasts will not have NA values anywhere and this speeds up the computation.
     
     def force_units(self, forecast):
@@ -127,7 +129,7 @@ class ForecastToObsAlignment(object):
         """
         Call upon event classification on the forecast object to get the on-the-grid conversion of the base variable.
         This is classification method is the same as applied to obs and is determined by the similar name.
-        Possibly returns xarray object if inplace is False.
+        Possibly returns xarray object if inplace is False. If newvar is anom and model climatology is supplied through newvarkwargs, it should already have undergone the change in units.
         """
         newvariable = self.obs.newvar
         method = getattr(EventClassification(obs = forecast, **newvarkwargs), newvariable)
@@ -182,6 +184,9 @@ class ForecastToObsAlignment(object):
             print('written out', filepath)
             self.outfiles.append(filepath)
         
+        # Desired downcasting of the potential spatial indices we will obtain
+        indexdtypes = {'clustid':'integer','latitude':'float','longitude':'float'}
+
         for date, listofforecasts in self.forecasts.items():
             
             if listofforecasts:
@@ -190,7 +195,7 @@ class ForecastToObsAlignment(object):
                     self.force_units(forecast) # Get units correct.
                     if newvariable:
                         if self.obs.newvar == 'anom':
-                            self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = True) # If newvar is anomaly then first new variable and then aggregation. If e.g. newvar is pop then first aggregation then transformation
+                            self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = True) # If newvar is anomaly then first new variable and then aggregation. If e.g. newvar is pop then first aggregation then transformation.
                             forecast.array = forecast.array.reindex_like(self.obs.clusterarray, method = 'nearest')
                             self.force_resolution(forecast, time = matchtime, space = matchspace)
                             forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
@@ -236,9 +241,10 @@ class ForecastToObsAlignment(object):
                 
                 temp.columns.set_labels(labels, level = 1, inplace = True)
                 
-                # Downcasting latitude and longitude
-                temp[['latitude', 'longitude']] = temp[['latitude', 'longitude']].apply(pd.to_numeric, downcast = 'float')
-                # Downcasting the leadtime column
+                # Downcasting the spatial coordinates and leadtime
+                spatialcoords = list(fieldobs.dims)
+                for key in spatialcoords:
+                    temp[[key]] = temp[[key]].apply(pd.to_numeric, downcast = indexdtypes[key])
                 temp['leadtime'] = np.array(temp['leadtime'].values.astype('timedelta64[D]'), dtype = 'int8')
                 
                 # prepend with the time index.
@@ -292,7 +298,7 @@ class Comparison(object):
         self.frame = alignment.alignedobject
         self.basedir = '/nobackup_1/users/straaten/scores/'
         self.name = alignment.books_name[6:-4] + '_' + climatology.name
-        self.grouperdowncasting = {'leadtime':'integer','latitude':'float','longitude':'float'}
+        self.grouperdowncasting = {'leadtime':'integer','latitude':'float','longitude':'float','clustid':'integer','doy':'integer'}
         self.coefcols = []
         self.predcols = []
         self.boolcols = []
@@ -306,8 +312,9 @@ class Comparison(object):
         else: # Otherwise we have to create one manually
             self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']], names = [None,'number'])
         self.clim.reset_index(inplace = True)
-        self.clim.loc[:,['latitude','longitude','climatology']] = self.clim[['latitude','longitude','climatology']].apply(pd.to_numeric, downcast = 'float')
-        self.clim['doy'] = pd.to_numeric(self.clim['doy'], downcast = 'integer')
+        for key in self.grouperdowncasting.keys():
+            if key in self.clim.columns:
+                self.clim[[key]] = self.clim[[key]].apply(pd.to_numeric, downcast = self.grouperdowncasting[key])
         
         try:
             self.quantile = climatology.clim.attrs['quantile']
@@ -757,3 +764,30 @@ class ScoreAnalysis(object):
                 if average_afterwards:
                     result = result.mean(axis = 0)
             return(result)
+
+#highresobs = SurfaceObservations('tg')
+#highresobs.load(tmin = '1980-01-01', tmax = '1990-01-01', llcrnr= (64,40))
+
+#highresclim = Climatology(highresobs.basevar)
+#highresclim.localclim(obs = highresobs, mean = True, daysbefore = 5, daysafter = 5)
+
+clusterobs = SurfaceObservations('tg')
+clusterobs.load(tmin = '2000-01-01', tmax = '2001-01-01', llcrnr= (64,40))
+clusterobs.aggregatespace(level = 0.01, clustername = 'tg-JJA', method = 'max')
+
+clas = EventClassification(obs = clusterobs)
+clas.pod()
+
+#clust = Clustering()
+#clust.compute_cormat(obs = highresobs, season = 'JJA', mapmemory=False, vectorize_lags=True)
+#clust.hierarchal_clustering()
+#clust.save_clusters()
+
+#modelclim = ModelClimatology('41r1','tg', **{'name':'tg_1995-01-01_2016-01-04_1D_5_5'})
+#modelclim.local_clim()
+#modelclim.change_units(newunit = clusterobs.array.attrs['new_units'])
+
+self = ForecastToObsAlignment(season = 'JJA',cycle = '45r1',observations = clusterobs)
+self.find_forecasts()
+self.load_forecasts(n_members = 11, loadkwargs = {'llcrnr':(64,40)})
+self.match_and_write(newvariable = True)

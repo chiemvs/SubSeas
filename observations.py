@@ -429,9 +429,10 @@ class EventClassification(object):
                 climatology = self.climatology.clim.sel(doy = doy, drop = True)
             return(inputarray - climatology)
         
-        result = xr.DataArray(data = doygroups.apply(subtraction), coords = self.obs.array.coords, dims= self.obs.array.dims,
-                                attrs = {'long_name':'-'.join([self.obs.basevar, 'anomalies']), 'units':self.old_units, 'new_units':self.old_units},
-                                name = '-'.join([self.obs.basevar, 'anom']))
+        subtracted = doygroups.apply(subtraction)
+        result = subtracted.drop('dayofyear')
+        result.attrs = {'long_name':'-'.join([self.obs.basevar, 'anomalies']), 'units':self.old_units, 'new_units':self.old_units}
+        result.name = '-'.join([self.obs.basevar, 'anom'])
         
         if inplace:
             self.obs.array = result
@@ -447,7 +448,7 @@ class Clustering(object):
         Class to compute, contain and load hierarchal clusters of gridded observations.
         Possibility to supply a name here for direct loading of a saved hierarchal cluster object.
         """
-        self.basedir = '/home/jsn295/Documents/climtestdir/' #'/nobackup/users/straaten/clusters/'
+        self.basedir = '/nobackup/users/straaten/clusters/'
         self.lags = list(range(-20,21)) # possible lags used in the association between gridpoints
         self.dissim_thresholds = [0,0.005,0.01,0.025,0.05,0.1,0.2,0.3,0.4,0.5,1] # Average dissimilarity thresholds to cut the tree, into n clusters
         for key in kwds.keys():
