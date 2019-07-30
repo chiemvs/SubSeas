@@ -282,7 +282,7 @@ def assignmidpointleadtime(frame, timeagg = None):
     Or on a unique frame and with the string timeagg supplied.
     """
     temp = frame.reset_index()
-    pos_uncor_indices = ['spaceagg','latitude','longitude','quantile']
+    pos_uncor_indices = ['spaceagg','latitude','longitude','quantile','clustid']
     try:
         timeagg = temp['timeagg'].values[0]
     except KeyError:

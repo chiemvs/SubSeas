@@ -116,10 +116,11 @@ class SurfaceObservations(object):
                 full = xr.open_dataarray(self.filepath,  chunks= lazychunk)
         except ValueError:
             if lazychunk is None:
-                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield')
+                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold')
             else:
-                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield', chunks= lazychunk)
+                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield', chunks= lazychunk).drop('dissim_threshold')
             self.clusterarray = xr.open_dataarray(self.filepath, drop_variables = full.name)
+            self.clusterarray.name = 'clustid'
             
         # Full range if no timelimits were given
         if tmin is None:
@@ -269,7 +270,8 @@ class Climatology(object):
             self.clim = xr.open_dataarray(self.filepath)
             print('climatology directly loaded')
         except ValueError:
-            self.clim = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield') # Also load the clustidfield if present??
+            self.clim = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold') # Also load the clustidfield if present??
+            print('climatology directly loaded')
         except OSError:
         
             if quant is not None:
@@ -449,7 +451,7 @@ class Clustering(object):
         Possibility to supply a name here for direct loading of a saved hierarchal cluster object.
         """
         self.basedir = '/nobackup/users/straaten/clusters/'
-        self.lags = list(range(-20,21)) # possible lags used in the association between gridpoints
+        self.lags = list(range(-15,16)) # possible lags used in the association between gridpoints
         self.dissim_thresholds = [0,0.005,0.01,0.025,0.05,0.1,0.2,0.3,0.4,0.5,1] # Average dissimilarity thresholds to cut the tree, into n clusters
         for key in kwds.keys():
             setattr(self, key, kwds[key])
@@ -472,6 +474,7 @@ class Clustering(object):
         subsetaxis = obs.array.time.dt.season == self.season
         subset = obs.array.sel(time = subsetaxis).stack({'latlon':['latitude','longitude']}).dropna('latlon','all')
         self.spaceindex = subset.coords['latlon'].copy()
+        self.spacefield = obs.array[0].drop('time')
         
         # Created multiple shifted version of the timeseries by shifting and reindexing
         # because we are dealing with a seasonal subset so a non-continuous time axis
@@ -522,7 +525,7 @@ class Clustering(object):
         
         # Extract the clusters from the tree at the average dissimilarity thresholds
         ids = np.squeeze(sch.cut_tree(self.Z, height=self.dissim_thresholds))
-        self.clusters = xr.DataArray(ids, dims = ['latlon','dissim_threshold'], coords = {'dissim_threshold':self.dissim_thresholds,'latlon':self.spaceindex}, name = 'clustid').unstack('latlon')
+        self.clusters = xr.DataArray(ids, dims = ['latlon','dissim_threshold'], coords = {'dissim_threshold':self.dissim_thresholds,'latlon':self.spaceindex}, name = 'clustid').unstack('latlon').reindex_like(self.spacefield)
         
     def get_clusters_at(self, level = 0):
         """
@@ -558,15 +561,14 @@ class Clustering(object):
         particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clusters.to_dataset().variables.keys()} 
         self.clusters.to_netcdf(self.filepath, encoding = particular_encoding)
 
-#highresobs = SurfaceObservations('tg')
-#highresobs.basedir = '/home/jsn295/Documents/climtestdir/'
-#highresobs.load(tmin = '1980-01-01', tmax = '1990-01-01', llcrnr= (64,40))
+#obs = SurfaceObservations('tg')
+#obs.load(tmin = '1989-01-01', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40))
+#obs.minfilter(season = 'DJF', n_min_per_seas = 80)
 
-#clust = Clustering()
-#clust.basedir = '/home/jsn295/Documents/climtestdir/'
-#clust.compute_cormat(obs = highresobs, season = 'JJA', mapmemory=False, vectorize_lags=True)
-#clust.hierarchal_clustering()
-#clust.save_clusters()
+#self = Clustering()
+#self.compute_cormat(obs = obs, season = 'DJF', mapmemory=True, vectorize_lags=False)
+#self.hierarchal_clustering()
+#self.save_clusters()
 
 #highresclim = Climatology(highresobs.basevar)
 #highresclim.basedir = '/home/jsn295/Documents/climtestdir/'

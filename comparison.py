@@ -402,7 +402,10 @@ class Comparison(object):
         Based on day-of-year, writes an extra column to the dataframe with 'climatology', either a numeric quantile, or a climatological probability of occurrence.
         """
         self.frame['doy'] = self.frame['time'].dt.dayofyear.astype('int16')
-        self.frame = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
+        if 'clustid' in self.frame.columns:
+            self.frame = self.frame.merge(self.clim, on = ['doy', 'clustid'], how = 'left')
+        else:
+            self.frame = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
         print('climatology lazily merged with frame')
     
     def compute_predictors(self, pp_model):
@@ -464,11 +467,6 @@ class Comparison(object):
                 self.merge_to_clim()
                 self.frame['corrected'] = self.frame.map_partitions(predfunc, **{'quant_col':'climatology'}, meta = ('corrected','float32'))
 
-    def add_custom_groups(self):
-        """
-        Add groups that are for instance chosen with clustering in observations. Based on lat-lon coding.
-        """
-    
     def brierscore(self):
         """
         Computes the climatological and raw scores.
@@ -514,7 +512,7 @@ class Comparison(object):
             """
             Wrapper for discrete ensemble crps scoring. Finds observations and forecasts to supply to the properscoring function
             """
-            return(ps.crps_ensemble(observations = frame['observation'], forecasts = frame[forecasttype])) # Not sure if this will provide the needed array type to ps
+            return(ps.crps_ensemble(observations = frame['observation'], forecasts = frame[forecasttype]).astype('float32')) # Not sure if this will provide the needed array type to ps
             
         for forecasttype in ['forecast','climatology','corrected']: 
             if forecasttype in self.frame.columns: # Only score the corrected when present.
@@ -563,6 +561,7 @@ class ScoreAnalysis(object):
     def load(self):
         """
         Searches for relevant columns to load. Should find either _bs in certain columns or _crps
+        Also searches for what the spatial coordinates are, either ['latitude','longitude'] or ['clustid']
         """
         with pd.HDFStore(path=self.filepath, mode='r') as hdf:
             allcolslevelzero = pd.Index([ tup[0] for tup in  hdf.get_storer('scores').non_index_axes[0][1] ])
@@ -572,7 +571,11 @@ class ScoreAnalysis(object):
         elif allcolslevelzero.str.contains('_crps').any():
             self.scorecols = allcolslevelzero[allcolslevelzero.str.contains('_crps')].tolist()
             self.output = '_crpss'
-        self.frame = dd.read_hdf(self.filepath, key = 'scores', columns = self.scorecols + ['leadtime','latitude','longitude'])
+        if 'clustid' in allcolslevelzero:
+            self.spatcoords = ['clustid']
+        else:
+            self.spatcoords = ['latitude','longitude']
+        self.frame = dd.read_hdf(self.filepath, key = 'scores', columns = self.scorecols + self.spatcoords + ['leadtime'])
         self.frame.columns = self.frame.columns.droplevel(1)
         
         # Some preparation for computing and returning scores in the methods below.
@@ -634,10 +637,10 @@ class ScoreAnalysis(object):
                 return(res)
                 
         # Read an extra column. Namely the observed column on which we want to compute the length.
-        tempframe = dd.read_hdf(self.filepath, key = 'scores', columns = ['observation','time','latitude','longitude'])
+        tempframe = dd.read_hdf(self.filepath, key = 'scores', columns = ['observation','time'] + self.spatcoords)
         tempframe.columns = tempframe.columns.droplevel(1)
         # Do stuff per location
-        self.charlengths = tempframe.groupby(['latitude','longitude']).apply(auto_cor, meta = ('charlength','float32'), **{'freq':self.timeagg,'cutofflag':20}).compute()
+        self.charlengths = tempframe.groupby(self.spatcoords).apply(auto_cor, meta = ('charlength','float32'), **{'freq':self.timeagg,'cutofflag':20}).compute()
         
         # Quality control needed. Values below 1 are set to 1 (reduces later to normal bootstrapping)
         self.charlengths[self.charlengths < 1] = 1
@@ -657,7 +660,7 @@ class ScoreAnalysis(object):
         if fixsize:
             maxcount = fixsize
             if not isinstance(fixsize, int):
-                maxcount = self.frame.groupby(['leadtime','latitude','longitude'])[self.climcol].count().max().compute()
+                maxcount = self.frame.groupby(['leadtime'] + self.spatcoords)[self.climcol].count().max().compute()
             print(maxcount)
         
         def fix_sample_score(df, n_samples, fixed_size = None):
@@ -670,9 +673,9 @@ class ScoreAnalysis(object):
             with local records of uneven length.
             The local blocklength is read from the self.charlengths attribute.
             """
-            blocklength = self.charlengths.loc[(df['latitude'].iloc[0],df['longitude'].iloc[0])]
-            blocklength = int(np.ceil(blocklength))
+            blocklength = self.charlengths.loc[tuple(df[self.spatcoords].iloc[0])]
             #print(blocklength)
+            blocklength = int(np.ceil(blocklength))
             setlength = len(df)
             if fixed_size is None:
                 size = setlength
@@ -693,7 +696,7 @@ class ScoreAnalysis(object):
             
             return(pd.DataFrame(local_result, index = pd.RangeIndex(n_samples, name = 'samples')))
         
-        grouped =  self.frame.groupby(['leadtime','latitude','longitude']) # Dask grouping
+        grouped =  self.frame.groupby(['leadtime'] + self.spatcoords) # Dask grouping
         sample_scores = grouped.apply(fix_sample_score,
                                meta = pd.DataFrame(dtype='float32', columns = self.returncols, index = pd.RangeIndex(n_samples)),
                                **{'n_samples':n_samples, 'fixed_size':maxcount if fixsize else None })
@@ -710,9 +713,9 @@ class ScoreAnalysis(object):
         Always a mid-point leadtime correction is performed.
         """
         skills = pd.read_hdf(self.filepath, key = 'bootstrap') # DaskDataframe would give issues related to this https://github.com/dask/dask/issues/4643
-        
+        groupers = list(skills.index.names)
         if local:
-            groupers = ['leadtime','latitude','longitude']
+            groupers.remove('samples')
         else:
             groupers = ['leadtime']
             skills = skills.groupby(['leadtime','samples']).mean()
@@ -766,28 +769,24 @@ class ScoreAnalysis(object):
             return(result)
 
 #highresobs = SurfaceObservations('tg')
-#highresobs.load(tmin = '1980-01-01', tmax = '1990-01-01', llcrnr= (64,40))
-
+#highresobs.load(tmin = '2000-01-01', tmax = '2005-12-31',  llcrnr= (64,40))
+#highresobs.minfilter(season = 'DJF', n_min_per_seas = 80)
+#highresobs.aggregatespace(level = 0.01, clustername = 'tg-JJA', method = 'mean') 
+#        
 #highresclim = Climatology(highresobs.basevar)
-#highresclim.localclim(obs = highresobs, mean = True, daysbefore = 5, daysafter = 5)
+#highresclim.localclim(obs = highresobs, mean = False, n_draws=11, daysbefore = 5, daysafter = 5)
+#       
+#align = ForecastToObsAlignment('JJA', '45r1')
+#align.recollect(booksname = 'books_tg-anom_JJA_45r1_1D_0.01-tg-JJA-mean.csv')
+#
+#comp = Comparison(align, climatology=highresclim)
+#comp.fit_pp_models(NGR(), groupers = ['clustid'])
+#comp.make_pp_forecast(NGR(), n_members=11)
+#comp.crpsscore()
+#comp.export(fits = False, frame = True)
 
-clusterobs = SurfaceObservations('tg')
-clusterobs.load(tmin = '2000-01-01', tmax = '2001-01-01', llcrnr= (64,40))
-clusterobs.aggregatespace(level = 0.01, clustername = 'tg-JJA', method = 'max')
-
-clas = EventClassification(obs = clusterobs)
-clas.pod()
-
-#clust = Clustering()
-#clust.compute_cormat(obs = highresobs, season = 'JJA', mapmemory=False, vectorize_lags=True)
-#clust.hierarchal_clustering()
-#clust.save_clusters()
-
-#modelclim = ModelClimatology('41r1','tg', **{'name':'tg_1995-01-01_2016-01-04_1D_5_5'})
-#modelclim.local_clim()
-#modelclim.change_units(newunit = clusterobs.array.attrs['new_units'])
-
-self = ForecastToObsAlignment(season = 'JJA',cycle = '45r1',observations = clusterobs)
-self.find_forecasts()
-self.load_forecasts(n_members = 11, loadkwargs = {'llcrnr':(64,40)})
-self.match_and_write(newvariable = True)
+#test = ScoreAnalysis(scorefile='tg-anom_JJA_45r1_1D_0.01-tg-JJA-mean_tg_clim_2000-01-01_2005-12-31_1D_0.01-tg-JJA-mean_5_5_rand', timeagg = '1D', rolling = True)
+#test.load()
+#test.characteristiclength()
+#test.block_bootstrap_local_skills(n_samples = 2, fixsize = False)
+#res = test.process_bootstrapped_skills(local = True, forecast_horizon=False, average_afterwards=True)

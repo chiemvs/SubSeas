@@ -467,7 +467,7 @@ class ModelClimatology(object):
         """
         Name and filepath are based on the base variable and the relevant attributes (if present).
         """
-        keys = ['var','tmin','tmax', 'timemethod', 'daysbefore', 'daysafter']
+        keys = ['var','cycle','tmin','tmax', 'timemethod', 'daysbefore', 'daysafter']
         if hasattr(self, 'name') and (not force):
             values = self.name.split(sep = '_')
             for key in keys:
