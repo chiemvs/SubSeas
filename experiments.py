@@ -303,10 +303,10 @@ class Experiment(object):
 dask.config.set(temporary_directory='/nobackup_1/users/straaten/')
 
 """
-Experiment 25 Test for cluster based aggregation
+Experiment 25 Test for cluster based aggregation, regular temperatures, some post-processing, 
 """
-#test = Experiment(expname = 'clustest', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-JJA',
-#                 method = 'mean', timeaggregations= ['2D'], spaceaggregations=[0,0.01], quantiles = None)
+#test = Experiment(expname = 'clus25', basevar = 'tg', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+#                 method = 'mean', timeaggregations= ['1D','2D','4D'], spaceaggregations=[0,0.01], quantiles = None)
 #test.setuplog()
 #test.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '2000-01-01', climtmax = '2005-12-31',  llcrnr= (64,40)))
 #test.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '2000-01-02', tmax = '2001-10-01', llcrnr= (64,40)))
