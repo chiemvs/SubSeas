@@ -320,3 +320,31 @@ def vcorrcoef2D(X,y):
     r_den = np.sqrt(np.nansum((X-Xm)**2,axis=0)*np.nansum((y-ym)**2))
     r = r_num/r_den
     return(r)
+
+def georeference(data, clusterarray):
+    """
+    Will match the data (either array form or dataframe) by clustid to the geolocations of the clusterarray.
+    Returns the data in array form with latitude and longitude coordinates. If the supplied dataframe contained multiple variables then these are all returned as dataset.
+    """
+    if isinstance(data, xr.DataArray):
+        data = data.to_dataframe().drop('dissim_threshold', axis = 1, errors = 'ignore')
+    elif isinstance(data, pd.DataFrame):
+        pass
+    else:
+        raise TypeError('Incorrect datatype. provide pandas dataframe or xr dataarray')
+    
+    clusterframe = clusterarray.to_dataframe().drop('dissim_threshold', axis = 1, errors = 'ignore').dropna(axis = 0)
+    
+    assert clusterframe.index.names == ['latitude','longitude'] or clusterframe.index.names == ['longitude','latitude']
+    
+    # Retaining only clustid as an index, or setting it if it was in the columns.
+    dataindices = list(data.index.names)
+    if 'clustid' in dataindices:
+        dataindices.remove('clustid')
+        data.reset_index(level = dataindices, inplace = True)
+    else:
+        data.reset_index(level = None, inplace = True)
+        data.set_index('clustid', inplace = True)
+    
+    result = pd.merge(left = data, right = clusterframe, how = 'inner', on = 'clustid', left_index = True).set_index(dataindices, append = True).drop('clustid', axis = 1)
+    return(result.to_xarray())

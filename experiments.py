@@ -303,16 +303,25 @@ class Experiment(object):
 dask.config.set(temporary_directory='/nobackup_1/users/straaten/')
 
 """
-Experiment 25 Test for cluster based aggregation, regular temperatures, some post-processing, 
+Experiment 25 Test for cluster based aggregation, regular temperatures, some post-processing, only the larger end of spatial aggregation.
+Split into two parts for parallel matching
 """
-#test = Experiment(expname = 'clus25', basevar = 'tg', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
-#                 method = 'mean', timeaggregations= ['1D','2D','4D'], spaceaggregations=[0,0.01], quantiles = None)
+#test = Experiment(expname = 'clustga25', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+#                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D'], spaceaggregations=[0.1,0.2,0.3,0.5,1], quantiles = None)
 #test.setuplog()
-#test.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '2000-01-01', climtmax = '2005-12-31',  llcrnr= (64,40)))
-#test.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '2000-01-02', tmax = '2001-10-01', llcrnr= (64,40)))
-#test.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '2000-01-02', climtmax = '2005-12-31', llcrnr= (64,40)))
-#test.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '2000-11-15', climtmax = '2016-05-01', llcrnr= (64,40)))
-#test.iterateaggregations(func = 'match', column = 'booksname', overwrite = True, kwargs = {'loadkwargs' : dict(llcrnr= (64,40))})
+#test.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#test.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#test.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#test.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40)))
+#test.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
 #test.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
-#test.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 50, fixsize = False)})
+#test.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
 #test.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0.2, average_afterwards = True)})
+
+#test2 = Experiment(expname = 'clustga25b', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+#                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D'], spaceaggregations=[0.05], quantiles = None)
+#test2.setuplog()
+##test2.log.loc[(0.05, slice(None)),:] = test.log.loc[(0.05, slice(None)),:]
+##test2.savelog()
+#test2.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
+#

@@ -451,7 +451,7 @@ class Clustering(object):
         Possibility to supply a name here for direct loading of a saved hierarchal cluster object.
         """
         self.basedir = '/nobackup/users/straaten/clusters/'
-        self.lags = list(range(-15,16)) # possible lags used in the association between gridpoints
+        self.lags = list(range(-20,21)) # possible lags used in the association between gridpoints
         self.dissim_thresholds = [0,0.005,0.01,0.025,0.05,0.1,0.15,0.2,0.3,0.4,0.5,1] # Average dissimilarity thresholds to cut the tree, into n clusters
         for key in kwds.keys():
             setattr(self, key, kwds[key])
