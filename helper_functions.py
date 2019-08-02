@@ -347,4 +347,4 @@ def georeference(data, clusterarray):
         data.set_index('clustid', inplace = True)
     
     result = pd.merge(left = data, right = clusterframe, how = 'inner', on = 'clustid', left_index = True).set_index(dataindices, append = True).drop('clustid', axis = 1)
-    return(result.to_xarray())
+    return(result.to_xarray().reindex_like(clusterarray))
