@@ -24,7 +24,7 @@ class ForecastToObsAlignment(object):
     This searches the corresponding forecasts, and possibly forces the same aggregations.
     TODO: not sure how to handle groups yet.
     """
-    def __init__(self, season, cycle, observations = None, **kwds):
+    def __init__(self, season, cycle, n_members = 11,  observations = None, **kwds):
         """
         Temporal extend can be read from the attributes of the observation class. 
         Specify the season under inspection for subsetting.
@@ -32,6 +32,7 @@ class ForecastToObsAlignment(object):
         self.basedir = '/nobackup_1/users/straaten/match/'
         self.cycle = cycle
         self.season = season
+        self.n_members = n_members
         if observations is not None:
             self.obs = observations
             self.dates = self.obs.array.coords['time'].to_series() # Left stamped
@@ -44,41 +45,38 @@ class ForecastToObsAlignment(object):
         for key in kwds.keys():
             setattr(self, key, kwds[key])
     
-    def find_forecasts(self):
+    def find_forecasts(self, date):
         """
         Here the forecasts corresponding to the observations are determined, by testing their existence.
         Hindcasts and forecasts might be mixed. But they are in the same class.
         Leadtimes may differ.
-        """
-        self.forecasts = {}
-        for date in self.dates.tolist():
-            # Find forecast initialization times that fully contain the observation date (including its window for time aggregation)
-            containstart = date + pd.Timedelta(str(self.time_agg) + 'D') - pd.Timedelta(str(self.maxleadtime) + 'D')
-            containend = date
-            contain = pd.date_range(start = containstart, end = containend, freq = 'D').strftime('%Y-%m-%d')
-            forecasts = [Forecast(indate, prefix = 'for_', cycle = self.cycle) for indate in contain]
-            hindcasts = [Forecast(indate, prefix = 'hin_', cycle = self.cycle) for indate in contain]
-            # select from potential forecasts only those that exist.
-            forecasts = [f for f in forecasts if os.path.isfile(f.basedir + f.processedfile)]
-            hindcasts = [h for h in hindcasts if os.path.isfile(h.basedir + h.processedfile)]
-            self.forecasts.update({date : forecasts + hindcasts})   
+        Returns an empty list if non were found
+        """       
+        # Find forecast initialization times that fully contain the observation date (including its window for time aggregation)
+        containstart = date + pd.Timedelta(str(self.time_agg) + 'D') - pd.Timedelta(str(self.maxleadtime) + 'D')
+        containend = date
+        contain = pd.date_range(start = containstart, end = containend, freq = 'D').strftime('%Y-%m-%d')
+        forecasts = [Forecast(indate, prefix = 'for_', cycle = self.cycle) for indate in contain]
+        hindcasts = [Forecast(indate, prefix = 'hin_', cycle = self.cycle) for indate in contain]
+        # select from potential forecasts only those that exist.
+        forecasts = [f for f in forecasts if os.path.isfile(f.basedir + f.processedfile)]
+        hindcasts = [h for h in hindcasts if os.path.isfile(h.basedir + h.processedfile)]
+        return(forecasts + hindcasts)
         
-    def load_forecasts(self, n_members, loadkwargs = {}):
+    def load_forecasts(self, date, listofforecasts, loadkwargs = {}):
         """
         Gets the daily processed forecasts into memory. Delimited by the left timestamp and the aggregation time.
         This is done by using the load method of each Forecast class in the dictionary. They are stored in a list.
         Loadkwargs can carry the delimiting spatial corners if only a part of the domain is desired.
-        """
-        for date, listofforecasts in self.forecasts.items():
-            
-            if listofforecasts: # empty lists are skipped
-                tmin = date
-                tmax = date + pd.Timedelta(str(self.time_agg - 1) + 'D') # -1 because date itself also counts for one day in the aggregation.
-                
-                for forecast in listofforecasts:
-                    forecast.load(variable = self.obs.basevar, tmin = tmin, tmax = tmax, n_members = n_members, **loadkwargs)
-        
-        self.n_members = n_members
+        """ 
+        tmin = date
+        tmax = date + pd.Timedelta(str(self.time_agg - 1) + 'D') # -1 because date itself also counts for one day in the aggregation.
+       
+        if hasattr(self,'loadkwargs'):
+            loadkwargs = getattr(self,'loadkwargs')
+
+        for forecast in listofforecasts:
+            forecast.load(variable = self.obs.basevar, tmin = tmin, tmax = tmax, n_members = self.n_members, **loadkwargs)
      
     def force_resolution(self, forecast, time = True, space = True):
         """
@@ -148,6 +146,7 @@ class ForecastToObsAlignment(object):
         from datetime import datetime
         
         aligned_basket = []
+        aligned_basket_size = 0 # Size of the content in the basket. Used to determine when to write
         self.outfiles = []
         
         # Make sure the first parts are recognizable as the time method and the space method. Make last part unique
@@ -187,9 +186,13 @@ class ForecastToObsAlignment(object):
         # Desired downcasting of the potential spatial indices we will obtain
         indexdtypes = {'clustid':'integer','latitude':'float','longitude':'float'}
 
-        for date, listofforecasts in self.forecasts.items():
+        for date in self.dates:
+            
+            listofforecasts = self.find_forecasts(date) # Results in empty list if none were found
             
             if listofforecasts:
+                
+                self.load_forecasts(date = date, listofforecasts = listofforecasts) # Does this modify listofforecasts inplace?
                 
                 for forecast in listofforecasts:
                     self.force_units(forecast) # Get units correct.
@@ -250,13 +253,14 @@ class ForecastToObsAlignment(object):
                 # prepend with the time index.
                 temp.insert(0, 'time', date)
                 aligned_basket.append(temp)
-                self.forecasts[date].clear()
                 print(date, 'matched')
                 
-                # If aligned takes too much system memory (> 1Gb) . Write it out
-                if sys.getsizeof(aligned_basket[0]) * len(aligned_basket) > 1*10**9:
+                # If aligned takes too much system memory (> 500Mb) . Write it out
+                aligned_basket_size += sys.getsizeof(temp)
+                if aligned_basket_size > 5*10**8:
                     write_outfile(aligned_basket, newvariable=newvariable)
                     aligned_basket = []
+                    aligned_basket_size = 0
         
         # After last loop also write out 
         if aligned_basket:
