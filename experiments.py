@@ -225,7 +225,7 @@ class Experiment(object):
                     firstfitgroupers = comp.fitgroupers
                     firstfitcoefcols = comp.coefcols
                 else:
-                    comp.fits = pd.read_hdf(comp.basedir + firstfitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
+                    comp.fits = dd.read_hdf(comp.basedir + firstfitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
                     comp.fitgroupers = firstfitgroupers
                     comp.coefcols = firstfitcoefcols
                 comp.make_pp_forecast(pp_model = pp_model)
@@ -305,7 +305,7 @@ Experiment 25 Test for cluster based aggregation, regular temperatures, some pos
 Split into two parts for parallel matching
 """
 #test = Experiment(expname = 'clustga25', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
-#                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D'], spaceaggregations=[0.1,0.2,0.3,0.5,1], quantiles = None)
+#                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D'], spaceaggregations=[0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
 #test.setuplog()
 #test.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #test.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
@@ -314,7 +314,7 @@ Split into two parts for parallel matching
 #test.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
 #test.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
 #test.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-#test.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold = 0)})
+#test.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = False, fitquantiles = False, forecast_horizon = False)})
 
 #test2 = Experiment(expname = 'clustga25b', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
 #                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D'], spaceaggregations=[0.05], quantiles = None)
@@ -328,14 +328,14 @@ Split into two parts for parallel matching
 """
 Experiment 26 Highest resolution, regular temperature, temperature anomalies and binarized precipitation. Two seasons each. Currently mean scoring.
 """
-#tgDJF = Experiment(expname = 'hr26tgDJF', basevar = 'tg', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
-#        method = 'mean', timeaggregations = ['1D'], spaceaggregations = [0], quantiles = None)
-#tgDJF.setuplog()
+tgDJF = Experiment(expname = 'hr26tgDJF', basevar = 'tg', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+        method = 'mean', timeaggregations = ['1D'], spaceaggregations = [0], quantiles = None)
+tgDJF.setuplog()
 #tgDJF.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #tgDJF.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #tgDJF.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
-#tgDJF.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(), 'store_minimum':True})
-#tgDJF.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped':False, 'analysiskwargs':dict(groupers = ['leadtime','clustid'])})
+tgDJF.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(), 'store_minimum':True})
+tgDJF.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped':False, 'analysiskwargs':dict(groupers = ['leadtime','clustid'])})
 #
 #tgJJA = Experiment(expname = 'hr26tgJJA', basevar = 'tg', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-DJF',
 #        method = 'mean', timeaggregations = ['1D'], spaceaggregations = [0], quantiles = None)

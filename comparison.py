@@ -13,6 +13,8 @@ import pandas as pd
 import dask.dataframe as dd
 import itertools
 import properscoring as ps
+import uuid
+from datetime import datetime
 from observations import SurfaceObservations, Climatology, EventClassification, Clustering
 from forecasts import Forecast, ModelClimatology
 from helper_functions import monthtoseasonlookup, unitconversionfactors, lastconsecutiveabove, assignmidpointleadtime
@@ -142,8 +144,6 @@ class ForecastToObsAlignment(object):
         Creates the dataset and writes it to disk. Possibly empties basket and writes to disk 
         at intermediate steps if intermediate results press too much on memory.
         """
-        import uuid
-        from datetime import datetime
         
         aligned_basket = []
         aligned_basket_size = 0 # Size of the content in the basket. Used to determine when to write
@@ -379,7 +379,7 @@ class Comparison(object):
         fitreturns = dict(itertools.product(pp_model.model_coefs, ['float32']))
         # Store some information. We have unique times when all possible groupers are provided, and there is no pooling.
         self.fitgroupers = groupers
-        uniquetimes = all([(group in groupers) for group in list(self.grouperdowncasting.keys())])
+        uniquetimes = all([(g in ['leadtime','latitude','longitude']) for g in groupers]) or all([(g in ['leadtime','clustid']) for g in groupers])
         self.coefcols = pp_model.model_coefs
         
         # Actual computation. Passing information to cv_fit.
@@ -387,18 +387,7 @@ class Comparison(object):
         self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 
                                                                 'fitfunc':fitfunc, 
                                                                 'modelcoefs':pp_model.model_coefs,
-                                                                'uniquetimes':uniquetimes}).compute()
-        
-        # Reset the multiindex created by the grouping to columns so that the fits can be stored in hdf table format.
-        # The created index has 64 bits. we want to downcast leadtime to int8, latitude and longitude to float32
-        self.fits.reset_index(inplace = True)
-        for group in list(self.grouperdowncasting.keys()):
-            try:
-                self.fits[group] = pd.to_numeric(self.fits[group], downcast = self.grouperdowncasting[group])
-            except KeyError:
-                pass
-        self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']]) # To be able to merge with self.frame
-        print('models fitted for all groups')
+                                                                'uniquetimes':uniquetimes}) #.compute()
 
     
     def merge_to_clim(self):
@@ -532,7 +521,21 @@ class Comparison(object):
 
         self.filepath = self.basedir + self.name + '.h5'
         if fits:
+            # Temporary store to file, to write the grouping multi-index. Then reset the indicise, downcast where possible and write the final one
+            tempfile = self.basedir + uuid.uuid4().hex + '.h5'
+            self.fits.to_hdf(tempfile, key = 'fits')
+            print('all models have been fitted')
+            self.fits = dd.read_hdf(tempfile, key = 'fits').reset_index()
+            for group in list(self.grouperdowncasting.keys()):
+                try:
+                    self.fits[group] = self.fits[group].map_partitions(pd.to_numeric, **{'downcast':self.grouperdowncasting[group]}) # pd.to_numeric(self.fits[group], downcast = self.grouperdowncasting[group])
+                except KeyError:
+                    pass
+            self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']]) # To be able to merge with self.frame
             self.fits.to_hdf(self.filepath, key = 'fits', format = 'table', **{'mode':'a'})
+            self.fits = dd.read_hdf(self.filepath, key = 'fits').reset_index()
+            print('all models downcasted, saved and reloaded')
+            os.remove(tempfile)
         if frame:
             if store_minimum:
                 discard = ['climatology','forecast', 'corrected', 'doy', 'pi', 'oi'] + self.boolcols + self.coefcols + self.predcols
