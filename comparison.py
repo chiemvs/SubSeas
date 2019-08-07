@@ -523,7 +523,7 @@ class Comparison(object):
         if fits:
             # Temporary store to file, to write the grouping multi-index. Then reset the indicise, downcast where possible and write the final one
             tempfile = self.basedir + uuid.uuid4().hex + '.h5'
-            self.fits.to_hdf(tempfile, key = 'fits')
+            self.fits.to_hdf(tempfile, key = 'fits', scheduler = 'threads')
             print('all models have been fitted')
             self.fits = dd.read_hdf(tempfile, key = 'fits').reset_index()
             for group in list(self.grouperdowncasting.keys()):
@@ -533,7 +533,7 @@ class Comparison(object):
                     pass
             self.fits.columns = pd.MultiIndex.from_product([self.fits.columns, ['']]) # To be able to merge with self.frame
             self.fits.to_hdf(self.filepath, key = 'fits', format = 'table', **{'mode':'a'})
-            self.fits = dd.read_hdf(self.filepath, key = 'fits').reset_index()
+            self.fits = dd.read_hdf(self.filepath, key = 'fits')
             print('all models downcasted, saved and reloaded')
             os.remove(tempfile)
         if frame:
