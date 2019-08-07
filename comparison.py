@@ -14,17 +14,210 @@ import dask.dataframe as dd
 import itertools
 import properscoring as ps
 import uuid
+import multiprocessing
 from datetime import datetime
 from observations import SurfaceObservations, Climatology, EventClassification, Clustering
 from forecasts import Forecast, ModelClimatology
 from helper_functions import monthtoseasonlookup, unitconversionfactors, lastconsecutiveabove, assignmidpointleadtime
 from fitting import NGR, Logistic, ExponentialQuantile
 
+def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_members, cycle, maxleadtime, loadkwargs, newvarkwargs, newvariable = False, matchtime = True, matchspace = True):
+    """
+    Function to act as a child process, matching forecasts to the obs until a certain size dataframe is reached. Then that file is written, and the booksfile is updated.
+    Neirest neighbouring to match the forecast grid to the observed grid in the form of the clusterarray belonging to the observations. Be careful when domain of the (clustered) observations is larger.
+    Determines the order in which space-time aggregation and classification is done based on the potential newvar.
+    Also calls unit conversion for the forecasts. (the observed units of a newvariable are actually its old units)
+    Loadkwargs can carry the delimiting spatial corners if only a part of the domain is desired.
+    """
+    def find_forecasts(date):
+        """
+        Here the forecasts corresponding to the observations are determined, by testing their existence.
+        Hindcasts and forecasts might be mixed. But they are in the same class.
+        Leadtimes may differ.
+        Returns an empty list if non were found
+        """       
+        # Find forecast initialization times that fully contain the observation date (including its window for time aggregation)
+        containstart = date + pd.Timedelta(str(time_agg) + 'D') - pd.Timedelta(str(maxleadtime) + 'D')
+        containend = date
+        contain = pd.date_range(start = containstart, end = containend, freq = 'D').strftime('%Y-%m-%d')
+        forecasts = [Forecast(indate, prefix = 'for_', cycle = cycle) for indate in contain]
+        hindcasts = [Forecast(indate, prefix = 'hin_', cycle = cycle) for indate in contain]
+        # select from potential forecasts only those that exist.
+        forecasts = [f for f in forecasts if os.path.isfile(f.basedir + f.processedfile)]
+        hindcasts = [h for h in hindcasts if os.path.isfile(h.basedir + h.processedfile)]
+        return(forecasts + hindcasts)
+    
+    def load_forecasts(date, listofforecasts):
+        """
+        Gets the daily processed forecasts into memory. Delimited by the left timestamp and the aggregation time.
+        This is done by using the load method of each Forecast class in the dictionary. They are stored in a list.
+        """ 
+        tmin = date
+        tmax = date + pd.Timedelta(str(time_agg - 1) + 'D') # -1 because date itself also counts for one day in the aggregation.
+       
+        for forecast in listofforecasts:
+            forecast.load(variable = obs.basevar, tmin = tmin, tmax = tmax, n_members = n_members, **loadkwargs)
+     
+    def force_resolution(forecast, time = True, space = True):
+        """
+        Force the observed resolution onto the supplied Forecast. Checks if the same resolution and force spatial/temporal aggregation if that is not the case. Checks will fail on the roll-norm difference, e.g. 2D-roll-mean observations and .
+        Makes use of the methods of each Forecast class. Checks can be switched on and off. Time-rolling is never applied to the forecasts as for each date already the precise window was loaded, but space-rolling is.
+        """                
+        if time:
+            # Check time aggregation
+            obstimemethod = getattr(obs, 'timemethod')
+                        
+            try:
+                fortimemethod = getattr(forecast, 'timemethod')
+                if not fortimemethod == obstimemethod:
+                    raise AttributeError
+                else:
+                    print('Time already aligned')
+            except AttributeError:
+                print('Aligning time aggregation')
+                freq, rolling, method = obstimemethod.split('-')
+                forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True, ndayagg = time_agg, rolling = False)
+        
+        if space:
+            # Check space aggregation
+            obsspacemethod = getattr(obs, 'spacemethod')
+                
+            try:
+                forspacemethod = getattr(forecast, 'spacemethod')
+                if not forspacemethod == obsspacemethod:
+                    raise AttributeError
+                else:
+                    print('Space already aligned')
+            except AttributeError:
+                print('Aligning space aggregation')
+                breakdown = obsspacemethod.split('-')
+                level, method = breakdown[::len(breakdown)-1] # first and last entry
+                clustername = '-'.join(breakdown[1:-1])
+                forecast.aggregatespace(level = level, clustername = clustername, clusterarray = obs.clusterarray, method = method, skipna = True) # Forecasts will not have NA values anywhere and this speeds up the computation.
+    
+    def force_units(forecast):
+        """
+        Linear conversion of forecast object units to match the observed units.
+        """
+        a,b = unitconversionfactors(xunit = forecast.array.units, yunit = obs.array.units)
+        forecast.array = forecast.array * a + b
+        forecast.array.attrs = {'units': obs.array.units}
+                      
+    def force_new_variable(forecast, newvarkwargs, inplace = True):
+        """
+        Call upon event classification on the forecast object to get the on-the-grid conversion of the base variable.
+        This is classification method is the same as applied to obs and is determined by the similar name.
+        Possibly returns xarray object if inplace is False. If newvar is anom and model climatology is supplied through newvarkwargs, it should already have undergone the change in units.
+        """
+        newvariable = obs.newvar
+        method = getattr(EventClassification(obs = forecast, **newvarkwargs), newvariable)
+        return(method(inplace = inplace))
+    
+    p = multiprocessing.current_process()
+    print('Starting:', p.pid)
+    
+    aligned_basket = []
+    aligned_basket_size = 0 # Size of the content in the basket. Used to determine when to write
+    indexdtypes = {'clustid':'integer','latitude':'float','longitude':'float'}
+    
+    while (aligned_basket_size < 5*10**8) and (not datesubset.empty):
+        
+        date = datesubset.iloc[0]
+        listofforecasts = find_forecasts(date) # Results in empty list if none were found
+        
+        if listofforecasts:
+            
+            load_forecasts(date = date, listofforecasts = listofforecasts) # Does this modify listofforecasts inplace?
+            
+            for forecast in listofforecasts:
+                force_units(forecast) # Get units correct.
+                if newvariable:
+                    if obs.newvar == 'anom':
+                        force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = True) # If newvar is anomaly then first new variable and then aggregation. If e.g. newvar is pop then first aggregation then transformation.
+                        forecast.array = forecast.array.reindex_like(obs.clusterarray, method = 'nearest')
+                        force_resolution(forecast, time = matchtime, space = matchspace)
+                        forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
+                    elif obs.newvar in ['pop','pod']: # This could even be some sort of 'binary newvariable' criterion.
+                        forecast.array = forecast.array.reindex_like(obs.clusterarray, method = 'nearest')
+                        force_resolution(forecast, time = matchtime, space = matchspace)
+                        forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
+                        try:
+                            listofbinaries.append(force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False))
+                        except NameError:
+                            listofbinaries = [force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False)]
+                else:
+                    forecast.array = forecast.array.reindex_like(obs.clusterarray, method = 'nearest')
+                    force_resolution(forecast, time = matchtime, space = matchspace)
+                    forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
+            
+            # Get the correct observed and inplace forecast arrays.
+            fieldobs = obs.array.sel(time = date).drop('time')
+            allleadtimes = xr.concat(objs = [f.array for f in listofforecasts], 
+                                             dim = 'leadtime') # concatenates over leadtime dimension.
+            
+            # When we have created a binary new_variable like pop, the forecastlist was appended with the not-inplace transformed ones 
+            # of These we only want to retain the ensemble probability (i.e. the mean). For the binaries we only retain the probability of the event over the members (i.e. the mean)
+            try:
+                pi = xr.concat(objs = listofbinaries,dim = 'leadtime').mean(dim = 'number') # concatenates over leadtime dimension.
+                listofbinaries.clear() # Empty for next iteration
+                # Merging, exporting to pandas and masking by dropping on NA observations.
+                combined = xr.Dataset({'forecast':allleadtimes.drop('time'),'observation':fieldobs, 'pi':pi.drop('time')}).to_dataframe().dropna(axis = 0)
+                # Unstack creates duplicates. Two extra columns (obs and pi) need to be selected. Therefore the iloc
+                temp = combined.unstack('number').iloc[:,np.append(np.arange(0,n_members + 1), n_members * 2)]
+                temp.reset_index(inplace = True) # places spatial and time dimension in the columns
+                labels = temp.columns.labels[1].tolist()
+                labels[-2:] = np.repeat(n_members, 2)
+            except NameError:
+                # Merging, exporting to pandas and masking by dropping on NA observations.
+                combined = xr.Dataset({'forecast':allleadtimes.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0)
+                # Handle the multi-index
+                # first puts number dimension into columns. observerations are duplicated so therefore selects up to n_members +1
+                temp = combined.unstack('number').iloc[:,:(n_members + 1)]
+                temp.reset_index(inplace = True) # places spatial and time dimension in the columns
+                labels = temp.columns.labels[1].tolist()
+                labels[-1] = n_members
+            
+            temp.columns.set_labels(labels, level = 1, inplace = True)
+            
+            # Downcasting the spatial coordinates and leadtime
+            spatialcoords = list(fieldobs.dims)
+            for key in spatialcoords:
+                temp[[key]] = temp[[key]].apply(pd.to_numeric, downcast = indexdtypes[key])
+            temp['leadtime'] = np.array(temp['leadtime'].values.astype('timedelta64[D]'), dtype = 'int8')
+            
+            # prepend with the time index.
+            temp.insert(0, 'time', date)
+            aligned_basket.append(temp)
+            print(date, 'matched')
+            
+            # If aligned takes too much system memory (> 500Mb) . Write it out
+            aligned_basket_size += sys.getsizeof(temp)
+            datesubset = datesubset.drop(date)
+    
+    dataset = pd.concat(aligned_basket)
+    dataset.to_hdf(outfilepath, key = 'intermediate', format = 'table')
+    
+    books = pd.DataFrame({'file':[outfilepath],
+                          'tmax':[dataset.time.max().strftime('%Y-%m-%d')],
+                          'tmin':[dataset.time.min().strftime('%Y-%m-%d')],
+                          'unit':[obs.array.units],
+                          'write_date':[datetime.now().strftime('%Y-%m-%d_%H:%M:%S')]})
+    
+    # Create booksfile if it does not exist, otherwise append to it.
+    try:
+        with open(books_path, 'x') as f:
+            books.to_csv(f, header=True, index = False)
+    except FileExistsError:
+        with open(books_path, 'a') as f:
+            books.to_csv(f, header = False, index = False)
+    print('written out', outfilepath)
+    print('Exiting:', p.pid)
+
+
 class ForecastToObsAlignment(object):
     """
     Idea is: you have already prepared an observation class, with a certain variable, temporal extend and space/time aggregation.
-    This searches the corresponding forecasts, and possibly forces the same aggregations.
-    TODO: not sure how to handle groups yet.
+    This searches the corresponding forecasts original, forces similar: units, aggregations and potentially a new-variable adaptation.
     """
     def __init__(self, season, cycle, n_members = 11,  observations = None, **kwds):
         """
@@ -39,6 +232,7 @@ class ForecastToObsAlignment(object):
             self.obs = observations
             self.dates = self.obs.array.coords['time'].to_series() # Left stamped
             self.dates = self.dates[monthtoseasonlookup(self.dates.index.month) == self.season]
+            self.obs.array = self.obs.array.sel(time = self.dates.values)
             # infer dominant time aggregation in days
             timefreq = self.obs.timemethod.split('-')[0]
             self.time_agg = int(pd.date_range('2000-01-01','2000-12-31', freq = timefreq).to_series().diff().dt.days.mode())
@@ -46,226 +240,43 @@ class ForecastToObsAlignment(object):
         
         for key in kwds.keys():
             setattr(self, key, kwds[key])
-    
-    def find_forecasts(self, date):
-        """
-        Here the forecasts corresponding to the observations are determined, by testing their existence.
-        Hindcasts and forecasts might be mixed. But they are in the same class.
-        Leadtimes may differ.
-        Returns an empty list if non were found
-        """       
-        # Find forecast initialization times that fully contain the observation date (including its window for time aggregation)
-        containstart = date + pd.Timedelta(str(self.time_agg) + 'D') - pd.Timedelta(str(self.maxleadtime) + 'D')
-        containend = date
-        contain = pd.date_range(start = containstart, end = containend, freq = 'D').strftime('%Y-%m-%d')
-        forecasts = [Forecast(indate, prefix = 'for_', cycle = self.cycle) for indate in contain]
-        hindcasts = [Forecast(indate, prefix = 'hin_', cycle = self.cycle) for indate in contain]
-        # select from potential forecasts only those that exist.
-        forecasts = [f for f in forecasts if os.path.isfile(f.basedir + f.processedfile)]
-        hindcasts = [h for h in hindcasts if os.path.isfile(h.basedir + h.processedfile)]
-        return(forecasts + hindcasts)
-        
-    def load_forecasts(self, date, listofforecasts, loadkwargs = {}):
-        """
-        Gets the daily processed forecasts into memory. Delimited by the left timestamp and the aggregation time.
-        This is done by using the load method of each Forecast class in the dictionary. They are stored in a list.
-        Loadkwargs can carry the delimiting spatial corners if only a part of the domain is desired.
-        """ 
-        tmin = date
-        tmax = date + pd.Timedelta(str(self.time_agg - 1) + 'D') # -1 because date itself also counts for one day in the aggregation.
-       
-        if hasattr(self,'loadkwargs'):
-            loadkwargs = getattr(self,'loadkwargs')
-
-        for forecast in listofforecasts:
-            forecast.load(variable = self.obs.basevar, tmin = tmin, tmax = tmax, n_members = self.n_members, **loadkwargs)
-     
-    def force_resolution(self, forecast, time = True, space = True):
-        """
-        Force the observed resolution onto the supplied Forecast. Checks if the same resolution and force spatial/temporal aggregation if that is not the case. Checks will fail on the roll-norm difference, e.g. 2D-roll-mean observations and .
-        Makes use of the methods of each Forecast class. Checks can be switched on and off. Time-rolling is never applied to the forecasts as for each date already the precise window was loaded, but space-rolling is.
-        """                
-        if time:
-            # Check time aggregation
-            obstimemethod = getattr(self.obs, 'timemethod')
-                        
-            try:
-                fortimemethod = getattr(forecast, 'timemethod')
-                if not fortimemethod == obstimemethod:
-                    raise AttributeError
-                else:
-                    print('Time already aligned')
-            except AttributeError:
-                print('Aligning time aggregation')
-                freq, rolling, method = obstimemethod.split('-')
-                forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True, ndayagg = self.time_agg, rolling = False)
-        
-        if space:
-            # Check space aggregation
-            obsspacemethod = getattr(self.obs, 'spacemethod')
                 
-            try:
-                forspacemethod = getattr(forecast, 'spacemethod')
-                if not forspacemethod == obsspacemethod:
-                    raise AttributeError
-                else:
-                    print('Space already aligned')
-            except AttributeError:
-                print('Aligning space aggregation')
-                breakdown = obsspacemethod.split('-')
-                level, method = breakdown[::len(breakdown)-1] # first and last entry
-                clustername = '-'.join(breakdown[1:-1])
-                forecast.aggregatespace(level = level, clustername = clustername, clusterarray = self.obs.clusterarray, method = method, skipna = True) # Forecasts will not have NA values anywhere and this speeds up the computation.
-    
-    def force_units(self, forecast):
+    def match_and_write(self, newvariable = False, newvarkwargs = {}, loadkwargs = {}, matchtime = True, matchspace = True):
         """
-        Linear conversion of forecast object units to match the observed units.
+        Control function to spawn the processes matching forecasts to the observation.
+        Prepares the input to the top-level matching function (see parameter description there), and spawns it.
+        Waits until termination to figure out by means of the booksfile how much was matched, such that the next is spawned.
+        This termination is currently determined by the pressure on memory, inside the top level function.
+        NOTE: perhaps in the future find a way to split the dates according to resources, and run a few matchings in parallel.
         """
-        a,b = unitconversionfactors(xunit = forecast.array.units, yunit = self.obs.array.units)
-        forecast.array = forecast.array * a + b
-        forecast.array.attrs = {'units':self.obs.array.units}
-                      
-    def force_new_variable(self, forecast, newvarkwargs = {}, inplace = True):
-        """
-        Call upon event classification on the forecast object to get the on-the-grid conversion of the base variable.
-        This is classification method is the same as applied to obs and is determined by the similar name.
-        Possibly returns xarray object if inplace is False. If newvar is anom and model climatology is supplied through newvarkwargs, it should already have undergone the change in units.
-        """
-        newvariable = self.obs.newvar
-        method = getattr(EventClassification(obs = forecast, **newvarkwargs), newvariable)
-        return(method(inplace = inplace))
-        
-                
-    def match_and_write(self, newvariable = False, newvarkwargs = {}, matchtime = True, matchspace = True):
-        """
-        Neirest neighbouring to match the forecast grid to the observed grid in the form of the clusterarray belonging to the observations. Be careful when domain of the (clustered) observations is larger.
-        Determines the order in which space-time aggregation and classification is done based on the potential newvar.
-        Also calls unit conversion for the forecasts. (the observed units of a newvariable are actually its old units)
-        Creates the dataset and writes it to disk. Possibly empties basket and writes to disk 
-        at intermediate steps if intermediate results press too much on memory.
-        """
-        
-        aligned_basket = []
-        aligned_basket_size = 0 # Size of the content in the basket. Used to determine when to write
         self.outfiles = []
+        if newvariable:
+            characteristics = ['-'.join([self.obs.basevar,self.obs.newvar]), self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
+        else:
+            characteristics = [self.obs.basevar, self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
+        characteristics = [self.expname] + characteristics if hasattr(self, 'expname') else characteristics
+        self.books_name = 'books_' + '_'.join(characteristics) + '.csv'
+        books_path = self.basedir + self.books_name
         
-        # Make sure the first parts are recognizable as the time method and the space method. Make last part unique
-        # Possibly I can also append in h5 files.
-        def write_outfile(basket, newvariable = False):
-            """
-            Saves to a unique filename and creates a bookkeeping file (appends if it already exists)
-            """
-            if newvariable:
-                characteristics = ['-'.join([self.obs.basevar,self.obs.newvar]), self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
-            else:
-                characteristics = [self.obs.basevar, self.season, self.cycle, self.obs.timemethod, self.obs.spacemethod]
+        # Preparing the toplevel function kwargs.
+        kwargs = {'obs': self.obs, 'newvariable':newvariable, 'newvarkwargs':newvarkwargs, 'loadkwargs':loadkwargs, 'matchtime' : matchtime, 'matchspace' :matchspace, 
+                  'books_path':books_path, 'time_agg':self.time_agg, 'n_members':self.n_members, 'cycle':self.cycle, 'maxleadtime':self.maxleadtime}
+        
+        # Check if there was already something written. If not we start at the beginning of the current observation set.
+        try:
+            nextstartdate = pd.read_csv(books_path, usecols = ['tmax']).apply(pd.to_datetime).max().iloc[0] + pd.Timedelta('1D')
+        except OSError:
+            nextstartdate = self.dates[0]
+        # Keep the sequential sub-process spwaning till all dates have been matched.
+        while nextstartdate <= self.dates.max():
             filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.h5'
-            characteristics = [self.expname] + characteristics if hasattr(self, 'expname') else characteristics
-            self.books_name = 'books_' + '_'.join(characteristics) + '.csv'
-            books_path = self.basedir + self.books_name
-            
-            dataset = pd.concat(basket)
-            dataset.to_hdf(filepath, key = 'intermediate', format = 'table')
-            
-            books = pd.DataFrame({'file':[filepath],
-                                  'tmax':[dataset.time.max().strftime('%Y-%m-%d')],
-                                  'tmin':[dataset.time.min().strftime('%Y-%m-%d')],
-                                  'unit':[self.obs.array.units],
-                                  'write_date':[datetime.now().strftime('%Y-%m-%d_%H:%M:%S')]})
-            
-            try:
-                with open(books_path, 'x') as f:
-                    books.to_csv(f, header=True, index = False)
-            except FileExistsError:
-                with open(books_path, 'a') as f:
-                    books.to_csv(f, header = False, index = False)
-            
-            print('written out', filepath)
+            kwargs['outfilepath'] = filepath
+            kwargs['datesubset'] = self.dates.loc[slice(nextstartdate, None, None)].copy()
+            p = multiprocessing.Process(name = 'subset', target = matchforecaststoobs, kwargs = kwargs)
+            p.start()
+            p.join() # This forces the wait till termination.
             self.outfiles.append(filepath)
-        
-        # Desired downcasting of the potential spatial indices we will obtain
-        indexdtypes = {'clustid':'integer','latitude':'float','longitude':'float'}
-
-        for date in self.dates:
-            
-            listofforecasts = self.find_forecasts(date) # Results in empty list if none were found
-            
-            if listofforecasts:
-                
-                self.load_forecasts(date = date, listofforecasts = listofforecasts) # Does this modify listofforecasts inplace?
-                
-                for forecast in listofforecasts:
-                    self.force_units(forecast) # Get units correct.
-                    if newvariable:
-                        if self.obs.newvar == 'anom':
-                            self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = True) # If newvar is anomaly then first new variable and then aggregation. If e.g. newvar is pop then first aggregation then transformation.
-                            forecast.array = forecast.array.reindex_like(self.obs.clusterarray, method = 'nearest')
-                            self.force_resolution(forecast, time = matchtime, space = matchspace)
-                            forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
-                        elif self.obs.newvar in ['pop','pod']: # This could even be some sort of 'binary newvariable' criterion.
-                            forecast.array = forecast.array.reindex_like(self.obs.clusterarray, method = 'nearest')
-                            self.force_resolution(forecast, time = matchtime, space = matchspace)
-                            forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
-                            try:
-                                listofbinaries.append(self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False))
-                            except NameError:
-                                listofbinaries = [self.force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False)]
-                    else:
-                        forecast.array = forecast.array.reindex_like(self.obs.clusterarray, method = 'nearest')
-                        self.force_resolution(forecast, time = matchtime, space = matchspace)
-                        forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
-                
-                # Get the correct observed and inplace forecast arrays.
-                fieldobs = self.obs.array.sel(time = date).drop('time')
-                allleadtimes = xr.concat(objs = [f.array for f in listofforecasts], 
-                                                 dim = 'leadtime') # concatenates over leadtime dimension.
-                
-                # When we have created a binary new_variable like pop, the forecastlist was appended with the not-inplace transformed ones 
-                # of These we only want to retain the ensemble probability (i.e. the mean). For the binaries we only retain the probability of the event over the members (i.e. the mean)
-                try:
-                    pi = xr.concat(objs = listofbinaries,dim = 'leadtime').mean(dim = 'number') # concatenates over leadtime dimension.
-                    listofbinaries.clear() # Empty for next iteration
-                    # Merging, exporting to pandas and masking by dropping on NA observations.
-                    combined = xr.Dataset({'forecast':allleadtimes.drop('time'),'observation':fieldobs, 'pi':pi.drop('time')}).to_dataframe().dropna(axis = 0)
-                    # Unstack creates duplicates. Two extra columns (obs and pi) need to be selected. Therefore the iloc
-                    temp = combined.unstack('number').iloc[:,np.append(np.arange(0,self.n_members + 1), self.n_members * 2)]
-                    temp.reset_index(inplace = True) # places spatial and time dimension in the columns
-                    labels = temp.columns.labels[1].tolist()
-                    labels[-2:] = np.repeat(self.n_members, 2)
-                except NameError:
-                    # Merging, exporting to pandas and masking by dropping on NA observations.
-                    combined = xr.Dataset({'forecast':allleadtimes.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0)
-                    # Handle the multi-index
-                    # first puts number dimension into columns. observerations are duplicated so therefore selects up to n_members +1
-                    temp = combined.unstack('number').iloc[:,:(self.n_members + 1)]
-                    temp.reset_index(inplace = True) # places spatial and time dimension in the columns
-                    labels = temp.columns.labels[1].tolist()
-                    labels[-1] = self.n_members
-                
-                temp.columns.set_labels(labels, level = 1, inplace = True)
-                
-                # Downcasting the spatial coordinates and leadtime
-                spatialcoords = list(fieldobs.dims)
-                for key in spatialcoords:
-                    temp[[key]] = temp[[key]].apply(pd.to_numeric, downcast = indexdtypes[key])
-                temp['leadtime'] = np.array(temp['leadtime'].values.astype('timedelta64[D]'), dtype = 'int8')
-                
-                # prepend with the time index.
-                temp.insert(0, 'time', date)
-                aligned_basket.append(temp)
-                print(date, 'matched')
-                
-                # If aligned takes too much system memory (> 500Mb) . Write it out
-                aligned_basket_size += sys.getsizeof(temp)
-                if aligned_basket_size > 5*10**8:
-                    write_outfile(aligned_basket, newvariable=newvariable)
-                    aligned_basket = []
-                    aligned_basket_size = 0
-        
-        # After last loop also write out 
-        if aligned_basket:
-            write_outfile(aligned_basket, newvariable=newvariable)
-        
+            nextstartdate = pd.read_csv(books_path, usecols = ['tmax']).apply(pd.to_datetime).max().iloc[0] + pd.Timedelta('1D') # Read till where was matched and follow up.
         
     def recollect(self, booksname = None):
         """
