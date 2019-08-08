@@ -17,7 +17,6 @@ from forecasts import Forecast, ModelClimatology
 from comparison import ForecastToObsAlignment, Comparison, ScoreAnalysis
 from fitting import NGR, Logistic
 import itertools
-from copy import copy
 
 class Experiment(object):
     
@@ -126,9 +125,10 @@ class Experiment(object):
             newvarkwargs={'climatology':highresmodelclim}
         else:
             newvarkwargs={}
-        alignment = ForecastToObsAlignment(season = self.season, observations=obs, cycle=self.cycle, n_members = 11, **{'expname':self.expname,'loadkwargs':loadkwargs})
+        alignment = ForecastToObsAlignment(season = self.season, observations=obs, cycle=self.cycle, n_members = 11, **{'expname':self.expname})
         alignment.match_and_write(newvariable = (self.newvar is not None), 
-                                  newvarkwargs = newvarkwargs, 
+                                  newvarkwargs = newvarkwargs,
+                                  loadkwargs = loadkwargs,
                                   matchtime = (timeagg != '1D'), 
                                   matchspace= True)
 
