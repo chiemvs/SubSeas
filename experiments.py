@@ -396,13 +396,13 @@ Split into two parts for parallel matching
 #rr27.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
 #rr27.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
 
-#rr27b = Experiment(expname = 'clusrrpod27b', basevar = 'rr', newvar = 'pod', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
-#                 method = 'max', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.05], quantiles = None)
-#rr27b.setuplog()
-#rr27b.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#rr27b.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#rr27b.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
-#rr27b.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic()})
-#rr27b.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+rr27b = Experiment(expname = 'clusrrpod27b', basevar = 'rr', newvar = 'pod', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+                 method = 'max', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.05], quantiles = None)
+rr27b.setuplog()
+rr27b.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+rr27b.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+rr27b.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
+rr27b.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic()})
+rr27b.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
 #rr27b.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
 
