@@ -353,10 +353,11 @@ class EventClassification(object):
         for key in kwds.keys():
             setattr(self, key, kwds[key])
     
-    def pop(self, threshold = 0.3, inplace = True):
+    def pop(self, threshold = 1, inplace = True):
         """
         Method to change rainfall accumulation arrays to a boolean variable of whether it rains or not. Unit is mm / day.
         Because we still like to incorporate np.NaN on the unobserved areas, the array has to be floats of 0 and 1
+        Default threshold taken from official definition: https://www.ecad.eu/indicesextremes/indicesdictionary.php#3
         """
         if hasattr(self, 'obsd'):
             data = da.where(da.isnan(self.obsd.array.data), self.obsd.array.data, self.obsd.array.data > threshold)
@@ -373,10 +374,11 @@ class EventClassification(object):
         else:
             return(result)
 
-    def pod(self, threshold = 0.3, inplace = True):
+    def pod(self, threshold = 1, inplace = True):
         """
         Method to change rainfall accumulation arrays to a boolean variable of whether it is dry or not. Unit is mm / day.
         Because we still like to incorporate np.NaN on the unobserved areas, the array has to be floats of 0 and 1
+        Default threshold taken from official definition: https://www.ecad.eu/indicesextremes/indicesdictionary.php#3
         """
         if hasattr(self, 'obsd'):
             data = da.where(da.isnan(self.obsd.array.data), self.obsd.array.data, self.obsd.array.data < threshold)
@@ -563,10 +565,10 @@ class Clustering(object):
 
 #obs = SurfaceObservations('tg')
 #obs.load(tmin = '1989-01-01', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40))
-#obs.minfilter(season = 'DJF', n_min_per_seas = 80)
-
+#obs.minfilter(season = 'JJA', n_min_per_seas = 80)
+#
 #self = Clustering()
-#self.compute_cormat(obs = obs, season = 'DJF', mapmemory=True, vectorize_lags=False)
+#self.compute_cormat(obs = obs, season = 'JJA', mapmemory=True, vectorize_lags=False)
 #self.hierarchal_clustering()
 #self.save_clusters()
 

@@ -51,7 +51,7 @@ class Experiment(object):
         except OSError:
             if self.quantiles is not None:
                 self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations, self.quantiles], names = ['spaceagg','timeagg','quantile']), 
-                                        columns = ['climname','scorefiles','bootstrap','scores'])
+                                        columns = ['climname','scorefiles','externalfits','bootstrap','scores'])
                 self.log = self.log.unstack(level = -1)
             else:
                 self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations], names = ['spaceagg','timeagg']), 
@@ -98,8 +98,8 @@ class Experiment(object):
 
         if timeagg != '1D':
             obs.aggregatetime(freq = timeagg, method = self.method, rolling = self.rolling)
-        if spaceagg != 0.25:
-            obs.aggregatespace(level = spaceagg, clustername = self.clustername, method = self.method)
+        
+        obs.aggregatespace(level = spaceagg, clustername = self.clustername, method = self.method)
         
         if self.newvar is not None and self.newvar != 'anom':
             getattr(EventClassification(obs), self.newvar)(inplace = True)
@@ -217,17 +217,20 @@ class Experiment(object):
         comp = Comparison(alignment = alignment, climatology = climatology)
                 
         if isinstance(quantile, float):
-            # Only in the first instance we are going to fit a model. Attributes are stored in memory and joined to the comp objects for other quantiles.
+            # Only in the first instance we want to fit a model (as the same is used for all quantiles), the place to find the fit is then stored in all quantile columns. 
+            # If external fits were supplied (meaning the column is already filled) we load that one.
             if not pp_model is None:
-                if self.quantiles.index(quantile) == 0:
+                if not isinstance(self.log.loc[(spaceagg, timeagg),('externalfits', quantile)], str):
                     comp.fit_pp_models(pp_model= pp_model, groupers = ['leadtime','clustid'])
                     firstfitname = comp.export(fits = True, frame = False)
-                    firstfitgroupers = comp.fitgroupers
-                    firstfitcoefcols = comp.coefcols
+                    self.log.loc[(spaceagg, timeagg),('externalfits', slice(None))] = firstfitname
                 else:
-                    comp.fits = dd.read_hdf(comp.basedir + firstfitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
-                    comp.fitgroupers = firstfitgroupers
-                    comp.coefcols = firstfitcoefcols
+                    fitname = self.log.loc[(spaceagg, timeagg),('externalfits', quantile)]
+                    print('loading fit from:', fitname)
+                    comp.fits = dd.read_hdf(comp.basedir + fitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
+                    comp.coefcols = pp_model.model_coefs
+                    comp.fitgroupers = ['leadtime','clustid']
+                    
                 comp.make_pp_forecast(pp_model = pp_model)
             comp.brierscore()
             scorefile = comp.export(fits=False, frame = True, store_minimum = store_minimum)
@@ -303,20 +306,21 @@ dask.config.set(temporary_directory='/nobackup_1/users/straaten/')
 """
 Experiment 25 Test for cluster based aggregation, regular temperatures, some post-processing, only the larger end of spatial aggregation.
 """
-test = Experiment(expname = 'clustga25', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+clustga25 = Experiment(expname = 'clustga25', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
                  method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
-test.setuplog()
-#test.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#test.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#test.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#test.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40)))
-#test.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
-#test.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
-#test.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-#test.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
+clustga25.setuplog()
+#clustga25.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga25.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga25.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga25.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga25.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
+#clustga25.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
+#clustga25.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+clustga25.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
 
 """
-Experiment 26 Highest resolution, regular temperature, temperature anomalies and binarized precipitation. Two seasons each. Currently mean scoring.
+Experiment 26 Highest resolution, regular temperature, temperature anomalies. Two seasons each. Currently mean scoring.
+Above three are all matched. Only for third I started with scoring.
 """
 #tgDJF = Experiment(expname = 'hr26tgDJF', basevar = 'tg', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
 #        method = 'mean', timeaggregations = ['1D'], spaceaggregations = [0], quantiles = None)
@@ -339,7 +343,7 @@ Experiment 26 Highest resolution, regular temperature, temperature anomalies and
 #tgaDJF = Experiment(expname = 'hr26tgaDJF', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF', 
 #        method = 'mean', timeaggregations= ['1D'], spaceaggregations=[0], quantiles = None)
 #tgaDJF.setuplog()
-##tgaDJF.log.loc[:,['obsclim','modelclim']] = test.log.loc[:,['obsclim','modelclim']].iloc[0].tolist() # Can be copied because even in test they are at the highest res. Not sure if this indexing works.
+##tgaDJF.log.loc[:,['obsclim','modelclim']] = clustga25.log.loc[:,['obsclim','modelclim']].iloc[0].tolist() # Can be copied because even in clustga25 they are at the highest res. Not sure if this indexing works.
 ##tgaDJF.savelog()
 #tgaDJF.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #tgaDJF.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
@@ -350,49 +354,38 @@ Experiment 26 Highest resolution, regular temperature, temperature anomalies and
 #tgaJJA = Experiment(expname = 'hr26tgaJJA', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-DJF', 
 #        method = 'mean', timeaggregations= ['1D'], spaceaggregations=[0], quantiles = None)
 #tgaJJA.setuplog()
-#tgaJJA.log.loc[:,['obsname','climname','obsclim','modelclim']] = tgaDJF.log.loc[:,['obsname','climname','obsclim','modelclim']]
+##tgaJJA.log.loc[:,['obsname','climname','obsclim','modelclim']] = tgaDJF.log.loc[:,['obsname','climname','obsclim','modelclim']]
+##tgaJJA.savelog()
 #tgaJJA.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
 #tgaJJA.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(), 'store_minimum':True})
 #tgaJJA.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :False, 'analysiskwargs':dict(groupers = ['leadtime','clustid'])})
-#
-#podDJF = Experiment(expname = 'hr26podDJF', basevar = 'rr', newvar = 'pod', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
-#        method = 'mean', timeaggregations = ['1D'], spaceaggregations = [0], quantiles = None)
-#podDJF.setuplog()
-#podDJF.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#podDJF.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#podDJF.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
-#podDJF.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic(), store_minimum:True})
-#podDJF.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped':False, 'analysiskwargs':dict(groupers = ['leadtime','clustid'])})
-#
-#podJJA = Experiment(expname = 'hr26podJJA', basevar = 'rr', newvar = 'pod', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-DJF',
-#        method = 'mean', timeaggregations = ['1D'], spaceaggregations = [0], quantiles = None)
-#podJJA.setuplog()
-#podJJA.log.loc[:,['obsname','climname']] = podDJF.log.loc[:,['obsname','climname']]
-#podJJA.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
-#podJJA.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic(), 'store_minimum':True})
-#podJJA.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped':False, 'analysiskwargs':dict(groupers = ['leadtime','clustid'])})
 
 """
-Experiment 27 Test for cluster based aggregation, dry periods rainfall, some post-processing, only the larger end of spatial aggregation.
-Split into two parts for parallel matching
+Experiment 28 Test for cluster based aggregation, regular temperatures, some post-processing, only the larger end of spatial aggregation.
+NOTE: might need a new JJA-based clustering.
 """
-#rr27 = Experiment(expname = 'clusrrpod27', basevar = 'rr', newvar = 'pod', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
-#                 method = 'max', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.1,0.2,0.3,0.5,1], quantiles = None)
-#rr27.setuplog()
-#rr27.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#rr27.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#rr27.iterateaggregations(func = 'match', column = 'booksname', overwrite = True, kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
-#rr27.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic()})
-#rr27.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-#rr27.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
+#clustga28 = Experiment(expname = 'clustga28', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-DJF',
+#                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
+#clustga28.setuplog()
+#clustga28.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga28.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga28.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga28.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga28.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
+#clustga28.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
+#clustga28.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#clustga28.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
 
-#rr27b = Experiment(expname = 'clusrrpod27b', basevar = 'rr', newvar = 'pod', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
-#                 method = 'max', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.05], quantiles = None)
-#rr27b.setuplog()
-#rr27b.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#rr27b.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#rr27b.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
-#rr27b.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':Logistic()})
-#rr27b.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-#rr27b.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
-
+"""
+Experiment 29. Brier score extension of experiment 25, the tgaDJF
+"""
+#clustga29 = Experiment(expname = 'clustga29', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+#                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = [0.1, 0.15, 0.25, 0.33, 0.66, 0.75, 0.85, 0.9])
+#clustga29.setuplog()
+##clustga29.log.loc[:,['obsname','booksname','modelclim','obsclim']] = clustga25.log.loc[:,['obsname','booksname','modelclim','obsclim']]
+##clustga29.log['externalfits'] = clustga25.log['scorefiles'].values[:,np.newaxis] # Supply the external fits.
+##clustga29.savelog()
+#clustga29.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga29.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
+#clustga29.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#clustga29.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
