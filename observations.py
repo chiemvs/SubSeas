@@ -542,6 +542,46 @@ class Clustering(object):
         except KeyError:
             raise KeyError('desired level not present in the loaded clustering dataset')
     
+    def compute_areas(self, summarize = False, quantiles = [0.5]):
+        """
+        Computes the area in square kilometers for each cluster at each threshold. 
+        It does so with a correction based on the cosine of the latitude
+        Has the possibility to summarize the distribution of clustersizes.
+        """
+        # Constants
+        one_deg_lon_at_equator = 111.321 # in [km]
+        one_deg_lat = 111.0 # in [km], in general, neglecting the slight elliptical shape of the earth
+        
+        # Extract particularities of the regular latlon grid
+        template = self.get_clusters_at(level = 0).drop('dissim_threshold')
+        lat_interval = np.unique(np.diff(template.coords['latitude']))[0]
+        lon_interval = np.unique(np.diff(template.coords['longitude']))[0]
+        lats_rad = np.deg2rad(np.meshgrid(template.longitude,template.latitude)[1]) # Conversion to radians.
+        lats_rad = xr.DataArray(lats_rad, coords = template.coords, dims = template.dims)
+        
+        # Calculation of the area per gridcell
+        lon_len_km = np.cos(lats_rad) * one_deg_lon_at_equator * lon_interval
+        lat_len_km = one_deg_lat * lat_interval
+        gridcell_km2 = lon_len_km * lat_len_km
+        gridcell_km2.name = 'area'
+        gridcell_km2.attrs['units'] = 'km**2'
+        
+        # Calculation of area per cluster for all the levels
+        presentlevels = {}
+        for level in self.dissim_thresholds:
+            try:
+                clusterarray = self.get_clusters_at(level = level)
+                areas = gridcell_km2.groupby(clusterarray).sum().to_dataframe()
+                presentlevels.update({level:areas})
+            except KeyError:
+                pass
+        complete = pd.concat(presentlevels, names = ['dissim_threshold'])
+        
+        if not summarize:
+            return(complete)
+        else:
+            return(complete.groupby('dissim_threshold').quantile(quantiles))
+            
     def construct_name(self, force = False):
         """
         Name and filepath are based on the base variable (or new variable) and the relevant attributes (if present).
@@ -572,23 +612,6 @@ class Clustering(object):
 #self.hierarchal_clustering()
 #self.save_clusters()
 
-#highresclim = Climatology(highresobs.basevar)
-#highresclim.basedir = '/home/jsn295/Documents/climtestdir/'
-#highresclim.localclim(obs = highresobs, mean = True, daysbefore = 5, daysafter = 5)
-
-#clusterobs = SurfaceObservations('tg')
-#clusterobs.basedir = '/home/jsn295/Documents/climtestdir/'
-#clusterobs.load(tmin = '1980-01-01', tmax = '1985-01-01', llcrnr= (64,40))
-
-#clas = EventClassification(obs = clusterobs, climatology = highresclim)
-#clas.anom()
-
-#clusterobs.aggregatespace(level = 0.005, clustername = 'tg-JJA')
-#clusterobs.savechanges()
-
-#self = Climatology(clusterobs.basevar + '-' + clusterobs.newvar)
-#self.basedir = '/home/jsn295/Documents/climtestdir/'
-#self.localclim(obs = clusterobs, daysbefore = 5, daysafter = 5)
-#self.savelocalclim()
-
+#clus = Clustering(**{'name':'tg-DJF'})
+#areas = clus.compute_areas(summarize = True)
 
