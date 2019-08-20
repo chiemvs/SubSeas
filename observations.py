@@ -532,16 +532,19 @@ class Clustering(object):
     def get_clusters_at(self, level = 0):
         """
         Method to get the georeferenced cluster array at a certain dissimilarity level
+        If level = None, the cluster dataset is loaded but none are returned.
         NOTE: Because NA's are probably present, xarray will convert the integer clustid's to the float32 dtype.
         """
         self.construct_name(force = False)
         if not hasattr(self,'clusters'):
             self.clusters = xr.open_dataarray(self.filepath)
-        try:
-            return(self.clusters.sel(dissim_threshold = level, method = 'nearest', tolerance = 1e-7))
-        except KeyError:
-            raise KeyError('desired level not present in the loaded clustering dataset')
-    
+        
+        if level is not None:
+            try:
+                return(self.clusters.sel(dissim_threshold = level, method = 'nearest', tolerance = 1e-7))
+            except KeyError:
+                raise KeyError('desired level not present in the loaded clustering dataset')
+        
     def compute_areas(self, summarize = False, quantiles = [0.5]):
         """
         Computes the area in square kilometers for each cluster at each threshold. 
@@ -581,7 +584,24 @@ class Clustering(object):
             return(complete)
         else:
             return(complete.groupby('dissim_threshold').quantile(quantiles))
-            
+
+    def compute_nclusters(self):
+        """
+        Computes the number of unique clusters for each level and returns this number in a dataframe
+        """
+        self.get_clusters_at(level = None) # Loads the clusters.
+        
+        def nunique(array):
+            """
+            Get the number of unique (non-nan) values in an array and return as an xarray with zero dimension
+            """
+            uniques = np.unique(array)
+            uniques = uniques[~np.isnan(uniques)]
+            return(xr.DataArray(data = len(uniques), name = 'n_unique'))
+        
+        counts = self.clusters.groupby('dissim_threshold').apply(nunique).to_dataframe()
+        return(counts)
+        
     def construct_name(self, force = False):
         """
         Name and filepath are based on the base variable (or new variable) and the relevant attributes (if present).
@@ -611,7 +631,3 @@ class Clustering(object):
 #self.compute_cormat(obs = obs, season = 'JJA', mapmemory=True, vectorize_lags=False)
 #self.hierarchal_clustering()
 #self.save_clusters()
-
-#clus = Clustering(**{'name':'tg-DJF'})
-#areas = clus.compute_areas(summarize = True)
-

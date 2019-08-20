@@ -306,9 +306,9 @@ dask.config.set(temporary_directory='/nobackup_1/users/straaten/')
 """
 Experiment 25 Test for cluster based aggregation, regular temperatures, some post-processing, only the larger end of spatial aggregation.
 """
-clustga25 = Experiment(expname = 'clustga25', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
-                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
-clustga25.setuplog()
+#clustga25 = Experiment(expname = 'clustga25', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+#                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
+#clustga25.setuplog()
 #clustga25.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga25.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga25.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
@@ -316,7 +316,7 @@ clustga25.setuplog()
 #clustga25.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
 #clustga25.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
 #clustga25.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-clustga25.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
+#clustga25.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
 
 """
 Experiment 26 Highest resolution, regular temperature, temperature anomalies. Two seasons each. Currently mean scoring.
@@ -362,19 +362,17 @@ Above three are all matched. Only for third I started with scoring.
 
 """
 Experiment 28 Test for cluster based aggregation, regular temperatures, some post-processing, only the larger end of spatial aggregation.
-NOTE: might need a new JJA-based clustering.
+NOTE: based on a new JJA-based clustering.
 """
-#clustga28 = Experiment(expname = 'clustga28', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-DJF',
-#                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
+#clustga28 = Experiment(expname = 'clustga28', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-JJA', method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
 #clustga28.setuplog()
-#clustga28.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+##clustga28.log.loc[:,['obsclim','modelclim']] = clustga25.log.loc[:,['obsclim','modelclim']] # Can be copied because even in clustga25 they are at the highest res. Not sure if this indexing works.
 #clustga28.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga28.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
-#clustga28.iterateaggregations(func = 'makehighresmodelclim', column = 'modelclim', kwargs = dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga28.iterateaggregations(func = 'match', column = 'booksname', kwargs = {'loadkwargs' : dict(llcrnr= (36,-24), rucrnr = (None,40))})
 #clustga28.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
 #clustga28.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-#clustga28.iterateaggregations(func = 'skill', column = 'scores', kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
+#clustga28.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
 
 """
 Experiment 29. Brier score extension of experiment 25, the tgaDJF
