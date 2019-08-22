@@ -623,11 +623,12 @@ class Clustering(object):
         particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clusters.to_dataset().variables.keys()} 
         self.clusters.to_netcdf(self.filepath, encoding = particular_encoding)
 
-#obs = SurfaceObservations('tg')
+#obs = SurfaceObservations('rr')
 #obs.load(tmin = '1989-01-01', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40))
 #obs.minfilter(season = 'JJA', n_min_per_seas = 80)
 #
 #self = Clustering()
+#self.dissim_thresholds = [0,0.005,0.01,0.025,0.05,0.1,0.15,0.2,0.3,0.4,0.5,1,1.5] # Average dissimilarity thresholds to cut the tree, into n clusters
 #self.compute_cormat(obs = obs, season = 'JJA', mapmemory=True, vectorize_lags=False)
 #self.hierarchal_clustering()
 #self.save_clusters()
