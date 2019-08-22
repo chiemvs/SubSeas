@@ -107,12 +107,23 @@ class Logistic(object):
         """
         Uses L2-loss minimization to fit a logistic model
         Fitting with liblinear fails if training set has only one category (usually happens when always dry, but there are some cases of always wet).
+        If it fails we check if there is indeed one class in the observations. And then return the intercept values that will approximate it with a high precision
         """
-
-        clf = LogisticRegression(solver='liblinear')
-        clf.fit(X = train[self.predcols[1:]], y = train[self.obscol])
-            
-        return(np.concatenate([clf.intercept_, clf.coef_.squeeze()]))
+        try:
+            clf = LogisticRegression(solver='liblinear')
+            clf.fit(X = train[self.predcols[1:]], y = train[self.obscol])           
+            return(np.concatenate([clf.intercept_, clf.coef_.squeeze()]))
+        except ValueError:
+            classes = np.unique(train[self.obscol])
+            if len(classes) == 1:
+                if classes[0] == 0.:
+                    return(np.array([-20,0,0], dtype = np.float32))
+                elif classes[0] == 1.:
+                    return(np.array([20,0,0], dtype = np.float32))
+                else:
+                    raise ValueError('Logistic fitting failed on single class but it is not 1 or 0')
+            else:
+                raise ValueError('Logistic fitting failed even though 2 classes are present')
         
     def predict(self,test, parameters = None):
         """

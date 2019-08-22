@@ -7,7 +7,8 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 import pandas as pd
 import xarray as xr
 import pygrib
-from helper_functions import unitconversionfactors
+from helper_functions import unitconversionfactors, agg_space, agg_time
+from observations import Clustering
 
 # Extended range has 50 perturbed members. and 1 control forecast. Steps: "0/to/1104/by/6"
 # Reforecasts have 11 members (stream = "enfh", number "1/to/10"). Probably some duplicates will arise.
@@ -262,9 +263,7 @@ class Forecast(object):
         """
         Uses the pandas frequency indicators. Method can be mean, min, max, std
         Completely lazy when loading is lazy. Array needs to be already loaded because of variable choice.
-        """
-        from helper_functions import agg_time
-        
+        """      
         if keep_leadtime:
             leadtimes = self.array.coords['leadtime']
             if ndayagg is None:
@@ -282,19 +281,22 @@ class Forecast(object):
             except ValueError:
                 pass
     
-    def aggregatespace(self, step, method = 'mean', by_degree = False, rolling = False, skipna = True):
+    def aggregatespace(self, level, clustername, clusterarray = None,  method = 'mean', skipna = True):
         """
-        Regular lat lon or gridbox aggregation by creating new single coordinate which is used for grouping.
-        In the case of degree grouping the groups might not contain an equal number of cells.
+        Aggregation by means of irregular clusters which can be supplied with the clusterarray for quickness.
+        Otherwise the desired level is sought from the clustering dataset. In that case we cannot count on the fact that forecasts were already re-indexed in the matching and need to shrink by re-indexing.
         Completely lazy when supplied array is lazy.
         NOTE: this actually changes the dimension order of the array.
         """
-        from helper_functions import agg_space
         
-        self.array, self.spacemethod = agg_space(array = self.array, 
-                                                 orlats = self.array.latitude.load(),
-                                                 orlons = self.array.longitude.load(),
-                                                 step = step, method = method, by_degree = by_degree, rolling = rolling, skipna = skipna)
+        if clusterarray is None: # Shrinking too
+            print('caution: forecast and the observed clusterarray are probably not yet on the same grid')
+            clusterobject = Clustering(**{'name':clustername})
+            clusterarray = clusterobject.get_clusters_at(level = level)
+            clusterarray = clusterarray.sel(latitude = slice(self.array.latitude.min(),self.array.latitude.max()), longitude = slice(self.array.longitude.min(),self.array.longitude.max()))
+            self.array = self.array.reindex_like(clusterarray, method = 'nearest')
+        
+        self.array, self.spacemethod = agg_space(array = self.array, level = level, clusterarray = clusterarray, clustername = clustername, method = method, skipna = skipna)
     
         
 class Hindcast(object):
@@ -465,7 +467,7 @@ class ModelClimatology(object):
         """
         Name and filepath are based on the base variable and the relevant attributes (if present).
         """
-        keys = ['var','tmin','tmax', 'timemethod', 'daysbefore', 'daysafter']
+        keys = ['var','cycle','tmin','tmax', 'timemethod', 'daysbefore', 'daysafter']
         if hasattr(self, 'name') and (not force):
             values = self.name.split(sep = '_')
             for key in keys:
