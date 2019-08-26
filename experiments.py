@@ -208,6 +208,7 @@ class Experiment(object):
         This dask dataframe is exported.
         Returns a list with intermediate filenames of the raw, climatological and corrected scores.
         Has a post-processing step if the pp_model is supplied. Fit is the same regardless of the quantile, so done only once.
+        If there are no quantiles to predict or binary variable, we force equidistant sampling (random = True led to overestimations of the crps)
         """
         alignment = ForecastToObsAlignment(season = self.season, cycle=self.cycle)
         alignment.recollect(booksname = self.log.loc[(spaceagg, timeagg),('booksname','')])
@@ -238,7 +239,7 @@ class Experiment(object):
             if not pp_model is None:
                 comp.fit_pp_models(pp_model = pp_model, groupers = ['leadtime','clustid'])
                 comp.export(fits=True, frame = False)
-                comp.make_pp_forecast(pp_model = pp_model, n_members = 11 if isinstance(pp_model, NGR) else None)
+                comp.make_pp_forecast(pp_model = pp_model, random = False, n_members = 11 if isinstance(pp_model, NGR) else None)
             if (self.newvar is None) or (self.newvar == 'anom'):
                 comp.crpsscore()
             else:
@@ -401,7 +402,7 @@ Experiment 29. Brier score extension of experiment 25, the tgaDJF
 #clustga29.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga29.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
 #clustga29.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-#clustga29.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
+#clustga29.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
 
 """
 Experiment 30 Brier score extension of experiment 27
@@ -415,4 +416,4 @@ NOTE: based on a new JJA-based clustering.
 #clustga30.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga30.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
 #clustga30.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-#clustga30.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
+#clustga30.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
