@@ -236,7 +236,7 @@ class Climatology(object):
         
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
         
-    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, n_draws = None):
+    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, random = False, n_draws = None):
         """
         Load a local clim if one with corresponding var, tmin, tmax and method is found, or if name given at initialization is found.
         Construct local climatological distribution within a doy window, determined by daysbefore and daysafter, but with pooled years
@@ -257,6 +257,10 @@ class Climatology(object):
             self.climmethod = 'mean'
         elif quant is not None:
             self.climmethod = 'q' + str(quant)
+            from helper_functions import nanquantile
+        elif not random:
+            self.climmethod  = 'equi'
+            from helper_functions import nanquantile
         else:
             self.climmethod = 'rand'
         
@@ -273,10 +277,7 @@ class Climatology(object):
             self.clim = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold') # Also load the clustidfield if present??
             print('climatology directly loaded')
         except OSError:
-        
-            if quant is not None:
-                from helper_functions import nanquantile
-            
+                    
             doygroups = obs.array.groupby('time.dayofyear')
             doygroups = {str(key):value for key,value in doygroups} # Change to string
             maxday = 366
@@ -300,6 +301,14 @@ class Climatology(object):
                     reduced = xr.DataArray(data = nanquantile(array = complete.values, q = quant), coords = spatialcoords, dims = spatialdims, name = self.var)
                     reduced.attrs = complete.attrs
                     reduced.attrs['quantile'] = quant
+                elif not random:
+                    # Equidistant sampling based on the weibull estimator.
+                    qfields = []
+                    for q in np.linspace(start=1/(n_draws+1), stop = 1, num = n_draws, endpoint = False):
+                        qfields.append(nanquantile(array = complete.values, q = q))
+                    spatialcoords.update({'number':np.arange(n_draws)})
+                    reduced = xr.DataArray(data = np.stack(qfields, axis = 0), coords = spatialcoords, dims = ('number',) + spatialdims, name = self.var)
+                    reduced.attrs = complete.attrs
                 else:
                     # Random sampling with replacement if not enough fields in the complete array
                     try:
@@ -622,6 +631,13 @@ class Clustering(object):
         self.construct_name(force = True)
         particular_encoding = {key : obs_netcdf_encoding[key] for key in self.clusters.to_dataset().variables.keys()} 
         self.clusters.to_netcdf(self.filepath, encoding = particular_encoding)
+
+#obs = SurfaceObservations('rr')
+#obs.load(tmax = '1955-01-01', llcrnr= (36,-24), rucrnr = (None,40))
+#obs.aggregatespace(0.3, clustername = 'tg-DJF')
+#
+#self = Climatology('rr')
+#self.localclim(obs = obs, mean= False, random = False, n_draws=11, daysbefore = 2, daysafter = 2)
 
 #obs = SurfaceObservations('rr')
 #obs.load(tmin = '1989-01-01', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40))

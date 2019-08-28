@@ -162,8 +162,8 @@ class Experiment(object):
         else:
             if self.newvar is not None and self.newvar != 'anom': # Making a probability climatology of the binary newvar
                 climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = True, quant = None)           
-            else: # Make a 'random draws' climatology.
-                climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = None, n_draws = 11)
+            else: # Make a 'equidistant draws' climatology.
+                climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = None, random = False, n_draws = 11)
         climatology.savelocalclim()
 
         return(climatology.name)
@@ -319,6 +319,7 @@ Experiment 25 Test for cluster based aggregation, regular temperatures, some pos
 #clustga25.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
 #clustga25.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
 
+
 """
 Experiment 26 Highest resolution, regular temperature, temperature anomalies. Two seasons each. Currently mean scoring.
 Above three are all matched. Only for third I started with scoring.
@@ -402,10 +403,10 @@ Experiment 29. Brier score extension of experiment 25, the tgaDJF
 #clustga29.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga29.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
 #clustga29.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-#clustga29.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
+#clustga29.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
 
 """
-Experiment 30 Brier score extension of experiment 27
+Experiment 30 Brier score extension of experiment 28
 NOTE: based on a new JJA-based clustering.
 """
 #clustga30 = Experiment(expname = 'clustga30', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-JJA', method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = [0.33,0.66,0.9])
