@@ -67,10 +67,11 @@ class NGR(object):
                          
         return(res.x)
 
-    def predict(self, test, quant_col = 'climatology', n_draws = None, parameters = None):
+    def predict(self, test, quant_col = 'climatology', n_draws = None, random = False, q_equidistant = None, parameters = None):
         """
         Test dataframe should contain columns with the model_coefs parameters. Otherwise a (4,) array should be supplied
-        Predicts climatological quantile exceedence. Or a random draw from the normal distribution if number of members is supplied.
+        Predicts climatological quantile exceedence. Or random/equidistant draws from the normal distribution if number of members is supplied.
+        If only one (non-random) member is wanted, q_equidistant should be supplied, range [0,1].
         """
         try:
             mu_cor = test['a0'] + test['a1'] * test[self.predcols[0]]
@@ -80,10 +81,15 @@ class NGR(object):
             std_cor = np.exp(parameters[2]) * self.stdfunc(test[self.predcols[1]])**parameters[3]
         if n_draws is not None:
             if n_draws == 1:
-                return(pd.Series(norm.rvs(loc=mu_cor, scale=std_cor), dtype = 'float32'))
+                if random:
+                    return(pd.Series(norm.rvs(loc=mu_cor, scale=std_cor), dtype = 'float32'))
+                else:
+                    return(pd.Series(norm.ppf(q = q_equidistant, loc = mu_cor, scale = std_cor), dtype = 'float32'))
             else:
-                return(pd.DataFrame(norm.rvs(loc=mu_cor, scale=std_cor, size=(n_draws, len(mu_cor))).T, dtype = 'float32'))
-                #return(norm.rvs(loc=mu_cor, scale=std_cor, size=(n_draws, len(mu_cor))).T.astype('float32')) # Returning an array.            
+                if random:
+                    return(pd.DataFrame(norm.rvs(loc=mu_cor, scale=std_cor, size=(n_draws, len(mu_cor))).T, dtype = 'float32'))
+                else:
+                    return(pd.DataFrame(norm.ppf(q = np.linspace(start=1/(n_draws+1), stop = 1, num = n_draws, endpoint = False)[np.newaxis,:], loc = mu_cor[:,np.newaxis], scale = std_cor[:,np.newaxis]), dtype = 'float32'))
         else:
             return(norm.sf(x = test[quant_col], loc = mu_cor, scale = std_cor).astype('float32')) # Returning a scalar vector.
    

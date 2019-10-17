@@ -423,11 +423,11 @@ class Comparison(object):
             self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
             self.predcols.append('ensstd')
         
-    def make_pp_forecast(self, pp_model, n_members = None):
+    def make_pp_forecast(self, pp_model, n_members = None, random = False):
         """
         Makes a probabilistic forecast based on already fitted models. 
         Works by joining the fitted parameters (indexed by the fitting groupers and time) to the dask frame.
-        If n_members is not None, then we are forecasting n random members from the fitted distribution.
+        If n_members is not None, then we are forecasting n random members from the fitted distribution or equidistant probabilities.
         If n_members is None then there are two options: 1) The event for which we forecast is already present as an observed binary variable and we use the Logistic model for the probability of 1. 2) The event is the exceedence of the quantile beloning to the climatology in this object and we employ scipy implementation of the normal model.
         The prediction function is contained in the pp_model classes themselves.
         All corrected forecasts appear as extra columns in the self.frame
@@ -447,17 +447,16 @@ class Comparison(object):
             to get an array with all draws from the predfunc. So we have to go draw by draw, and here we cannot assign to a multi-index
             So this needs to be created afterwards.
             """
-            # Creates multiple columns. Supply n_members to the predfunc, given to here in the experiment class.
-            #returnmeta = pd.DataFrame(np.zeros((1,n_members), dtype = 'float32'), columns = pd.MultiIndex.from_product([['corrected'],np.arange(n_members)], names = ['','number'])) # Needs a meta dataframe.
-            #returndict =  dict(itertools.product(np.arange(n_members), ['float32']))
+            
+            # Generate the fixed probabilities where the dist will be sampled if random = False. This is the Weibull plotting position estimator:
+            equidistant_probs = np.linspace(start=1/(n_members+1), stop = 1, num = n_members, endpoint = False)
             
             # Dask array way. #Accessing multiple members self.frame[[('forecast',1),('forecast',2)]]
-            #self.frame.map_partitions(predfunc, **{'n_draws':n_members}) # Multiple columns can be generated. But not assigned.
             levelzero = self.frame.columns.get_level_values(0).tolist()
             levelone = self.frame.columns.get_level_values(1).tolist()
             for m in range(n_members):
                 corcol = 'corrected' + str(m)
-                self.frame[corcol] = self.frame.map_partitions(predfunc, **{'n_draws':1})
+                self.frame[corcol] = self.frame.map_partitions(predfunc, **{'n_draws':1, 'random':random, 'q_equidistant': equidistant_probs[m]})
                 levelzero.append('corrected')
                 levelone.append(m)
             self.frame.columns = pd.MultiIndex.from_arrays([levelzero,levelone], names = self.frame.columns.names)
