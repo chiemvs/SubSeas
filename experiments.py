@@ -38,12 +38,13 @@ class Experiment(object):
         self.timeaggregations = timeaggregations
         self.spaceaggregations = spaceaggregations
         self.quantiles = quantiles
+        self.ndraws = 11 # Either equal to nmembers of the raw, or more for good draw estimate of equidistant climatology and NGR
     
     def setuplog(self):
         """
         Load an experiment log if it is present. Otherwise create one.
         Columns are for obsname and booksname, and possibly the highres climatologies. 
-        For climname, scorefiles, bootstrap scores the amount of columns is times the amount of quantiles.
+        For climname, scorefiles, external fits, bootstrap, scores the amount of columns is times the amount of quantiles.
         """
         self.logpath = self.resultsdir + self.expname + '.h5'
         try:
@@ -55,7 +56,7 @@ class Experiment(object):
                 self.log = self.log.unstack(level = -1)
             else:
                 self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations], names = ['spaceagg','timeagg']), 
-                                        columns = pd.MultiIndex.from_product([['climname','scorefiles','bootstrap','scores'],['']])) # Also two levels for compatibility
+                                        columns = pd.MultiIndex.from_product([['climname','scorefiles','externalfits','bootstrap','scores'],['']])) # Also two levels for compatibility
             self.log = self.log.assign(**{'obsname':None,'booksname':None, 'obsclim':None,'modelclim':None}) # :''
     
     def savelog(self):
@@ -163,7 +164,7 @@ class Experiment(object):
             if self.newvar is not None and self.newvar != 'anom': # Making a probability climatology of the binary newvar
                 climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = True, quant = None)           
             else: # Make a 'equidistant draws' climatology.
-                climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = None, random = False, n_draws = 11)
+                climatology.localclim(obs = obs, daysbefore = 5, daysafter=5, mean = False, quant = None, random = False, n_draws = self.ndraws)
         climatology.savelocalclim()
 
         return(climatology.name)
@@ -216,35 +217,34 @@ class Experiment(object):
         climatology = Climatology(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('climname', quantile)]})
         climatology.localclim() # loading in this case. Creation was done in the makeclim method.
         comp = Comparison(alignment = alignment, climatology = climatology)
-                
+
+        # Fitting or accepting external fits (meaning the column is already filled):
+        if not pp_model is None:
+            if not isinstance(self.log.loc[(spaceagg, timeagg),('externalfits', quantile)], str):
+                comp.fit_pp_models(pp_model= pp_model, groupers = ['leadtime','clustid'])
+                firstfitname = comp.export(fits = True, frame = False)
+                self.log.loc[(spaceagg, timeagg),('externalfits', slice(None))] = firstfitname # Specifically useful for the looping over quantiles.
+            else:
+                fitname = self.log.loc[(spaceagg, timeagg),('externalfits', quantile)]
+                print('loading fit from:', fitname)
+                comp.fits = dd.read_hdf(comp.basedir + fitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
+                comp.coefcols = pp_model.model_coefs
+                comp.fitgroupers = ['leadtime','clustid']
+                     
+        # Going to the scoring.
         if isinstance(quantile, float):
-            # Only in the first instance we want to fit a model (as the same is used for all quantiles), the place to find the fit is then stored in all quantile columns. 
-            # If external fits were supplied (meaning the column is already filled) we load that one.
             if not pp_model is None:
-                if not isinstance(self.log.loc[(spaceagg, timeagg),('externalfits', quantile)], str):
-                    comp.fit_pp_models(pp_model= pp_model, groupers = ['leadtime','clustid'])
-                    firstfitname = comp.export(fits = True, frame = False)
-                    self.log.loc[(spaceagg, timeagg),('externalfits', slice(None))] = firstfitname
-                else:
-                    fitname = self.log.loc[(spaceagg, timeagg),('externalfits', quantile)]
-                    print('loading fit from:', fitname)
-                    comp.fits = dd.read_hdf(comp.basedir + fitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
-                    comp.coefcols = pp_model.model_coefs
-                    comp.fitgroupers = ['leadtime','clustid']
-                    
                 comp.make_pp_forecast(pp_model = pp_model)
             comp.brierscore()
-            scorefile = comp.export(fits=False, frame = True, store_minimum = store_minimum)
         else:
             if not pp_model is None:
-                comp.fit_pp_models(pp_model = pp_model, groupers = ['leadtime','clustid'])
-                comp.export(fits=True, frame = False)
-                comp.make_pp_forecast(pp_model = pp_model, random = False, n_members = 11 if isinstance(pp_model, NGR) else None)
+                comp.make_pp_forecast(pp_model = pp_model, random = False, n_members = self.ndraws if isinstance(pp_model, NGR) else None)
             if (self.newvar is None) or (self.newvar == 'anom'):
                 comp.crpsscore()
-            else:
+            else: # Meaning a custom binary predictand
                 comp.brierscore()
-            scorefile = comp.export(fits=False, frame = True, store_minimum = store_minimum)
+        
+        scorefile = comp.export(fits=False, frame = True, store_minimum = store_minimum)
             
         return(scorefile)
     
@@ -418,15 +418,15 @@ Experiment 29. Brier score extension of experiment 25, the tgaDJF
 Experiment 30 Brier score extension of experiment 28
 NOTE: based on a new JJA-based clustering.
 """
-clustga30 = Experiment(expname = 'clustga30', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-JJA', method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles =[0.1, 0.15, 0.25, 0.33, 0.66, 0.75, 0.85, 0.9]) # [0.33,0.66,0.9]
-clustga30.setuplog()
+#clustga30 = Experiment(expname = 'clustga30', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-JJA', method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles =[0.1, 0.15, 0.25, 0.33, 0.66, 0.75, 0.85, 0.9]) # [0.33,0.66,0.9]
+#clustga30.setuplog()
 ##clustga30.log.loc[:,['obsname','booksname','modelclim','obsclim']] = clustga28.log.loc[:,['obsname','booksname','modelclim','obsclim']]
 ##clustga30.log['externalfits'] = clustga28.log['scorefiles'].values[:,np.newaxis] # Supply the external fits.
 ##clustga30.savelog()
 #clustga30.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga30.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
 #clustga30.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
-clustga30.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
+#clustga30.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
 
 ## Merging with the remaining quantiles from experiment 32
 ##clustga30.log = pd.concat([clustga30.log, clustga32.log.loc[:,['climname','scorefiles','bootstrap','scores']]], axis = 1)
@@ -458,3 +458,17 @@ Experiment 32 Brier score extension of experiment 28, for the quantiles that hav
 #clustga32.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
 #clustga32.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
 #clustga32.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
+
+"""
+Experiment 33 More sample version of experiment 25. Uses the same matched files, with renamed books. Requires new climatologies with more samples. Creates new scorefiles, but uses the fitted models from experiment 25.
+"""
+clustga33 = Experiment(expname = 'clustga33', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF', method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
+clustga33.ndraws = 100
+clustga33.setuplog()
+##clustga33.log.loc[:,['obsname','modelclim','obsclim']] = clustga25.log.loc[:,['obsname','modelclim','obsclim']]
+##clustga33.log['externalfits'] = clustga25.log['scorefiles'] # Supply the external fits.
+##clustga33.savelog()
+#clustga33.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga33.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
+#clustga33.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#clustga33.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
