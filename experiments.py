@@ -228,7 +228,6 @@ class Experiment(object):
                 fitname = self.log.loc[(spaceagg, timeagg),('externalfits', quantile)]
                 print('loading fit from:', fitname)
                 comp.fits = dd.read_hdf(comp.basedir + fitname + '.h5', key = 'fits') # Loading of the fits of the first quantile.
-                comp.coefcols = pp_model.model_coefs
                 comp.fitgroupers = ['leadtime','clustid']
                      
         # Going to the scoring.
@@ -239,6 +238,7 @@ class Experiment(object):
         else:
             if not pp_model is None:
                 comp.make_pp_forecast(pp_model = pp_model, random = False, n_members = self.ndraws if isinstance(pp_model, NGR) else None)
+                comp.export(fits=False, frame = False, preds = True)
             if (self.newvar is None) or (self.newvar == 'anom'):
                 comp.crpsscore()
             else: # Meaning a custom binary predictand
@@ -386,8 +386,8 @@ Uses the winter temperatures clustering.
 Experiment 28 Test for cluster based aggregation, regular temperatures, some post-processing, only the larger end of spatial aggregation.
 NOTE: based on a new JJA-based clustering.
 """
-#clustga28 = Experiment(expname = 'clustga28', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-JJA', method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
-#clustga28.setuplog()
+clustga28 = Experiment(expname = 'clustga28', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-JJA', method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
+clustga28.setuplog()
 ##clustga28.log.loc[:,['obsclim','modelclim']] = clustga25.log.loc[:,['obsclim','modelclim']] # Can be copied because even in clustga25 they are at the highest res. Not sure if this indexing works.
 #clustga28.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga28.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
@@ -462,9 +462,9 @@ Experiment 32 Brier score extension of experiment 28, for the quantiles that hav
 """
 Experiment 33 More sample version of experiment 25. Uses the same matched files, with renamed books. Requires new climatologies with more samples. Creates new scorefiles, but uses the fitted models from experiment 25.
 """
-clustga33 = Experiment(expname = 'clustga33', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF', method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
-clustga33.ndraws = 100
-clustga33.setuplog()
+#clustga33 = Experiment(expname = 'clustga33', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF', method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
+#clustga33.ndraws = 100
+#clustga33.setuplog()
 ##clustga33.log.loc[:,['obsname','modelclim','obsclim']] = clustga25.log.loc[:,['obsname','modelclim','obsclim']]
 ##clustga33.log['externalfits'] = clustga25.log['scorefiles'] # Supply the external fits.
 ##clustga33.savelog()
@@ -472,3 +472,18 @@ clustga33.setuplog()
 #clustga33.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
 #clustga33.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
 #clustga33.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
+
+"""
+Experiment 34 More sample version of experiment 28. Uses the same matched files, with renamed books. Requires new climatologies with more samples. Creates new scorefiles, but uses the fitted models from experiment 28.
+"""
+#clustga34 = Experiment(expname = 'clustga34', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-JJA', method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
+#clustga34.ndraws = 100
+#clustga34.setuplog()
+##clustga34.log.loc[:,['obsname','modelclim','obsclim']] = clustga28.log.loc[:,['obsname','modelclim','obsclim']]
+##clustga34.log['externalfits'] = clustga28.log['scorefiles'] # Supply the external fits.
+##clustga34.savelog()
+#clustga34.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
+#clustga34.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
+#clustga34.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#clustga34.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
+
