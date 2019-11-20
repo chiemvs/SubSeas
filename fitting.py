@@ -91,7 +91,7 @@ class NGR(object):
                 else:
                     return(pd.DataFrame(norm.ppf(q = np.linspace(start=1/(n_draws+1), stop = 1, num = n_draws, endpoint = False)[np.newaxis,:], loc = mu_cor[:,np.newaxis], scale = std_cor[:,np.newaxis]), dtype = 'float32'))
         else:
-            return(norm.sf(x = test[quant_col], loc = mu_cor, scale = std_cor).astype('float32')) # Returning a scalar vector.
+            return(pd.DataFrame(norm.sf(x = test[quant_col], loc = mu_cor, scale = std_cor).astype('float32'), dtype = 'float32')) # Returning a scalar vector.
    
        
 class Logistic(object):
@@ -141,7 +141,7 @@ class Logistic(object):
         except KeyError:
             exp_part = np.exp(parameters[0] + parameters[1] * test[self.predcols[1]] + parameters[2] * test[self.predcols[2]])
         
-        return(exp_part/ (1 + exp_part))
+        return(pd.DataFrame(exp_part/ (1 + exp_part), dtype = 'float32'))
 
 
 class ExponentialQuantile(object):

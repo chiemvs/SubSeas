@@ -297,52 +297,70 @@ class ForecastToObsAlignment(object):
 
 class Comparison(object):
     """
-    All based on the dataframe format. No arrays anymore. In this class the aligned object is grouped in multiple ways to fit models in a cross-validation sense. 
-    To make predictions and to score, raw, post-processed and climatological forecasts
-    The type of scoring and the type of prediction is inferred from whether certain columns are present
+    All based on the dataframe format. This class at first instance requires the aligned object, posessing the raw forecasts and observations,
+    and a climatology object which is used as a reference forecast. These two objects determine the naming of the scorefile to be created here
+    From the raw forecasts, certain predictors can be computed and with those
+    we can fit a supplied pp-model models in a cross-validation sense. This fit can be seperately exported
+    and later imported again to make predictions, which once again can be exported.
+    This is because the original idea was to have all members of all forecast types present as columns in the dataframe.
+    However when sampling lots of members (100+) this fails when dask needs to collect all those for the scoring
+    and they are discarded later. Therefore the fits and post-processed predicted values remain separate dataframes in the scorefile.
+    Only their final score column is added to the original aligned object.
     For binary (event) observations, there already is a 'pi' column, inferred on-the-grid during matching from the raw members.
     For continuous variables, the quantile of the climatology is important, this will determine the event.
     """
     
     def __init__(self, alignment, climatology):
         """
-        The aligned object has Observation | members |
-        Potentially an external observed climatology object can be supplied that takes advantage of the full observed dataset. It has to have a location and dayofyear timestamp. Is it already aggregated?
-        This climatology can be a quantile (used as the threshold for brier scoring) or it is a climatological probability if we have an aligned event predictor like POP. Or it is a random draw used for CRPS scoring. which means that multiple 'numbers' will be present.
+        The aligned object has Observation | raw forecast members |
+        An external observed climatology object should be supplied that takes advantage of the full observed dataset. It has to have a spatial indices and dayofyear timestamp. 
+        This climatology can be a quantile (used as the threshold for brier scoring) or it is a climatological probability if we have an aligned event predictor like POP. Or it is a (random) draw used for CRPS scoring. which means that multiple 'numbers' will be present.
         """
         self.frame = alignment.alignedobject
         self.basedir = '/nobackup_1/users/straaten/scores/'
         self.name = alignment.books_name[6:-4] + '_' + climatology.name
         self.grouperdowncasting = {'leadtime':'integer','latitude':'float','longitude':'float','clustid':'integer','doy':'integer'}
-        self.coefcols = []
+        # Used for bookkeeping on what is added to the frame:
         self.predcols = []
-        self.boolcols = []
         
-        # Construction of climatology
+        # Casting the supplied climatology to the dataframe format
         climatology.clim.name = 'climatology'
         self.clim = climatology.clim.to_dataframe().dropna(axis = 0, how = 'any')
-        # Some formatting to make merging with the two-level aligned object easier
+        # Some formatting to make merging with the two-level-columns aligned object easier
         if 'number' in self.clim.index.names: # If we are dealing with random draws. We are automatically creating a two level column index
             self.clim = self.clim.unstack('number')
-        else: # Otherwise we have to create one manually
+        else: # We are dealing with a quantile or mean (probability) climatology
+            if 'quantile' in climatology.clim.attrs: # We are dealing with a quantile climatology denoting the threshold and the actual reference forecast is the associated probability itself
+                self.clim['threshold'] = self.clim['climatology']
+                self.clim['climatology'] = np.array(1 - climatology.clim.attrs['quantile'], dtype = 'float32')
+            # Either way in both cases we have to manually create a two-level index.
             self.clim.columns = pd.MultiIndex.from_product([self.clim.columns, ['']], names = [None,'number'])
         self.clim.reset_index(inplace = True)
         for key in self.grouperdowncasting.keys():
             if key in self.clim.columns:
                 self.clim[[key]] = self.clim[[key]].apply(pd.to_numeric, downcast = self.grouperdowncasting[key])
-        
-        try:
-            self.quantile = climatology.clim.attrs['quantile']
-        except KeyError:
-            pass
+
             
+    def compute_predictors(self, pp_model):
+        """
+        Computes simple predictors like ensmean and ensstd if they are not yet present as columns, and needed by the pp_model
+        pp_model is an object from the fitting script. It has a fit method (returning parameters) and a predict method (requiring parameters).
+        Currently adds those to the alignedobject frame. Does a bit of bookkeeping about what predcols were added
+        """
+        if not 'ensmean' in self.frame.columns:
+            self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
+            self.predcols.append('ensmean')
+        if pp_model.need_std and (not 'ensstd' in self.frame.columns):
+            self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
+            self.predcols.append('ensstd')
             
     def fit_pp_models(self, pp_model, groupers = ['leadtime','latitude','longitude'], nfolds = 3):
         """
-        Computes simple predictors like ensmean and ensstd (next to the optional raw 'pi' for an event variable). 
+        Starts the computation of simple predictors (next to the optional raw 'pi' for a binary variable)
         Groups the dask dataframe with the groupers, and then pushes these groups to an apply function. 
         In this apply a model fitting function is called which uses the predictor columns and the observation column.
-        pp_model is an object from the fitting script. It has a fit method, returning parameters and a predict method.
+        pp_model is an object from the fitting script. It has a fit method (returning parameters) and a predict method (requiring parameters).
+        Computation is only invoked when exporting
         """
 
         def cv_fit(data, nfolds, fitfunc, modelcoefs, uniquetimes = False):
@@ -360,20 +378,20 @@ class Comparison(object):
             # Pre-allocating a full size array structure for the eventual dataframe.
             coefs = np.zeros((len(data), len(modelcoefs)), dtype = 'float32')
                         
-            # Need inverse of the data test index to select train.
-            # Stored by increasing time enables the cv to be done by location. (assuming equal group size). 
+            # Stored by increasing time enables the cv to be done by placement index in data. (assuming equal group size). 
             # Times are ppossibly non-unique when also fitting to a spatial pool
             # Later we remove duplicate times (if present and we gave uniquetimes = False)
                         
             for fold in foldindex:
-                test_ind = np.full((len(data),), False) # indexer to all data
+                test_ind = np.full((len(data),), False) # indexer to all data. 
                 if (fold == foldindex[-1]):
-                    test_ind[slice((fold - 1)*nperfold, None, None)] = True
+                    test_ind[slice((fold - 1)*nperfold, None, None)] = True # Last fold gets all data till the end
                 else:
                     test_ind[slice((fold - 1)*nperfold, (fold*nperfold), None)] = True
                 
                 # Calling of the fitting function on the training Should return an 1d array with the indices (same size as modelcoefs)           
                 # Write into the full sized array, this converts 64-bit fitting result to float32
+                # Use of inverse of the data test index to select train.
                 coefs[test_ind] = fitfunc(data[~test_ind])
             
             # Returning only the unique time indices but this eases the wrapping and joining of the grouped results later on.
@@ -391,139 +409,129 @@ class Comparison(object):
         # Store some information. We have unique times when all possible groupers are provided, and there is no pooling.
         self.fitgroupers = groupers
         uniquetimes = all([(g in ['leadtime','latitude','longitude']) for g in groupers]) or all([(g in ['leadtime','clustid']) for g in groupers])
-        self.coefcols = pp_model.model_coefs
         
-        # Actual computation. Passing information to cv_fit.
+        # Actual (lazy) computation. Passing information to cv_fit.
         grouped = self.frame.groupby(groupers)        
         self.fits = grouped.apply(cv_fit, meta = fitreturns, **{'nfolds':nfolds, 
                                                                 'fitfunc':fitfunc, 
                                                                 'modelcoefs':pp_model.model_coefs,
-                                                                'uniquetimes':uniquetimes}) #.compute()
+                                                                'uniquetimes':uniquetimes})
 
     
     def merge_to_clim(self):
         """
-        Based on day-of-year, writes an extra column to the dataframe with 'climatology', either a numeric quantile, or a climatological probability of occurrence.
+        Merging ased on day-of-year and the spatial coordinate, returns a dataframe in which the (potentially numerous) columns
+        from climatology are added (either a numeric quantile, the climatological probability or the random draws)
         """
         self.frame['doy'] = self.frame['time'].dt.dayofyear.astype('int16')
         if 'clustid' in self.frame.columns:
-            self.frame = self.frame.merge(self.clim, on = ['doy', 'clustid'], how = 'left')
+            return(self.frame.merge(self.clim, on = ['doy', 'clustid'], how = 'left'))
         else:
-            self.frame = self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left')
-        print('climatology lazily merged with frame')
+            return(self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left'))
     
-    def compute_predictors(self, pp_model):
+    def merge_to_fits(self):
         """
-        Currently adds ensmean and ensstd to the frame if they are not yet present as columns
+        Merges the fits (which when exported have a two-level column index) based on the variables used in fitting
+        plus time because of the 3-fold cross validation.
         """
-        if not 'ensmean' in self.frame.columns:
-            self.frame['ensmean'] = self.frame['forecast'].mean(axis = 1)
-            self.predcols.append('ensmean')
-        if pp_model.need_std and (not 'ensstd' in self.frame.columns):
-            self.frame['ensstd']  = self.frame['forecast'].std(axis = 1)
-            self.predcols.append('ensstd')
-        
+        joincolumns = ['time'] + self.fitgroupers
+        return(self.frame.merge(self.fits, on = joincolumns, how = 'left'))
+
     def make_pp_forecast(self, pp_model, n_members = None, random = False):
         """
-        Makes a probabilistic forecast based on already fitted models. 
-        Works by joining the fitted parameters (indexed by the fitting groupers and time) to the dask frame.
-        If n_members is not None, then we are forecasting n random members from the fitted distribution or equidistant probabilities.
-        If n_members is None then there are two options: 1) The event for which we forecast is already present as an observed binary variable and we use the Logistic model for the probability of 1. 2) The event is the exceedence of the quantile beloning to the climatology in this object and we employ scipy implementation of the normal model.
-        The prediction function is contained in the pp_model classes themselves.
-        All corrected forecasts appear as extra columns in the self.frame
+        Makes a probabilistic forecast based on already fitted models (either exported and imported, or externally supplied).
+        From that fit it gets the coefficients (indexed by time and fitgroupers), from the aligned frame the compited predictors, and 
+        with predict method of the pp_model a new dataframe is created. (computation invoked upon exporting)
+        If n_members is not None, then we are forecasting n members from the fitted distribution, either randomly or with the weibull equidistant estimator
+        If n_members is None then there are two options: 
+        1) The event for which we forecast is already present as an observed binary variable and we use the Logistic model for the probability of 1. 
+        2) The event is the exceedence of the quantile beloning to the climatology in this object and we employ scipy implementation of the normal model.
         """
-        
-        joincolumns = ['time'] + self.fitgroupers
-        
         self.compute_predictors(pp_model = pp_model) # computation if not present yet (fit was loaded, fitted somewhere else)
-        
-        self.frame = self.frame.merge(self.fits, on = joincolumns, how = 'left')
+        frameplusfits = self.merge_to_fits() # frameplusfits contains in each row coefficients and predictor values,
         
         predfunc = getattr(pp_model, 'predict')
         
+        # Generation of predictions gives a frame of equal length (axis = 0) and equal ordering as the aligned frame.
         if n_members is not None:
-            """
-            This is going to be ugly because of two limitations: I cannot assign multiple columns at once, so there is no way
-            to get an array with all draws from the predfunc. So we have to go draw by draw, and here we cannot assign to a multi-index
-            So this needs to be created afterwards.
-            """
-            
-            # Generate the fixed probabilities where the dist will be sampled if random = False. This is the Weibull plotting position estimator:
-            equidistant_probs = np.linspace(start=1/(n_members+1), stop = 1, num = n_members, endpoint = False)
-            
-            # Dask array way. #Accessing multiple members self.frame[[('forecast',1),('forecast',2)]]
-            levelzero = self.frame.columns.get_level_values(0).tolist()
-            levelone = self.frame.columns.get_level_values(1).tolist()
-            for m in range(n_members):
-                corcol = 'corrected' + str(m)
-                self.frame[corcol] = self.frame.map_partitions(predfunc, **{'n_draws':1, 'random':random, 'q_equidistant': equidistant_probs[m]})
-                levelzero.append('corrected')
-                levelone.append(m)
-            self.frame.columns = pd.MultiIndex.from_arrays([levelzero,levelone], names = self.frame.columns.names)
-            
+            self.preds = frameplusfits.map_partitions(predfunc, **{'n_draws':n_members, 'random':random}) # choice for random or equidistant is made in the method of the pp_model
+            self.preds.columns = pd.MultiIndex.from_product([['corrected'],self.preds.columns])
         else:
             if isinstance(pp_model, Logistic):
                 # In this case we have an event variable and fitted a logistic model. And predict with that parametric model.
-                self.frame['corrected'] = self.frame.map_partitions(predfunc, meta = ('corrected','float32'))
+                self.preds = frameplusfits.map_partitions(predfunc) #  meta = {'corrected':'float32'}
+                
             else:
-                # in this case continuous and we predict exceedence, of the climatological quantile. So we need an extra merge.
-                self.merge_to_clim()
-                self.frame['corrected'] = self.frame.map_partitions(predfunc, **{'quant_col':'climatology'}, meta = ('corrected','float32'))
-
+                # in this case continuous and we predict exceedence of the climatological threshold column. So we need an extra merge and redo the merge to fits
+                self.frame = self.merge_to_clim()
+                frameplusfits = self.merge_to_fits()
+                self.preds = frameplusfits.map_partitions(predfunc, **{'quant_col':'threshold'}) # meta = {'corrected':'float32'}
+            self.preds.columns = pd.MultiIndex.from_product([['corrected'],['']])
+            
+        self.preds[['observation','time'] + self.fitgroupers] = frameplusfits[['observation','time'] + self.fitgroupers] # Also include the observation. This way we can directly score on the to-be exported frame
+        
     def brierscore(self):
         """
-        Computes the climatological and raw scores.
-        Also computes the score of the predictions from the post-processed model if this column ('corrected') is present in the dataframe
+        Computes the climatological, raw and potentially post-processed brier scores.
+        This is the squared distance between a probability and the binary observation.
+        Also computes the score of the predictions from the post-processed model this object was created beforehand
+        The procedure merges the climatology and the predictions to the general dataframe. This is less of a problem than with the crps, because here they exist of only one column.
         """
-        # Merging with climatological file. In case of quantile scoring for the exceeding quantiles. In case of an already e.g. pop for the climatological probability.
+        # Merging with climatological file. This contains either the quantile to be exceeded and the probability, or the mean probability of the binary event. When NGR predictions were made for the first case, climatology is already merged to the frame.
         if not ('climatology' in self.frame.columns):
-            self.merge_to_clim()
-                    
-        if 'pi' in self.frame.columns: # This column comes from the match-and-write, when it is present we are dealing with an already binary observation.
-            obscolname = 'observation'
-            self.frame['climatology_bs'] = (self.frame['climatology'] - self.frame[obscolname])**2
-        else: # In this case quantile scoring. and pi needs creation
-            # Boolean comparison cannot be made in one go. because it does not now how to compare N*members agains the climatology of N
-            print('lazy boolcol (pi) construction')
-            self.boolcols = list()
-            for member in self.frame['forecast'].columns:
-                name = '_'.join(['bool',str(member)])
-                self.frame[name] = self.frame[('forecast',member)] > self.frame['climatology']
-                self.boolcols.append(name)
-            self.frame['pi'] = (self.frame[self.boolcols].sum(axis = 1) / len(self.frame['forecast'].columns)).astype('float32') # or use .count(axis = 1) if members might be NA
-            self.frame['oi'] = self.frame['observation'] > self.frame['climatology']
-            obscolname = 'oi'
-            self.frame['climatology_bs'] = (np.array(1 - self.quantile, dtype = 'float32') - self.frame[obscolname])**2 # Add the climatological score. use self.quantile.
+            self.frame = self.merge_to_clim()
+        
+        # Creation of the raw exceedence probability, by computing boolean exceedences of the threshold
+        # And creation of the binary observation
+        if not ('pi' in self.frame.columns):
+            print('lazy pi and bool observation construction')
+            def boolwrap(frame, quant_col):
+                bools = frame['forecast'].values > frame[quant_col].values[:,np.newaxis]
+                return(bools.mean(axis=1).astype('float32')) # will probably fail when NA is present
+            self.frame['pi'] = self.frame.map_partitions(boolwrap, **{'quant_col':'threshold'}, meta = ('pi','float32'))
+            self.frame['observation'] = self.frame['observation'] > self.frame['threshold']
+        
+        # Merge the predictions if available. Only one column 'corrected', we don't want to get the 'observation' column into the merge
+        if hasattr(self, 'preds'):
+            self.frame = self.frame.merge(self.preds[['time','corrected'] + self.fitgroupers], on = ['time'] + self.fitgroupers, how = 'left')
+
+        for forecasttype in ['pi','climatology','corrected']:
+            if forecasttype in self.frame.columns:
+                scorename = forecasttype + '_bs'
+                self.frame[scorename] = (self.frame[forecasttype] - self.frame['observation'])**2
             
-        self.frame['forecast_bs'] = (self.frame['pi'] - self.frame[obscolname])**2
-        
-        if 'corrected' in self.frame.columns:
-            self.frame['corrected_bs'] = (self.frame['corrected'] - self.frame[obscolname])**2
-        
-        # No grouping and averaging here. This is done in ScoreAnalysis objects that also allows bootstrapping.
-    
     def crpsscore(self):
         """
+        This method goes over the respective frames for the raw, the climatological (and potentially the post-processed) forecasts.
+        The score resulting from all of those frames are written as a column to the original aligned frame
         Discrete crps scoring by use of the properscoring package. For a small number of members (11),
         the overestimation compared to the gaussian analytical form is about 20%. 
-        Therefore both climatology, the forecast, and corrected should be scored with the same number of members.
+        For good comparison the climatology, the forecast, and corrected should be scored with the same number of members.
         """
-        if not ('climatology' in self.frame.columns):
-            self.merge_to_clim()
+        # Preparation of the frames
+        scoreframe = self.merge_to_clim()
+        frames = {'climatology': scoreframe,
+                  'forecast':scoreframe}
+        if hasattr(self, 'preds'):
+            frames.update({'corrected':self.preds})
         
         def crps_wrap(frame, forecasttype):
             """
             Wrapper for discrete ensemble crps scoring. Finds observations and forecasts to supply to the properscoring function
             """
             return(ps.crps_ensemble(observations = frame['observation'], forecasts = frame[forecasttype]).astype('float32')) # Not sure if this will provide the needed array type to ps
-            
-        for forecasttype in ['forecast','climatology','corrected']: 
-            if forecasttype in self.frame.columns: # Only score the corrected when present.
-                scorename = forecasttype + '_crps' 
-                self.frame[scorename] = self.frame.map_partitions(crps_wrap, **{'forecasttype':forecasttype}, meta = (scorename,'float32'))
         
+        for forecasttype in frames.keys(): 
+            scorename = forecasttype + '_crps' 
+            frames[forecasttype][scorename] = frames[forecasttype].map_partitions(crps_wrap, **{'forecasttype':forecasttype}, meta = (scorename,'float32'))
+        
+        # Joining the computed results. Hopefully this does not join all the columns.
+        joincolumns = ['time'] + self.fitgroupers 
+        self.frame = self.frame.merge(scoreframe[['climatology_crps','forecast_crps']+joincolumns], on = joincolumns, how = 'left')
+        if hasattr(self, 'preds'):
+            self.frame = self.frame.merge(self.preds[['corrected_crps'] + joincolumns], on = joincolumns, how = 'left')
     
-    def export(self, fits = True, frame = False, store_minimum = False):
+    def export(self, fits = False, frame = False, preds = False, store_minimum = False):
         """
         Put both in the same hdf file, but different key. So append mode. If frame than writes one dataframe for self.frame
         Columns have already been downcased in the previous steps. If store_minimum the function tries to drop forecast members, model coefficients, climatology column. Boolean columns are always dropped.
@@ -531,7 +539,7 @@ class Comparison(object):
 
         self.filepath = self.basedir + self.name + '.h5'
         if fits:
-            # Temporary store to file, to write the grouping multi-index. Then reset the indicise, downcast where possible and write the final one
+            # Temporary store to file, to write the grouping multi-index. Then reset the indices, downcast where possible and write the final one
             tempfile = self.basedir + uuid.uuid4().hex + '.h5'
             self.fits.to_hdf(tempfile, key = 'fits', scheduler = 'threads')
             print('all models have been fitted')
@@ -548,14 +556,17 @@ class Comparison(object):
             os.remove(tempfile)
         if frame:
             if store_minimum:
-                discard = ['climatology','forecast', 'corrected', 'doy', 'pi', 'oi'] + self.boolcols + self.coefcols + self.predcols
+                discard = ['climatology','threshold','forecast','corrected','doy','pi'] + self.predcols 
                 self.frame = self.frame.drop(discard, axis = 1, errors = 'ignore')
             
             self.frame.to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'a'})
         
+        if preds:
+            self.preds.to_hdf(self.filepath, key = 'preds')
+            self.preds = dd.read_hdf(self.filepath, key = 'preds', **{'mode':'a'})
+        
         return(self.name)
         
-
 class ScoreAnalysis(object):
     """
     Contains several ways to analyse an exported file with scores. 
@@ -801,9 +812,25 @@ class ScoreAnalysis(object):
 #comp.make_pp_forecast(NGR(), n_members=11)
 #comp.crpsscore()
 #comp.export(fits = False, frame = True)
+#clustga25_tg-anom_DJF_45r1_7D-roll-mean_0.2-tg-DJF-mean_tg-anom_clim_1998-01-01_2018-12-31_7D-roll-mean_0.2-tg-DJF-mean_5_5_q0.75.h5            
+#clim = Climatology('tg-anom',**{'name':'tg-anom_clim_1998-01-01_2018-12-31_7D-roll-mean_0.2-tg-DJF-mean_5_5_q0.75'})
+#clim.localclim()
 
-#test = ScoreAnalysis(scorefile='tg-anom_JJA_45r1_1D_0.01-tg-JJA-mean_tg_clim_2000-01-01_2005-12-31_1D_0.01-tg-JJA-mean_5_5_rand', timeagg = '1D', rolling = True)
-#test.load()
-#test.characteristiclength()
-#test.block_bootstrap_local_skills(n_samples = 2, fixsize = False)
-#res = test.process_bootstrapped_skills(local = True, forecast_horizon=False, average_afterwards=True)
+#align = ForecastToObsAlignment('DJF', '45r1')
+#align.recollect(booksname = 'books_clustga25_tg-anom_DJF_45r1_7D-roll-mean_0.2-tg-DJF-mean.csv')
+
+#comp = Comparison(align, climatology = clim)
+#comp.name = 'meanclimtest'
+#comp.fits = dd.read_hdf('/nobackup_1/users/straaten/scores/meanclimtest.h5', key = 'fits')
+#comp.fitgroupers = ['leadtime','clustid']
+#comp.fit_pp_models(NGR(), groupers = ['leadtime','clustid'])
+#comp.export(fits = True)
+#comp.make_pp_forecast(NGR())
+#comp.preds = dd.read_hdf('/nobackup_1/users/straaten/scores/meanclimtest.h5', key = 'preds')
+#dat = pd.read_hdf('/nobackup_1/users/straaten/scores/meanclimtest.h5', key = 'scores')
+#sc = ScoreAnalysis(scorefile = 'clustga33_tg-anom_DJF_45r1_11D-roll-mean_0.05-tg-DJF-mean_tg-anom_clim_1998-01-01_2018-12-31_11D-roll-mean_0.05-tg-DJF-mean_5_5_equi100', timeagg = '11D', rolling = True)
+#msc = sc.process_bootstrapped_skills(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold= 0, average_afterwards=False)
+#
+#obs = SurfaceObservations('tg', **{'name':'tg-anom_1998-06-07_2018-12-31_11D-roll-mean_0.05-tg-DJF-mean'})
+#obs.load()
+#mscgeo = georeference(msc, obs.clusterarray)
