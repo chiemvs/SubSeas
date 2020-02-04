@@ -12,7 +12,7 @@ import xarray as xr
 import pandas as pd
 import dask.dataframe as dd
 import dask.config
-from observations import SurfaceObservations, Climatology, EventClassification
+from observations import SurfaceObservations, Climatology, EventClassification, Clustering
 from forecasts import Forecast, ModelClimatology
 from comparison import ForecastToObsAlignment, Comparison, ScoreAnalysis
 from fitting import NGR, Logistic
@@ -51,11 +51,11 @@ class Experiment(object):
         except OSError:
             if self.quantiles is not None:
                 self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations, self.quantiles], names = ['spaceagg','timeagg','quantile']), 
-                                        columns = ['climname','scorefiles','externalfits','bootstrap','scores'])
+                                        columns = ['climname','modelclimname','scorefiles','externalfits','bootstrap','scores'])
                 self.log = self.log.unstack(level = -1)
             else:
                 self.log = pd.DataFrame(data = None, index = pd.MultiIndex.from_product([self.spaceaggregations, self.timeaggregations], names = ['spaceagg','timeagg']), 
-                                        columns = pd.MultiIndex.from_product([['climname','scorefiles','bootstrap','scores'],['']])) # Also two levels for compatibility
+                                        columns = pd.MultiIndex.from_product([['climname','modelclimname','scorefiles','bootstrap','scores'],['']])) # Also two levels for compatibility
             self.log = self.log.assign(**{'obsname':None,'booksname':None, 'obsclim':None,'modelclim':None}) # :''
     
     def savelog(self):
@@ -168,9 +168,41 @@ class Experiment(object):
 
         return(climatology.name)
     
+    def makemodelclim(self, spaceagg, timeagg, climtmin, climtmax, llcrnr = (25,-30), rucrnr = (75,75), quantile = ''):
+        """
+        Possible to make model climatologies for certain quantiles (not lead time dependend in contrast to the highresmodelclim)
+        All aggregation and possble conversion. Units will not be changed in the meantime, Though quantiles of Kelvin anomalies later be compared to matched & aligned Celsius forecasts.
+        """
+        assert isinstance(quantile, float), 'only possible when a quantile is supplied. Did you mean to make an average highresmodelclim instead?'
+        loadkwargs = dict(llcrnr = llcrnr, rucrnr = rucrnr)
+        
+        if self.newvar == 'anom': # If anomalies then we need to supply the highres mean array to the classification, and later on the aggregation.
+            highresmodelclim = ModelClimatology(cycle=self.cycle, variable = self.basevar, 
+                                                **{'name':self.log.loc[(spaceagg, timeagg),('modelclim','')]})
+            highresmodelclim.local_clim()
+            newvarkwargs = {'climatology':highresmodelclim}
+        else:
+            newvarkwargs = {}
+        
+        spacemethod = '-'.join([str(spaceagg), self.clustername, self.method])
+        cl = Clustering(**{'name':self.clustername})
+        clusterarray = cl.get_clusters_at(level = spaceagg)
+        
+        if timeagg != '1D':
+            timemethod = '-'.join([timeagg,'roll',self.method]) if self.rolling else '-'.join([timeagg,'norm',self.method]) 
+        else:
+            timemethod = timeagg
+        
+        modelclim = ModelClimatology(cycle=self.cycle, variable = self.basevar if (self.newvar is None) else '-'.join([self.basevar, self.newvar]))
+        modelclim.local_clim(tmin = climtmin, tmax = climtmax, timemethod = timemethod, spacemethod = spacemethod, 
+                             mean = False, quant = quantile, clusterarray = clusterarray, loadkwargs = loadkwargs, newvarkwargs = newvarkwargs)
+        modelclim.savelocalclim()
+        
+        return(modelclim.name)
+    
     def makehighresmodelclim(self, spaceagg, timeagg, climtmin, climtmax, llcrnr = (None,None), rucrnr = (None,None)):
         """
-        Only needed for later subtraction of mean from model fiels to create the anom variable (in matching)
+        Only needed for later subtraction of mean from model fiels to create the anom variable (in matching or in model quantile climatology)
         Performed at the highest possible model resolution (daily and 0.38 degrees). 
         Only done once (at the first iteration) and for other iterations this name is copied.
         Changing to the correct (observation) units is done later in the matching.
@@ -215,8 +247,16 @@ class Experiment(object):
         
         climatology = Climatology(self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('climname', quantile)]})
         climatology.localclim() # loading in this case. Creation was done in the makeclim method.
-        comp = Comparison(alignment = alignment, climatology = climatology)
-                
+        
+        if not self.log.loc[(spaceagg, timeagg),('modelclimname',[quantile])].isna().any(): # Supply model quantile climatology if that was computed earlier. Will be preferred for the raw briescoring in the comparison Class
+            modelclimatology = ModelClimatology(cycle = self.cycle, variable=self.basevar, **{'name':self.log.loc[(spaceagg, timeagg),('modelclimname',quantile)]})
+            modelclimatology.local_clim()
+            assert self.newvar == 'anom', 'This modelclimatology has likely no adapted units, only when anomalies the quantiles in Kelvin will be compatible with the aligned forecast anomalies in Celsius.'
+        else:
+            modelclimatology = None
+        
+        comp = Comparison(alignment = alignment, climatology = climatology, modelclimatology = modelclimatology)
+                        
         if isinstance(quantile, float):
             # Only in the first instance we want to fit a model (as the same is used for all quantiles), the place to find the fit is then stored in all quantile columns. 
             # If external fits were supplied (meaning the column is already filled) we load that one.
@@ -307,9 +347,9 @@ dask.config.set(temporary_directory='/nobackup_1/users/straaten/')
 """
 Experiment 25 Test for cluster based aggregation, regular temperatures, some post-processing, only the larger end of spatial aggregation.
 """
-clustga25 = Experiment(expname = 'clustga25', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
-                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
-clustga25.setuplog()
+#clustga25 = Experiment(expname = 'clustga25', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+#                 method = 'mean', timeaggregations= ['1D','3D','5D','7D','9D','11D'], spaceaggregations=[0.025,0.05,0.1,0.2,0.3,0.5,1], quantiles = None)
+#clustga25.setuplog()
 #clustga25.iterateaggregations(func = 'makehighresobsclim', column = 'obsclim', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga25.iterateaggregations(func = 'prepareobs', column = 'obsname', kwargs = dict(tmin = '1998-06-07', tmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
 #clustga25.iterateaggregations(func = 'makeclim', column = 'climname', kwargs = dict(climtmin = '1998-01-01', climtmax = '2018-12-31', llcrnr= (36,-24), rucrnr = (None,40)))
@@ -458,3 +498,17 @@ Experiment 32 Brier score extension of experiment 28, for the quantiles that hav
 #clustga32.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR()})
 #clustga32.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
 #clustga32.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = True)})
+
+"""
+Experiment 35 Subset of experiment 29 but then with the reviewers suggestion 
+to use model climatology quantiles as threshold for brier scoring the raw forecasts
+"""
+clustga35 = Experiment(expname = 'clustga35', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+                 method = 'mean', timeaggregations= ['1D','9D'], spaceaggregations=[0.025], quantiles = [0.15, 0.33, 0.66, 0.85])
+clustga35.setuplog()
+##clustga35.log.loc[:,['obsname','booksname','obsclim']] = clustga29.log.loc[(clustga35.spaceaggregations,clustga35.timeaggregations),['obsname','booksname','obsclim']]
+##clustga35.log.loc[:,['externalfits','climname']] = clustga29.log.loc[(clustga35.spaceaggregations,clustga35.timeaggregations), (['externalfits','climname'], clustga35.quantiles)] # Supply the external fits and the climatologies
+##clustga35.log['modelclim'] = 'tg_45r1_1998-06-07_2019-05-16_1D_0.38-degrees_5_5_mean'
+##clustga35.savelog()
+#clustga35.iterateaggregations(func = 'makemodelclim', column = 'modelclimname', kwargs = dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40)))
+

@@ -304,11 +304,12 @@ class Comparison(object):
     For continuous variables, the quantile of the climatology is important, this will determine the event.
     """
     
-    def __init__(self, alignment, climatology):
+    def __init__(self, alignment, climatology, modelclimatology = None):
         """
         The aligned object has Observation | members |
         Potentially an external observed climatology object can be supplied that takes advantage of the full observed dataset. It has to have a location and dayofyear timestamp. Is it already aggregated?
         This climatology can be a quantile (used as the threshold for brier scoring) or it is a climatological probability if we have an aligned event predictor like POP. Or it is a random draw used for CRPS scoring. which means that multiple 'numbers' will be present.
+        An optional model climatology can be supplied, to be used as a different exceedence threshold corresponging to a same quantile (only relevant for Brier Scoring)
         """
         self.frame = alignment.alignedobject
         self.basedir = '/nobackup_1/users/straaten/scores/'
@@ -335,7 +336,20 @@ class Comparison(object):
             self.quantile = climatology.clim.attrs['quantile']
         except KeyError:
             pass
-            
+        
+        # Construction of the model climatology. These quantiles currently are not leadtime dependent so is going to be joined
+        # with the normal climatology such that later both are joined on unique location and doy.
+        # Be careful that the unit is correct (either Celsius or Kelvin amnomalies for temperature)
+        if not modelclimatology is None:
+            assert modelclimatology.clim.attrs['quantile'] == self.quantile
+            modelclimatology.clim.name = 'modelclimatology'
+            self.modelclim = modelclimatology.clim.to_dataframe().dropna(axis = 0, how = 'any')
+            self.modelclim.columns = pd.MultiIndex.from_product([self.modelclim.columns, ['']], names = [None,'number'])
+            # Joining does not need resetting the columns I think:
+            if 'clustid' in self.clim.columns:
+                self.clim = self.clim.merge(self.modelclim, how = 'outer', on = ['clustid','doy'], right_index = True)
+            else:
+                self.clim = self.clim.merge(self.modelclim, how = 'outer', on = ['clustid','latitude','longitude'], right_index = True)
             
     def fit_pp_models(self, pp_model, groupers = ['leadtime','latitude','longitude'], nfolds = 3):
         """
@@ -472,10 +486,11 @@ class Comparison(object):
 
     def brierscore(self):
         """
-        Computes the climatological and raw scores.
+        Computes the climatological and raw scores. The raw scores uses a different threshold when a 'modelclimatology' column is present
         Also computes the score of the predictions from the post-processed model if this column ('corrected') is present in the dataframe
         """
         # Merging with climatological file. In case of quantile scoring for the exceeding quantiles. In case of an already e.g. pop for the climatological probability.
+        # Possibly this also joins the modelclimatology to the frame
         if not ('climatology' in self.frame.columns):
             self.merge_to_clim()
                     
@@ -488,7 +503,11 @@ class Comparison(object):
             self.boolcols = list()
             for member in self.frame['forecast'].columns:
                 name = '_'.join(['bool',str(member)])
-                self.frame[name] = self.frame[('forecast',member)] > self.frame['climatology']
+                if 'modelclimatology' in self.clim.columns: # Use either the model specific quantile threshold (if supplied) or the observed one
+                    self.frame[name] = self.frame[('forecast',member)] > self.frame['modelclimatology']
+                    print('took modelclimatology for raw forecast_bs')
+                else:
+                    self.frame[name] = self.frame[('forecast',member)] > self.frame['climatology']
                 self.boolcols.append(name)
             self.frame['pi'] = (self.frame[self.boolcols].sum(axis = 1) / len(self.frame['forecast'].columns)).astype('float32') # or use .count(axis = 1) if members might be NA
             self.frame['oi'] = self.frame['observation'] > self.frame['climatology']
@@ -548,7 +567,7 @@ class Comparison(object):
             os.remove(tempfile)
         if frame:
             if store_minimum:
-                discard = ['climatology','forecast', 'corrected', 'doy', 'pi', 'oi'] + self.boolcols + self.coefcols + self.predcols
+                discard = ['climatology', 'modelclimatology', 'forecast', 'corrected', 'doy', 'pi', 'oi'] + self.boolcols + self.coefcols + self.predcols
                 self.frame = self.frame.drop(discard, axis = 1, errors = 'ignore')
             
             self.frame.to_hdf(self.filepath, key = 'scores', format = 'table', **{'mode':'a'})
@@ -785,6 +804,24 @@ class ScoreAnalysis(object):
                     result = result.mean(axis = 0)
             return(result)
 
+if __name__ == '__main__':
+    mc = ModelClimatology('45r1','tg-anom', **{'name':'tg-anom_45r1_1998-06-07_1999-05-16_1D_0.3-tg-DJF-mean_5_5_q0.15'}) #
+    mc.local_clim()
+    al = ForecastToObsAlignment('DJF','45r1')
+    al.recollect(booksname = 'books_clustga25_tg-anom_DJF_45r1_1D_0.3-tg-DJF-mean.csv')
+    cl = Climatology('tg-anom', **{'name':'tg-anom_clim_1998-01-01_2018-12-31_1D_0.3-tg-DJF-mean_5_5_q0.15'})
+    cl.localclim()
+    self = Comparison(alignment=al, climatology=cl, modelclimatology=mc) # Add possibility for a model_climatology that is processed upon initialization?
+#    self.basedir = '/nobackup/users/straaten/'
+#    self.fit_pp_models(NGR(), groupers = ['clustid','leadtime'])
+#    self.export(fits = True, frame=False)
+#    self.make_pp_forecast(NGR())
+#    self.brierscore()
+#    filename = self.export(fits = False, frame = True, store_minimum = False)
+#    
+#    sc = ScoreAnalysis(scorefile = filename, timeagg = '1D', rolling=True)
+#    sc.basedir = '/nobackup/users/straaten/'
+#    sc.load()
 #highresobs = SurfaceObservations('tg')
 #highresobs.load(tmin = '2000-01-01', tmax = '2005-12-31',  llcrnr= (64,40))
 #highresobs.minfilter(season = 'DJF', n_min_per_seas = 80)

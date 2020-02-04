@@ -25,12 +25,16 @@ for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.002, 'add_off
                    'rr': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
                    'tx': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
                    'tg': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
+                   'tg-anom': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'time': {'dtype': 'int64'},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
                    'number': {'dtype': 'int16'},
+                   'clustid': {'dtype': 'int16', '_FillValue': -32767},
+                   'clustidfield': {'dtype': 'int16', '_FillValue': -32767},
                    'doy': {'dtype': 'int16'},
-                   'leadtime': {'dtype': 'int16'}}
+                   'leadtime': {'dtype': 'int16'},
+                   'dissim_threshold': {'dtype':'float32'}}
 
 model_cycles = pd.DataFrame(data = {'firstday':pd.to_datetime(['2015-05-12','2016-03-08','2016-11-22','2017-07-11','2018-06-05','2019-06-11']),
                              'lastday':pd.to_datetime(['2016-03-07','2016-11-21','2017-07-10','2018-06-04','2019-06-10','']),
@@ -483,13 +487,13 @@ class ModelClimatology(object):
         
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
-    def local_clim(self, tmin = None, tmax = None, timemethod = '1D', spacemethod = '0.38-degrees', daysbefore = 5, daysafter = 5,  mean = True, quant = None, loadkwargs = {}, newvarkwargs = {}):
+    def local_clim(self, tmin = None, tmax = None, timemethod = '1D', spacemethod = '0.38-degrees', daysbefore = 5, daysafter = 5,  mean = True, quant = None, clusterarray = None, loadkwargs = {}, newvarkwargs = {}):
         """
         Method to construct the climatology based on forecasts within a desired timewindow.
         Should I add a spacemethod and spatial aggregation option? spacemethod = '0.38-degrees'
         Climatology dependend on doy and on leadtime. Takes the average over all ensemble members and times within a window.
         This window is determined by daysbefore and daysafter and the time aggregation of the desired variable.
-        Newvarkwargs should contain a highresmodelclim for the conversion to anomalies, and an observed clusterarray to do a spacemethod conversion.
+        Newvarkwargs should contain a highresmodelclim for the conversion to anomalies. Observed clusterarray to do a spacemethod conversion is supplied seperately (also saved later)
         """
                 
         keys = ['tmin','tmax','timemethod','spacemethod','daysbefore', 'daysafter']
@@ -505,11 +509,15 @@ class ModelClimatology(object):
         # Overwrites possible nonsense attributes if name was supplied at initialization
         self.construct_name(force = False)
         
-        # If spacemethod not is forecast spacemethod.
-        # If self.var has a newvar property.
+        # Extract a clusterarray for later saving.
+        if not clusterarray is None:
+            self.clusterarray = clusterarray
         
         try:
             self.clim = xr.open_dataarray(self.filepath)
+            print('climatology directly loaded')
+        except ValueError:
+            self.clim = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold') # Also load the clustidfield if present??
             print('climatology directly loaded')
         except OSError:
             self.time_agg = int(pd.date_range('2000-01-01','2000-12-31', freq = timemethod.split('-')[0]).to_series().diff().dt.days.mode())
@@ -594,8 +602,8 @@ class ModelClimatology(object):
                             breakdown = self.spacemethod.split('-')
                             level, method = breakdown[::len(breakdown)-1] # first and last entry
                             clustername = '-'.join(breakdown[1:-1])
-                            forecasts[0].array = forecasts[0].array.reindex_like(newvarkwargs['clusterarray'], method = 'nearest')  # Involves regridding first.
-                            forecasts[0].aggregatespace(level = level, clustername = clustername, clusterarray = newvarkwargs['clusterarray'], method = method, skipna = True) # newvarkwargs supplies the clusterarray, which speeds up the computation. Forecasts also have no NA values we need to skip, speeds up the compute
+                            forecasts[0].array = forecasts[0].array.reindex_like(self.clusterarray, method = 'nearest')  # Involves regridding first.
+                            forecasts[0].aggregatespace(level = level, clustername = clustername, clusterarray = self.clusterarray, method = method, skipna = True) # newvarkwargs supplies the clusterarray, which speeds up the computation. Forecasts also have no NA values we need to skip, speeds up the compute
                             print('aligned space')
                         
                         forecast_collection.append(forecasts[0].array)
@@ -622,8 +630,13 @@ class ModelClimatology(object):
         
         if not self.changedunits:
             self.construct_name(force = True)
-            particular_encoding = {key : for_netcdf_encoding[key] for key in self.clim.to_dataset().variables.keys()} 
-            self.clim.to_netcdf(self.filepath, encoding = particular_encoding)
+            if hasattr(self, 'clusterarray'):
+                dataset = xr.Dataset({'clustidfield':self.clusterarray,self.clim.name:self.clim})
+            else:
+                dataset = self.clim.to_dataset()
+            
+            particular_encoding = {key : for_netcdf_encoding[key] for key in dataset.variables.keys()} 
+            dataset.to_netcdf(self.filepath, encoding = particular_encoding)
         else:
             raise TypeError('You cannot save this model climatology after changing the original model units')
 
@@ -632,20 +645,19 @@ if __name__ == '__main__':
     Some tests for tg-anom DJF, to see if we can get a quantile 
     Highresclim based on: dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40))
     """
-    newvar = 'anom' # If anomalies then first highres classification, and later on the aggregation.
-    spacemethod = '0.025-tg-DJF-mean'
     modelclimname = 'tg_45r1_1998-06-07_2019-05-16_1D_0.38-degrees_5_5_mean' #'tg_45r1_1998-06-07_2019-05-16_1D_5_5'
     highresmodelclim = ModelClimatology(cycle='45r1', variable = 'tg', **{'name':modelclimname}) # Name for loading
     highresmodelclim.local_clim()
     
     cl = Clustering(**{'name':'tg-DJF'})
-    clusterarray = cl.get_clusters_at(level = 0.025)
+    clusterarray = cl.get_clusters_at(level = 0.3)
     
     self = ModelClimatology(cycle='45r1', variable = 'tg-anom')
-    self.local_clim(tmin = '1998-06-07', tmax = '2019-05-16', timemethod = '1D', mean = False, quant = 0.7, loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40)), newvarkwargs = {'climatology':highresmodelclim, 'clusterarray':clusterarray})
+    self.local_clim(tmin = '1998-06-07', tmax = '1999-05-16', timemethod = '1D', spacemethod = '0.3-tg-DJF-mean', mean = False, quant = 0.15, clusterarray = clusterarray, loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40)), newvarkwargs = {'climatology':highresmodelclim})
+    self.savelocalclim()
 #    tmin = '1998-06-07'
 #    tmax = '2019-05-16'
-#    timemethod = '3D-roll-mean'
+#    timemethod = '3D-roll-mean' # 1day and 9day are needed
 #    spacemethod = '0.025-tg-DJF-mean'
 #    daysbefore = 5
 #    daysafter = 5
