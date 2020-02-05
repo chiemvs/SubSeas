@@ -573,7 +573,7 @@ class ModelClimatology(object):
         forecast_collection = [] # Perhaps just a regular list?
         for window in evaluation_windows:
             
-            if len(window) > 0:
+            if len(window) >= self.time_agg:
                 # Determine forecast initialization times that fully contain the evaluation date (including its window for time aggregation)
                 containstart = window.min() + pd.Timedelta(str(self.time_agg) + 'D') - pd.Timedelta(str(self.maxleadtime) + 'D') # Also plus 1 for the 1day aggregation?
                 containend = window.max() - pd.Timedelta(str(self.time_agg - 1) + 'D') # Initialized at day x means it also already contains day x as leadtime = 1 day
@@ -650,14 +650,14 @@ if __name__ == '__main__':
     highresmodelclim.local_clim()
     
     cl = Clustering(**{'name':'tg-DJF'})
-    clusterarray = cl.get_clusters_at(level = 0.3)
+    clusterarray = cl.get_clusters_at(level = 0.025)
     
     self = ModelClimatology(cycle='45r1', variable = 'tg-anom')
-    self.local_clim(tmin = '1998-06-07', tmax = '1999-05-16', timemethod = '1D', spacemethod = '0.3-tg-DJF-mean', mean = False, quant = 0.15, clusterarray = clusterarray, loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40)), newvarkwargs = {'climatology':highresmodelclim})
-    self.savelocalclim()
+    #self.local_clim(tmin = '1998-06-07', tmax = '2019-05-16', timemethod = '9D-roll-mean', spacemethod = '0.025-tg-DJF-mean', mean = False, quant = 0.85, clusterarray = clusterarray, loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40)), newvarkwargs = {'climatology':highresmodelclim})
+    #self.savelocalclim()
 #    tmin = '1998-06-07'
 #    tmax = '2019-05-16'
-#    timemethod = '3D-roll-mean' # 1day and 9day are needed
+#    timemethod = '9D-roll-mean' # 1day and 9day are needed
 #    spacemethod = '0.025-tg-DJF-mean'
 #    daysbefore = 5
 #    daysafter = 5
