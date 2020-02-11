@@ -649,12 +649,12 @@ if __name__ == '__main__':
     highresmodelclim = ModelClimatology(cycle='45r1', variable = 'tg', **{'name':modelclimname}) # Name for loading
     highresmodelclim.local_clim()
     
-    cl = Clustering(**{'name':'tg-DJF'})
+    cl = Clustering(**{'name':'tg-JJA'})
     clusterarray = cl.get_clusters_at(level = 0.025)
     
     self = ModelClimatology(cycle='45r1', variable = 'tg-anom')
-    #self.local_clim(tmin = '1998-06-07', tmax = '2019-05-16', timemethod = '9D-roll-mean', spacemethod = '0.025-tg-DJF-mean', mean = False, quant = 0.85, clusterarray = clusterarray, loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40)), newvarkwargs = {'climatology':highresmodelclim})
-    #self.savelocalclim()
+    self.local_clim(tmin = '1998-06-07', tmax = '2019-05-16', timemethod = '9D-roll-mean', spacemethod = '0.025-tg-JJA-mean', mean = False, quant = 0.85, clusterarray = clusterarray, loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40)), newvarkwargs = {'climatology':highresmodelclim})
+    self.savelocalclim()
 #    tmin = '1998-06-07'
 #    tmax = '2019-05-16'
 #    timemethod = '9D-roll-mean' # 1day and 9day are needed

@@ -315,7 +315,7 @@ class Experiment(object):
         can all be computed. These options are controlled with analysiskwargs
         """
         scoreanalysis = ScoreAnalysis(scorefile = self.log.loc[(spaceagg, timeagg),('scorefiles', quantile)], timeagg = timeagg, rolling = self.rolling)
-        bootstrap_ready = [(spaceagg, timeagg),('bootstrap', quantile)]
+        bootstrap_ready = self.log.loc[(spaceagg, timeagg),('bootstrap', quantile)]
         if usebootstrapped and bootstrap_ready:
             skillscore = scoreanalysis.process_bootstrapped_skills(**analysiskwargs)
         else:
@@ -502,13 +502,21 @@ Experiment 32 Brier score extension of experiment 28, for the quantiles that hav
 """
 Experiment 35 Subset of experiment 29 but then with the reviewers suggestion 
 to use model climatology quantiles as threshold for brier scoring the raw forecasts
+Uses the same matched files, with renamed books
 """
 clustga35 = Experiment(expname = 'clustga35', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
                  method = 'mean', timeaggregations= ['1D','9D'], spaceaggregations=[0.025], quantiles = [0.15, 0.33, 0.66, 0.85])
 clustga35.setuplog()
-##clustga35.log.loc[:,['obsname','booksname','obsclim']] = clustga29.log.loc[(clustga35.spaceaggregations,clustga35.timeaggregations),['obsname','booksname','obsclim']]
+##clustga35.log.loc[:,['obsname','obsclim']] = clustga29.log.loc[(clustga35.spaceaggregations,clustga35.timeaggregations),['obsname','obsclim']]
 ##clustga35.log.loc[:,['externalfits','climname']] = clustga29.log.loc[(clustga35.spaceaggregations,clustga35.timeaggregations), (['externalfits','climname'], clustga35.quantiles)] # Supply the external fits and the climatologies
 ##clustga35.log['modelclim'] = 'tg_45r1_1998-06-07_2019-05-16_1D_0.38-degrees_5_5_mean'
+##modelclimfiles = [f[:-3] for f in os.listdir('/nobackup/users/straaten/modelclimatology/') if f.startswith('tg-anom')]
+##modelclimfiles.sort()
+##clustga35.log.loc[(0.025, ['1D','9D']),('modelclimname',slice(None))] = np.array(modelclimfiles).reshape((2,4))
+##clustga35.log['booksname'] = ['books_clustga35_tg-anom_DJF_45r1_1D_0.025-tg-DJF-mean.csv', 'books_clustga35_tg-anom_DJF_45r1_9D-roll-mean_0.025-tg-DJF-mean.csv']
 ##clustga35.savelog()
-#clustga35.iterateaggregations(func = 'makemodelclim', column = 'modelclimname', kwargs = dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40)))
+
+#clustga35.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
+#clustga35.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#clustga35.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
 
