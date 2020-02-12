@@ -504,13 +504,13 @@ Experiment 35 Subset of experiment 29 but then with the reviewers suggestion
 to use model climatology quantiles as threshold for brier scoring the raw forecasts
 Uses the same matched files, with renamed books
 """
-clustga35 = Experiment(expname = 'clustga35', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
-                 method = 'mean', timeaggregations= ['1D','9D'], spaceaggregations=[0.025], quantiles = [0.15, 0.33, 0.66, 0.85])
-clustga35.setuplog()
+#clustga35 = Experiment(expname = 'clustga35', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+#                 method = 'mean', timeaggregations= ['1D','9D'], spaceaggregations=[0.025], quantiles = [0.15, 0.33, 0.66, 0.85])
+#clustga35.setuplog()
 ##clustga35.log.loc[:,['obsname','obsclim']] = clustga29.log.loc[(clustga35.spaceaggregations,clustga35.timeaggregations),['obsname','obsclim']]
 ##clustga35.log.loc[:,['externalfits','climname']] = clustga29.log.loc[(clustga35.spaceaggregations,clustga35.timeaggregations), (['externalfits','climname'], clustga35.quantiles)] # Supply the external fits and the climatologies
 ##clustga35.log['modelclim'] = 'tg_45r1_1998-06-07_2019-05-16_1D_0.38-degrees_5_5_mean'
-##modelclimfiles = [f[:-3] for f in os.listdir('/nobackup/users/straaten/modelclimatology/') if f.startswith('tg-anom')]
+##modelclimfiles = [f[:-3] for f in os.listdir('/nobackup/users/straaten/modelclimatology/') if (f.startswith('tg-anom') and 'DJF' in f)]
 ##modelclimfiles.sort()
 ##clustga35.log.loc[(0.025, ['1D','9D']),('modelclimname',slice(None))] = np.array(modelclimfiles).reshape((2,4))
 ##clustga35.log['booksname'] = ['books_clustga35_tg-anom_DJF_45r1_1D_0.025-tg-DJF-mean.csv', 'books_clustga35_tg-anom_DJF_45r1_9D-roll-mean_0.025-tg-DJF-mean.csv']
@@ -519,4 +519,27 @@ clustga35.setuplog()
 #clustga35.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
 #clustga35.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
 #clustga35.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
+
+"""
+Experiment 36 Subset of experiment 30 but then with the reviewers suggestion 
+to use model climatology quantiles as threshold for brier scoring the raw forecasts
+Uses the same matched files, with renamed books
+"""
+clustga36 = Experiment(expname = 'clustga36', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+                 method = 'mean', timeaggregations= ['1D','9D'], spaceaggregations=[0.025], quantiles = [0.15, 0.33, 0.66, 0.85])
+clustga36.setuplog()
+##clustga36.log.loc[:,['obsname','obsclim']] = clustga30.log.loc[(clustga36.spaceaggregations,clustga36.timeaggregations),['obsname','obsclim']]
+##clustga36.log.loc[:,['climname']] = clustga30.log.loc[(clustga36.spaceaggregations,clustga36.timeaggregations), (['climname'], clustga36.quantiles)] # Supply the climatologies
+##extvals = clustga30.log.loc[(clustga36.spaceaggregations,clustga36.timeaggregations),('externalfits',0.9)].values # External fit detour because the experiment 30 log does not have all the quantiles.
+##clustga36.log.loc[:,['externalfits']] = np.repeat(extvals[:,np.newaxis], 4, axis = 1)
+##clustga36.log['modelclim'] = 'tg_45r1_1998-06-07_2019-05-16_1D_0.38-degrees_5_5_mean'
+##modelclimfiles = [f[:-3] for f in os.listdir('/nobackup/users/straaten/modelclimatology/') if (f.startswith('tg-anom') and 'JJA' in f)]
+##modelclimfiles.sort()
+##clustga36.log.loc[(0.025, ['1D','9D']),('modelclimname',slice(None))] = np.array(modelclimfiles).reshape((2,4))
+##clustga36.log['booksname'] = ['books_clustga36_tg-anom_JJA_45r1_1D_0.025-tg-JJA-mean.csv', 'books_clustga36_tg-anom_JJA_45r1_9D-roll-mean_0.025-tg-JJA-mean.csv']
+##clustga36.savelog()
+
+clustga36.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
+clustga36.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#clustga36.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
 
