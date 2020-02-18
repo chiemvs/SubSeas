@@ -523,9 +523,9 @@ Uses the same matched files, with renamed books
 """
 Experiment 36 Subset of experiment 30 but then with the reviewers suggestion 
 to use model climatology quantiles as threshold for brier scoring the raw forecasts
-Uses the same matched files, with renamed books
+Uses the same matched files, with renamed books. Computations were done with season = 'DJF' and clustername = 'tg-DJF', but this did not lead to mistakes.
 """
-clustga36 = Experiment(expname = 'clustga36', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'DJF', clustername = 'tg-DJF',
+clustga36 = Experiment(expname = 'clustga36', basevar = 'tg', newvar = 'anom', rolling = True, cycle = '45r1', season = 'JJA', clustername = 'tg-JJA',
                  method = 'mean', timeaggregations= ['1D','9D'], spaceaggregations=[0.025], quantiles = [0.15, 0.33, 0.66, 0.85])
 clustga36.setuplog()
 ##clustga36.log.loc[:,['obsname','obsclim']] = clustga30.log.loc[(clustga36.spaceaggregations,clustga36.timeaggregations),['obsname','obsclim']]
@@ -539,7 +539,7 @@ clustga36.setuplog()
 ##clustga36.log['booksname'] = ['books_clustga36_tg-anom_JJA_45r1_1D_0.025-tg-JJA-mean.csv', 'books_clustga36_tg-anom_JJA_45r1_9D-roll-mean_0.025-tg-JJA-mean.csv']
 ##clustga36.savelog()
 
-clustga36.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
-clustga36.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
+#clustga36.iterateaggregations(func = 'score', column = 'scorefiles', kwargs = {'pp_model':NGR(),'store_minimum':True})
+#clustga36.iterateaggregations(func = 'bootstrap_scores', column = 'bootstrap', kwargs = {'bootstrapkwargs':dict(n_samples = 200, fixsize = False)})
 #clustga36.iterateaggregations(func = 'skill', column = 'scores', overwrite = True, kwargs = {'usebootstrapped' :True, 'analysiskwargs':dict(local = True, fitquantiles = False, forecast_horizon = False)})
 
