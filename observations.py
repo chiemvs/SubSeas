@@ -236,7 +236,7 @@ class Climatology(object):
         
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
         
-    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, random = False, n_draws = None):
+    def localclim(self, obs = None, tmin = None, tmax = None, timemethod = None, spacemethod = None, daysbefore = 0, daysafter = 0, mean = True, quant = None, random = False, n_draws = 11):
         """
         Load a local clim if one with corresponding var, tmin, tmax and method is found, or if name given at initialization is found.
         Construct local climatological distribution within a doy window, determined by daysbefore and daysafter, but with pooled years
@@ -259,10 +259,10 @@ class Climatology(object):
             self.climmethod = 'q' + str(quant)
             from helper_functions import nanquantile
         elif not random:
-            self.climmethod  = 'equi'
+            self.climmethod  = 'equi' + str(n_draws)
             from helper_functions import nanquantile
         else:
-            self.climmethod = 'rand'
+            self.climmethod = 'rand' + str(n_draws)
         
         # Overwrites possible nonsense attributes
         self.construct_name(force = False)
