@@ -26,6 +26,15 @@ for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.002, 'add_off
                    'tx': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
                    'tg': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
                    'tg-anom': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
+                   'sst': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
+                   'swvl1': {'dtype': 'int16', 'scale_factor': 0.01, '_FillValue': -32767},
+                   'swvl2': {'dtype': 'int16', 'scale_factor': 0.01, '_FillValue': -32767},
+                   'swvl3': {'dtype': 'int16', 'scale_factor': 0.01, '_FillValue': -32767},
+                   'swvl4': {'dtype': 'int16', 'scale_factor': 0.01, '_FillValue': -32767},
+                   'msl': {'dtype': 'int16', 'scale_factor': 0.3, 'add_offset': 99000, '_FillValue': -32767},
+                   'z': {'dtype': 'int16', 'scale_factor': 0.6, 'add_offset': 90000, '_FillValue': -32767},
+                   'u': {'dtype': 'int16', 'scale_factor': 0.004, '_FillValue': -32767},
+                   'v': {'dtype': 'int16', 'scale_factor': 0.004, '_FillValue': -32767},
                    'time': {'dtype': 'int64'},
                    'latitude': {'dtype': 'float32'},
                    'longitude': {'dtype': 'float32'},
@@ -59,7 +68,7 @@ def mars_dict_extra_surface(date, hdate = None, contr = False, varres = False, s
     'step'      : "0/to/1104/by/6",
     'ppengine'  : "mir",
     'area'      : "80/-90/20/30", # big domain from Cassou 2005. swvl shrunken later to "75/-30/25/75"
-    'grid'      : ".38/.38", # Octahedral grid does not support sub-areas
+    'grid'      : "1.5/1.5", # Octahedral grid does not support sub-areas
     'expect'    : "any",
     }
     
@@ -89,7 +98,7 @@ def mars_dict_extra_pressure(date, hdate = None, contr = False, varres = False, 
     'step'      : "0/to/1104/by/6",
     'ppengine'  : "mir",
     'area'      : "80/-90/20/30", # big domain from Cassou 2005. swvl shrunken later to "75/-30/25/75"
-    'grid'      : ".38/.38", # Octahedral grid does not support sub-areas
+    'grid'      : "1.5/1.5", # Octahedral grid does not support sub-areas
     'expect'    : "any",
     }
     
@@ -181,11 +190,11 @@ class Forecast(object):
                     raise CascadePressureError
                 self.join_members(pf_in = self.pffile_pl,
                                   cf_in = self.cffile_pl,
-                                  comb_out = self.interfile_pl) # creates the combined varres interfile
+                                  comb_out = self.interfile_pl) # creates the combined pressure level interfile
                 comb_pl = xr.open_dataset(self.basedir + self.interfile_pl)
                 
             comb.load()
-            comb_pl.load() # Also read as a dataset.
+            comb_pl.load() # Also read as a dataset, can later both be joined. Perhaps pressure level coordinate needs some attention?
             
             # Precipitation. First resample: right limit is included because rain within a day accumulated till that 00UTC timestamp. Then de-accumulate
             tp = comb.tp.resample(time = 'D', closed = 'right').last()
@@ -211,7 +220,7 @@ class Forecast(object):
             particular_encoding = {key : for_netcdf_encoding[key] for key in result.keys()} 
             result.to_netcdf(path = self.basedir + self.processedfile, encoding = particular_encoding)
             comb.close()
-            comb_varres.close()
+            comb_pl.close()
             print('Processed forecast successfully created')
             
 
@@ -246,9 +255,8 @@ class Forecast(object):
         
         cf.coords['number'] = np.array(0, dtype='int16')
         cf = cf.expand_dims('number',-1)
-        #particular_encoding = {key : for_netcdf_encoding[key] for key in cf.keys()} 
-        #xr.concat([cf,pf], dim = 'number').to_netcdf(path = self.basedir + comb_out, encoding= particular_encoding)
-        return pf, cf
+        particular_encoding = {key : for_netcdf_encoding[key] for key in cf.keys()} 
+        xr.concat([cf,pf], dim = 'number').to_netcdf(path = self.basedir + comb_out, encoding= particular_encoding)
     
     def cleanup(self):
         """
@@ -342,7 +350,7 @@ class Hindcast(object):
         self.cycle = cycle
         self.stepbeforeresswitch = model_cycles.loc[model_cycles['cycle'] == self.cycle, 'stepbeforeresswitch'].values[0]
         #self.basedir = '/nobackup/users/straaten/EXT_extra/' + cycle + '/'
-        self.basedir = '/nobackup/users/straaten/EXT/' + cycle + '/'
+        self.basedir = '/nobackup/users/straaten/EXT_extra/' + cycle + '/'
         self.prefix = prefix
         self.hdate = hdate
         self.pffile = self.prefix + self.hdate + '_ens_sfc.grib'
@@ -438,10 +446,10 @@ class Hindcast(object):
             values = values.reshape((len(lats),len(lons)), order = 'F' if lat_fastest_changing else 'C') # order C means last index fastest changing
             return values
 
-        for hd in self.hdates[1:2]:
+        for hd in self.hdates:
             validtimes = [pd.to_datetime(hd) + pd.DateOffset(hours = step) for step in steprange] 
             hd_as_int = int(''.join(hd.split('-'))) # For comparison against grib key dataDate (unchanging)
-            ds = xr.Dataset({param:xr.DataArray(np.nan, dims = ('time','latitude','longitude','number'),coords = {'time':validtimes,'latitude':lats,'longitude':lons,'number':np.arange(11)}).astype(np.float32) for param in params})
+            ds = xr.Dataset({param:xr.DataArray(np.nan, dims = ('time','latitude','longitude','number'),coords = {'time':validtimes,'latitude':lats,'longitude':lons,'number':np.arange(11)}, attrs = {'units':units[param]}).astype(np.float32) for param in params})
      
             for filename in [pf_in, cf_in]:
                 f = open(self.basedir + filename, mode = 'rb')
@@ -663,6 +671,9 @@ class ModelClimatology(object):
             raise TypeError('You cannot save this model climatology after changing the original model units')
 
 if __name__ == '__main__':
+    f = Forecast('2019-06-03', cycle = '45r1')
+    f.join_members(pf_in = f.pffile_pl, cf_in = f.cffile_pl, comb_out = f.interfile_pl)
+
     """
     Some tests for tg-anom DJF, to see if we can get a quantile 
     Highresclim based on: dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40))
