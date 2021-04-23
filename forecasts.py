@@ -195,27 +195,25 @@ class Forecast(object):
                 
             comb.load()
             comb_pl.load() # Also read as a dataset, can later both be joined. Perhaps pressure level coordinate needs some attention?
-            
-            # Precipitation. First resample: right limit is included because rain within a day accumulated till that 00UTC timestamp. Then de-accumulate
-            tp = comb.tp.resample(time = 'D', closed = 'right').last()
-            rr = tp.diff(dim = 'time', label = 'upper') # This cutoffs the first timestep.
-            # Correction of de-accumulation. By subtracting coarse varres 00 UTC field before switch from 00UTC after switch (in tp, but labeled left)
-            coarse_coarse = tp.sel(time = comb_varres.tpvar.time) - comb_varres.tpvar
-            coarse_coarse = coarse_coarse.where(coarse_coarse >= 0, 0.0) # removing some very spurious and small negative values
-            rr.loc[comb_varres.tpvar.time,...] = coarse_coarse
-            rr.attrs.update({'long_name':'precipitation', 'units':comb.tp.units})
-            # Mean temperature. Resample. Cutoff last timestep because this is no average (only instantaneous 00UTC value)
-            tg = comb.t2m.resample(time = 'D').mean('time').isel(time = slice(0,-1))
-            tg.attrs.update({'long_name':'mean temperature', 'units':comb.t2m.units})
-            # Maximum temperature. Right limit is included because forecast value is the maximum in previous six hours. Therefore also cutoff the first timestep
-            tx = comb.mx2t6.resample(time = 'D', closed = 'right').max('time').isel(time = slice(1,None))
-            tx.attrs.update({'long_name':'maximum temperature', 'units':comb.mx2t6.units})
+             
+            # Surface variables resample to daily means
+            # Last one can be dropped, only a 00 UTC, should not become an average
+            surface = comb.resample(time = 'D').mean().isel(time = slice(0,-1))
+            for var in surface.data_vars:
+                surface[var].attrs.update({'resample':'1D_mean'})
+
+            # Pressure variables select 12 UTC as the daily snapshot
+            # Also replace axis with the same as surface (for merging)
+            pressure = comb_pl.sel(time = comb_pl.time.dt.hour == 12)
+            for var in pressure.data_vars:
+                pressure[var].attrs.update({'resample':'12UTC'})
+            pressure.coords['time'] = surface.coords['time']
             
             # Join and add leadtime dimension (days) for clarity
-            result = xr.Dataset({'rr':rr,'tg':tg,'tx':tx})
+            result = surface.merge(pressure)
             result['leadtime'] = ('time', np.arange(1, len(result.coords['time'])+1, dtype = 'int16'))
             result.leadtime.attrs.update({'long_name':'leadtime', 'units':'days'})
-            result.set_coords('leadtime', inplace=True) # selection by leadtime requires a quick swap: result.swap_dims({'time':'leadtime'})
+            result = result.set_coords('leadtime') # selection by leadtime requires a quick swap: result.swap_dims({'time':'leadtime'})
             
             particular_encoding = {key : for_netcdf_encoding[key] for key in result.keys()} 
             result.to_netcdf(path = self.basedir + self.processedfile, encoding = particular_encoding)
@@ -299,7 +297,7 @@ class Forecast(object):
             self.array.coords['number'] = np.arange(0,n_members, dtype = 'int16')
         # Standard methods of the processed files.
         self.timemethod = '1D'
-        self.spacemethod = '0.38-degrees'
+        self.spacemethod = '1.5-degrees'
         self.basevar = variable
         
     def aggregatetime(self, freq = '7D' , method = 'mean', ndayagg = None, rolling = False, keep_leadtime = False):
@@ -375,8 +373,8 @@ class Hindcast(object):
                     hindcast.create_processed(prevent_cascade = True)
             except CascadeError:
                 print('Combined files need creation (surface and pressure). Do this from the single grib files')
-                self.crunch_gribfiles(pf_in = self.pffile, cf_in = self.cffile, comb_extension = '_comb_sfc.nc')
-                self.crunch_gribfiles(pf_in = self.pffile_pl, cf_in = self.cffile_pl, comb_extension = '_comb_pl.nc')
+                self.crunch_gribfiles(pf_in = self.pffile, cf_in = self.cffile, comb_extension = '_comb_sfc.nc')  
+                self.crunch_gribfiles(pf_in = self.pffile_pl, cf_in = self.cffile_pl, comb_extension = '_comb_pl.nc') # This won't re-download when they were actually downloaded first
                 for hindcast in self.hindcasts:
                     hindcast.create_processed(prevent_cascade = True)
             except CascadePressureError:
@@ -671,9 +669,15 @@ class ModelClimatology(object):
             raise TypeError('You cannot save this model climatology after changing the original model units')
 
 if __name__ == '__main__':
-    f = Forecast('2019-06-03', cycle = '45r1')
-    f.join_members(pf_in = f.pffile_pl, cf_in = f.cffile_pl, comb_out = f.interfile_pl)
+    #f = Forecast('2019-06-10', cycle = '45r1')
+    #f.create_processed()
+    #f.join_members(pf_in = f.pffile_pl, cf_in = f.cffile_pl, comb_out = f.interfile_pl)
+    #f.join_members(pf_in = f.pffile, cf_in = f.cffile, comb_out = f.interfile)
 
+    #h = Hindcast('2019-06-03', cycle = '45r1')
+    #h.invoke_processed_creation()
+
+    #start_batch(tmin = '2019-05-01', tmax = '2019-05-31')
     """
     Some tests for tg-anom DJF, to see if we can get a quantile 
     Highresclim based on: dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40))
