@@ -404,9 +404,6 @@ class Hindcast(object):
         if os.path.isfile(self.basedir + cf_in):
             print('Control file successfully loaded')
         else:
-            print('Ensemble file needs to be downloaded')
-            server.execute(call_func(self.hdate, hdate = self.marshdates, contr = False,
-                                     varres = False, stepbeforeresswitch = self.stepbeforeresswitch), self.basedir + pf_in)
             print('Control file needs to be downloaded')
             server.execute(call_func(self.hdate, hdate = self.marshdates, contr = True,
                                      varres = False, stepbeforeresswitch = self.stepbeforeresswitch), self.basedir + cf_in)
@@ -674,10 +671,13 @@ if __name__ == '__main__':
     #f.join_members(pf_in = f.pffile_pl, cf_in = f.cffile_pl, comb_out = f.interfile_pl)
     #f.join_members(pf_in = f.pffile, cf_in = f.cffile, comb_out = f.interfile)
 
-    #h = Hindcast('2019-06-03', cycle = '45r1')
+    #h = Hindcast('2018-07-05', cycle = '45r1')
     #h.invoke_processed_creation()
 
-    #start_batch(tmin = '2019-05-01', tmax = '2019-05-31')
+    #start_batch(tmin = '2019-05-01', tmax = '2019-05-02') # SEGMENTATION FAULT for hindcast
+    #start_batch(tmin = '2018-08-14', tmax = '2018-08-16') # Also SEGMENTATION fault for hindcast.
+    #start_batch(tmin = '2018-08-17', tmax = '2018-08-20')
+    #start_batch(tmin = '2018-08-06', tmax = '2018-08-13')
     """
     Some tests for tg-anom DJF, to see if we can get a quantile 
     Highresclim based on: dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40))
