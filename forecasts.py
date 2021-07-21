@@ -28,6 +28,7 @@ for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.002, 'add_off
                    'tg-anom': {'dtype': 'int16', 'scale_factor': 0.002, '_FillValue': -32767},
                    'sst': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
                    'swvl1': {'dtype': 'int16', 'scale_factor': 0.01, '_FillValue': -32767},
+                   'swvl13': {'dtype': 'int16', 'scale_factor': 0.01, '_FillValue': -32767},
                    'swvl2': {'dtype': 'int16', 'scale_factor': 0.01, '_FillValue': -32767},
                    'swvl3': {'dtype': 'int16', 'scale_factor': 0.01, '_FillValue': -32767},
                    'swvl4': {'dtype': 'int16', 'scale_factor': 0.01, '_FillValue': -32767},
@@ -276,7 +277,8 @@ class Forecast(object):
         Then the numbers are set to a default range because they are not unique across initialization times
         over which they are later pooled. Within one forecast instance they do of course resemble a physical pathway.
         """
-        
+        if variable in ['tg','tx','rr']:
+            self.basedir = '/nobackup/users/straaten/EXT/' + self.cycle + '/' # Comptible with loading old forecast from non EXT_extra variables
         full = xr.open_dataset(self.basedir + self.processedfile)[variable]
         
         # Full range if no timelimits were given
@@ -676,8 +678,27 @@ if __name__ == '__main__':
 
     #start_batch(tmin = '2019-05-01', tmax = '2019-05-02') # SEGMENTATION FAULT for hindcast
     #start_batch(tmin = '2018-08-14', tmax = '2018-08-16') # Also SEGMENTATION fault for hindcast.
-    #start_batch(tmin = '2018-08-17', tmax = '2018-08-20')
-    #start_batch(tmin = '2018-08-06', tmax = '2018-08-13')
+    #start_batch(tmin = '2019-03-23', tmax = '2019-03-30')
+    #start_batch(tmin = '2019-03-31', tmax = '2019-04-06')
+    #start_batch(tmin = '2019-04-07', tmax = '2019-04-13') 
+    #start_batch(tmin = '2019-05-02', tmax = '2019-05-02') # 05-02 because of failure. from 04-13 onwards done.
+
+    """
+    Modelclims for EXT_extra. Daily anomalies. Not year round available.
+    """
+    #f = Forecast('1998-06-07', prefix = 'hin_', cycle = '45r1')
+    #f.load('swvl13')
+    import multiprocessing
+    def make_and_save_clim(var: str):
+        temp = ModelClimatology(cycle='45r1', variable = var)
+        #temp.local_clim(tmin = '1998-06-07', tmax = '2000-06-16', timemethod = '1D', spacemethod = '1.5-degrees', mean = True, loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40)))
+        temp.local_clim(tmin = '1998-06-07', tmax = '2018-08-31', timemethod = '1D', spacemethod = '1.5-degrees', mean = True)
+        temp.savelocalclim()
+
+    with multiprocessing.Pool(2) as p: # Subprocess makes sure that memory is cleared
+        p.map(make_and_save_clim, ['swvl13','sst', 'z', 'msl', 'swvl4', 'u','v'])
+
+
     """
     Some tests for tg-anom DJF, to see if we can get a quantile 
     Highresclim based on: dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40))

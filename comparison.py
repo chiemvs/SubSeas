@@ -192,7 +192,7 @@ def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_me
             
             # If aligned takes too much system memory (> 500Mb) . Write it out
             aligned_basket_size += sys.getsizeof(temp)
-            datesubset = datesubset.drop(date)
+        datesubset = datesubset.drop(date)
     
     dataset = pd.concat(aligned_basket)
     dataset.to_hdf(outfilepath, key = 'intermediate', format = 'table')
