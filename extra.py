@@ -39,14 +39,19 @@ if __name__ == "__main__":
     Creation of matched set to ERA5 observations. First surface observation
     """
     t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 't2m-anom_1979-01-01_2019-12-31_1D_0.25-degree') # Override normal E-OBS directory
-    t2m.load(tmin = '2000-01-01', tmax = '2000-02-01')
+    t2m.load(tmin = '1998-06-07', tmax = '2019-08-31')
+    #t2m.load(tmin = '2000-01-01', tmax = '2000-02-01')
     t2m.aggregatespace(clustername = 't2m-q095-adapted', level = 15)
+    t2m.aggregatetime(freq = '7D', method = 'mean', rolling = True)
     # write output. Correct the name for later matching to forecasts?
     # Utins match, namely K
     t2m.newvar = 'anom' # Actually already done
     t2m.construct_name(force = True) # Adds new tim/spacemethod
     print(t2m.name)
-    out = xr.Dataset({'clustidfield':t2m.clusterarray,t2m.array.name:t2m.array})
+    t2m.array = t2m.array.drop(['nclusters','dissim_threshold'])
+    out = xr.Dataset({'clustidfield':t2m.clusterarray.drop('nclusters'),t2m.array.name:t2m.array})
+    #out.to_netcdf(t2m.filepath)
+    t2m.clusterarray = t2m.clusterarray.drop(['nclusters','dissim_threshold']) # So that they are not carried into matching
 
     # Matching. preparation with a highresmodelclim 
     highresmodelclim = ModelClimatology(cycle='45r1', variable = t2m.basevar, **{'name':'tg_45r1_1998-06-07_2019-05-16_1D_0.38-degrees_5_5_mean'}) # Name for loading
@@ -54,12 +59,12 @@ if __name__ == "__main__":
     newvarkwargs={'climatology':highresmodelclim}
     loadkwargs = {'llcrnr':(30,None),'rucrnr':(None,42)} # Limiting the domain a bit.
 
-    f = Forecast('2000-01-07', prefix = 'hin_', cycle = '45r1')
-    f.load('tg',**loadkwargs)
+    #f = Forecast('2000-01-07', prefix = 'hin_', cycle = '45r1')
+    #f.load('tg',**loadkwargs)
 
-    #alignment = ForecastToObsAlignment(season = 'DJF', observations=t2m, cycle='45r1', n_members = 11, **{'expname':'paper3-1'}) # Season subsets the obs
-    #alignment.match_and_write(newvariable = True, # Do I need loadkwargs
-    #                          newvarkwargs = newvarkwargs,
-    #                          loadkwargs = loadkwargs,
-    #                          matchtime = False, 
-    #                          matchspace= True)
+    alignment = ForecastToObsAlignment(season = 'JJA', observations=t2m, cycle='45r1', n_members = 11, **{'expname':'paper3-1'}) # Season subsets the obs
+    alignment.match_and_write(newvariable = True, # Do I need loadkwargs
+                              newvarkwargs = newvarkwargs,
+                              loadkwargs = loadkwargs,
+                              matchtime = True, 
+                              matchspace= True)

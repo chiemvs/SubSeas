@@ -40,8 +40,12 @@ def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_me
         containstart = date + pd.Timedelta(str(time_agg) + 'D') - pd.Timedelta(str(maxleadtime) + 'D')
         containend = date
         contain = pd.date_range(start = containstart, end = containend, freq = 'D').strftime('%Y-%m-%d')
-        forecasts = [Forecast(indate, prefix = 'for_', cycle = cycle) for indate in contain]
-        hindcasts = [Forecast(indate, prefix = 'hin_', cycle = cycle) for indate in contain]
+        if obs.basevar in ['tg','tx','rr']:
+            forbasedir = '/nobackup/users/straaten/EXT/'
+        else:
+            forbasedir = '/nobackup/users/straaten/EXT_extra/'
+        forecasts = [Forecast(indate, prefix = 'for_', cycle = cycle, basedir = forbasedir) for indate in contain]
+        hindcasts = [Forecast(indate, prefix = 'hin_', cycle = cycle, basedir = forbasedir) for indate in contain]
         # select from potential forecasts only those that exist.
         forecasts = [f for f in forecasts if os.path.isfile(f.basedir + f.processedfile)]
         hindcasts = [h for h in hindcasts if os.path.isfile(h.basedir + h.processedfile)]
@@ -165,8 +169,8 @@ def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_me
                 # Unstack creates duplicates. Two extra columns (obs and pi) need to be selected. Therefore the iloc
                 temp = combined.unstack('number').iloc[:,np.append(np.arange(0,n_members + 1), n_members * 2)]
                 temp.reset_index(inplace = True) # places spatial and time dimension in the columns
-                labels = temp.columns.labels[1].tolist()
-                labels[-2:] = np.repeat(n_members, 2)
+                #labels = temp.columns.labels[1].tolist()
+                #labels[-2:] = np.repeat(n_members, 2)
             except NameError:
                 # Merging, exporting to pandas and masking by dropping on NA observations.
                 combined = xr.Dataset({'forecast':allleadtimes.drop('time'), 'observation':fieldobs}).to_dataframe().dropna(axis = 0)
@@ -174,10 +178,10 @@ def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_me
                 # first puts number dimension into columns. observerations are duplicated so therefore selects up to n_members +1
                 temp = combined.unstack('number').iloc[:,:(n_members + 1)]
                 temp.reset_index(inplace = True) # places spatial and time dimension in the columns
-                labels = temp.columns.labels[1].tolist()
-                labels[-1] = n_members
+                #labels = temp.columns.get_level_values(1).tolist() # get_level_values
+                #labels[-1] = n_members
             
-            temp.columns.set_labels(labels, level = 1, inplace = True)
+            #temp.columns.set_labels(labels, level = 1, inplace = True) # set_levels
             
             # Downcasting the spatial coordinates and leadtime
             spatialcoords = list(fieldobs.dims)

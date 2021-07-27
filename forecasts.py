@@ -137,7 +137,7 @@ class CascadePressureError(Exception):
                        
 class Forecast(object):
 
-    def __init__(self, indate = '2015-05-14', prefix = 'for_', cycle = '41r1'):
+    def __init__(self, indate = '2015-05-14', prefix = 'for_', cycle = '41r1', basedir = '/nobackup/users/straaten/EXT_extra/'):
         """
         Defines all the intermediate and raw forecast files that are needed for the processing.
         The final usable daily product is 'processedfile'
@@ -145,7 +145,7 @@ class Forecast(object):
         """
         self.cycle = cycle
         self.stepbeforeresswitch = model_cycles.loc[model_cycles['cycle'] == self.cycle, 'stepbeforeresswitch'].values[0]
-        self.basedir = '/nobackup/users/straaten/EXT_extra/' + cycle + '/'
+        self.basedir = basedir + cycle + '/'
         self.prefix = prefix
         self.indate = indate
         self.processedfile = self.prefix + self.indate + '_processed.nc'
@@ -201,13 +201,13 @@ class Forecast(object):
             # Last one can be dropped, only a 00 UTC, should not become an average
             surface = comb.resample(time = 'D').mean().isel(time = slice(0,-1))
             for var in surface.data_vars:
-                surface[var].attrs.update({'resample':'1D_mean'})
+                surface[var].attrs.update({'resample':'1D_mean','units':comb[var].attrs['units']})
 
             # Pressure variables select 12 UTC as the daily snapshot
             # Also replace axis with the same as surface (for merging)
             pressure = comb_pl.sel(time = comb_pl.time.dt.hour == 12)
             for var in pressure.data_vars:
-                pressure[var].attrs.update({'resample':'12UTC'})
+                pressure[var].attrs.update({'resample':'12UTC','units':comb_pl[var].attrs['units']})
             pressure.coords['time'] = surface.coords['time']
             
             # Join and add leadtime dimension (days) for clarity
@@ -683,20 +683,21 @@ if __name__ == '__main__':
     #start_batch(tmin = '2019-04-07', tmax = '2019-04-13') 
     #start_batch(tmin = '2019-05-02', tmax = '2019-05-02') # 05-02 because of failure. from 04-13 onwards done.
 
+    #start_batch(tmin = '2018-06-07', tmax = '2018-06-07') 
     """
     Modelclims for EXT_extra. Daily anomalies. Not year round available.
     """
     #f = Forecast('1998-06-07', prefix = 'hin_', cycle = '45r1')
     #f.load('swvl13')
-    import multiprocessing
-    def make_and_save_clim(var: str):
-        temp = ModelClimatology(cycle='45r1', variable = var)
-        #temp.local_clim(tmin = '1998-06-07', tmax = '2000-06-16', timemethod = '1D', spacemethod = '1.5-degrees', mean = True, loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40)))
-        temp.local_clim(tmin = '1998-06-07', tmax = '2018-08-31', timemethod = '1D', spacemethod = '1.5-degrees', mean = True)
-        temp.savelocalclim()
+    #import multiprocessing
+    #def make_and_save_clim(var: str):
+    #    temp = ModelClimatology(cycle='45r1', variable = var)
+    #    #temp.local_clim(tmin = '1998-06-07', tmax = '2000-06-16', timemethod = '1D', spacemethod = '1.5-degrees', mean = True, loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40)))
+    #    temp.local_clim(tmin = '1998-06-07', tmax = '2018-08-31', timemethod = '1D', spacemethod = '1.5-degrees', mean = True)
+    #    temp.savelocalclim()
 
-    with multiprocessing.Pool(2) as p: # Subprocess makes sure that memory is cleared
-        p.map(make_and_save_clim, ['swvl13','sst', 'z', 'msl', 'swvl4', 'u','v'])
+    #with multiprocessing.Pool(2) as p: # Subprocess makes sure that memory is cleared
+    #    p.map(make_and_save_clim, ['swvl13','sst', 'z', 'msl', 'swvl4', 'u','v'])
 
 
     """

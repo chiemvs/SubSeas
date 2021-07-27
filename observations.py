@@ -116,9 +116,9 @@ class SurfaceObservations(object):
                 full = xr.open_dataarray(self.filepath,  chunks= lazychunk)
         except ValueError:
             if lazychunk is None:
-                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold')
+                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold', errors = 'ignore')
             else:
-                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield', chunks= lazychunk).drop('dissim_threshold')
+                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield', chunks= lazychunk).drop('dissim_threshold', errors = 'ignore')
             self.clusterarray = xr.open_dataarray(self.filepath, drop_variables = full.name)
             self.clusterarray.name = 'clustid'
             
@@ -443,7 +443,8 @@ class EventClassification(object):
             return(inputarray - climatology)
         
         subtracted = doygroups.apply(subtraction)
-        result = subtracted.drop('dayofyear')
+        #result = subtracted.drop('dayofyear')
+        result = subtracted # New begaviour of apply?
         result.attrs = {'long_name':'-'.join([self.obs.basevar, 'anomalies']), 'units':self.old_units, 'new_units':self.old_units}
         result.name = '-'.join([self.obs.basevar, 'anom'])
         
