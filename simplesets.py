@@ -33,10 +33,11 @@ def make_anomalies(f: Forecast, var: str, highresmodelclim: ModelClimatology, lo
     method = getattr(EventClassification(obs = f, **{'climatology':highresmodelclim}), 'anom')
     method(inplace = True)
 
-def lead_time_1_z300() -> xr.DataArray:
+def lead_time_1_z300(ndays = 1) -> xr.DataArray:
     """
     attempt to get the daily 'analysis' dataset (time,space) of Z300 anomalies. For later regime computations
     Truest to the analysis in this data is leadtime 1 day (12 UTC), control member
+    But to enlarge dataset the amount of days after initialization to extract can be chosen
     """
     variable = 'z'
     forbasedir = '/nobackup/users/straaten/EXT_extra/'
@@ -52,16 +53,93 @@ def lead_time_1_z300() -> xr.DataArray:
     example.load(variable)
     lats = example.array.coords['latitude']
     lons = example.array.coords['longitude']
-    timestamps = pd.Index([pd.Timestamp(f.indate) for f in listofforecasts])
-    data = np.full((len(timestamps), len(lats), len(lons)), np.nan, dtype = np.float32)
-    almost_analysis = xr.DataArray(data, name = f'{variable}-anom', dims = ('time','latitude','longitude'), coords = {'time':timestamps,'latitude':lats,'longitude':lons}, attrs = {'units':varib_unit[variable]})
+
+    data = np.full((len(listofforecasts)*3, len(lats), len(lons)), np.nan, dtype = np.float32)
 
     # Extract!
+    timestamps = pd.DatetimeIndex([]) # Possibly non-unique
     for forc in listofforecasts:
-        make_anomalies(f = forc, var = variable, highresmodelclim = modelclim, loadkwargs = {'n_members':1, 'tmax':forc.indate}) # To limit the amount of data loaded into memory
-        almost_analysis.loc[forc.indate,:,:] = forc.array.sel(time = forc.indate, number = 0) # number 0 is the control member
+        mintime = pd.Timestamp(forc.indate)
+        maxtime = mintime + pd.Timedelta(ndays - 1, 'D')
+        timestamps = timestamps.append(pd.date_range(mintime, maxtime)) # dates to be added are determined
+        make_anomalies(f = forc, var = variable, highresmodelclim = modelclim, loadkwargs = {'n_members':1, 'tmax':maxtime.strftime('%Y-%m-%d')}) # To limit the amount of data loaded into memory
+        data[(len(timestamps)-ndays):len(timestamps),:,:] = forc.array.sel(number = 0) # number 0 is the control member
+
+    almost_analysis = xr.DataArray(data, name = f'{variable}-anom', dims = ('time','latitude','longitude'), coords = {'time':timestamps,'latitude':lats,'longitude':lons}, attrs = {'units':varib_unit[variable]})
+    # Duplicate dates are possible
     return almost_analysis
         
 
 if __name__ == '__main__':
-    arr = lead_time_1_z300()
+    import scipy.cluster.vq as vq
+    from scipy.signal import detrend
+    ndays = 3
+
+    #arr = lead_time_1_z300(ndays = ndays)
+    #arr = arr.sortby('time') # Potentially, .drop_duplicates('time')
+    #arr.to_netcdf(f'/nobackup/users/straaten/predsets/z300-leadtime-dep-anom_{ndays}D_control.nc')
+
+    arr = xr.open_dataarray(f'/nobackup/users/straaten/predsets/z300-leadtime-dep-anom_{ndays}D_control.nc')
+    # Anomalies are not detrended. Should they be? perhaps.
+    # Can perhaps be done by expanding the time dimension if that fits in memory. And then scipy detrend
+    # No true, because of Nana. Also it is not really reproducible when assigning a single forecasts based on its anoms.
+    # unless I encode something with coefficients
+    #arr.values = detrend(arr.values, axis = 0)
+    
+    z300 = arr.values.reshape((arr.shape[0],-1)) # Raveling the spatial dimension, keeping only the values
+    # Want to do the decomposition per month
+    months = [4,5,6,7,8] # March excluded only 42 starting points. Counts array([3, 4, 5, 6, 7, 8]), array([ 42, 189, 189, 210, 189, 106]))
+    months = [5]
+    all_months_patterns = []
+    all_months_projected = []
+    all_months_clustered = []
+    for month in months:
+        #anom = z300[arr.time.dt.month == month,...]
+        anom = z300[arr.time.dt.month.isin([5,6,7,8]),...]
+
+        U, s, Vt = np.linalg.svd(anom, full_matrices=False) # export OPENBLAS_NUM_THREADS=25 put upfront.
+
+        # Contributions in terms of normalized eigenvalues (s**2) / biggest one drop below 0.01 beyond 20
+        ncomps = 10 # Following Ferranti 2015
+        component_coords = pd.Index(list(range(ncomps)), dtype = np.int64)
+        eigvals = (s**2)[:ncomps]
+        eigvectors = Vt[:ncomps,:].reshape((ncomps,) + arr.shape[1:])
+        joined = arr.coords.to_dataset().drop_dims('time')
+        joined.coords['component'] = component_coords
+        joined['eigvectors'] = (('component','latitude','longitude'),eigvectors)
+        joined['eigvalues'] = (('component',),eigvals)
+        all_months_patterns.append(joined)
+
+        # Projection of the 3D data into 10 component timeseries
+        projection = anom @ Vt.T[:,:ncomps] # Not summer only because we need lagged values too
+        #timeseries = xr.DataArray(projection, name = 'projection', dims = ('time','component'), coords = {'component':list(range(ncomps)),'time': arr.coords['time'][arr.coords['time'].dt.month == month]})
+        timeseries = xr.DataArray(projection, name = 'projection', dims = ('time','component'), coords = {'component':list(range(ncomps)),'time': arr.coords['time'][arr.coords['time'].dt.month.isin([5,6,7,8])]})
+        timeseries.attrs['units'] = ''
+        all_months_projected.append(timeseries)
+
+        # k_means
+        k = 4
+        k_coords = pd.Index(list(range(k)), dtype = np.int64)
+        centroids, assignments = vq.kmeans2(timeseries, k = k) 
+        composites = [anom[assignments == cluster,...].mean(axis = 0) for cluster in k_coords] # Composite of the anomalies
+        composites = np.concatenate(composites, axis = 0).reshape((k,) + arr.shape[1:]) # new zeroth axis is clusters
+        clusters = arr.coords.to_dataset().drop_dims('time')
+        clusters.coords['cluster'] = k_coords
+        clusters.coords['component'] = component_coords
+        clusters['z_comp'] = (('cluster','latitude','longitude'), composites)
+        clusters['centroid'] = (('cluster','component'), centroids)
+        all_months_clustered.append(clusters)
+
+    
+    #basename = f'z300_{ndays}D_detrended'
+    #basename = f'z300_MJJA_detrended'
+    basename = f'z300_MJJA_trended'
+    #basename = f'z300_{ndays}D_trended'
+    all_months_patterns = xr.concat(all_months_patterns, pd.Int64Index(months, name = 'month'))
+    all_months_patterns.to_netcdf(f'/nobackup/users/straaten/predsets/{basename}_patterns.nc')
+    
+    all_months_projected = xr.concat(all_months_projected, 'time') # Concatenated over time but be careful. The underlying EOFS jump from month to month
+    all_months_projected.to_netcdf(f'/nobackup/users/straaten/predsets/{basename}_projected.nc')
+
+    all_months_clustered = xr.concat(all_months_clustered, pd.Int64Index(months, name = 'month'))
+    all_months_clustered.to_netcdf(f'/nobackup/users/straaten/predsets/{basename}_clusters.nc')

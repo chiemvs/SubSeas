@@ -454,6 +454,51 @@ class EventClassification(object):
         else:
             return(result)
 
+    def hotdays(self, inplace = True, windowsize: int = 14):
+        """
+        Computes the number of hot day within a specified window (# days)
+        Needs daily data. Two step computation. First 
+        Outputs a positive discrete variable (min 0, max windowsize)
+        """
+        assert self.obs.timemethod == '1D', 'only daily data are allowed'
+        if not hasattr(self, 'climatology'):
+            raise AttributeError('provide climatology at initialization please')
+        
+        assert self.obs.array.units == self.climatology.clim.units, 'supplied object and climatology have the same units'
+        assert self.climatology.climmethod.startswith('q'), 'supplied climatology must contain a quantile threshold' 
+
+        if hasattr(self, 'obsd'):
+            doygroups = self.obsd.array.groupby('time.dayofyear')
+        else:
+            doygroups = self.obs.array.groupby('time.dayofyear')
+        
+        def exceedence(inputarray):
+            doy = int(np.unique(inputarray['time.dayofyear']))
+            if hasattr(inputarray, 'leadtime') and hasattr(self.climatology.clim, 'leadtime'):
+                climatology = self.climatology.clim.sel(doy = doy, leadtime = inputarray['leadtime'], drop = True)
+            else:
+                warnings.warn('exceedence computation not leadtime dependent')
+                climatology = self.climatology.clim.sel(doy = doy, drop = True)
+            return(inputarray > climatology)
+        
+        boolean = doygroups.apply(exceedence)
+        # There can be discontinuity over the years.,,
+        if len(np.unique(np.diff(boolean.time))) == 1: # Only one interval length between timestamps
+            count = boolean.rolling({'time':windowsize}, center = False).sum() 
+        else:
+            warnings.warn('time discontinuity spotted in obs. Assuming data are seasonal, split by year')
+            count = boolean.groupby(boolean.time.dt.year).apply(lambda da: da.rolling({'time':7}).sum())
+        # Produces right stamped window, make it left stamped
+        count = count.assign_coords(time = count.time - pd.Timedelta(str(windowsize - 1) + 'D')).isel(time = slice(windowsize - 1, None)) # Remove the first few nan days
+        count.attrs = {'long_name':'-'.join([self.obs.basevar, 'excount', self.climatology.climmethod, f'{windowsize}D']), 'units':self.old_units, 'new_units':'days'}
+        count.name = '-'.join([self.obs.basevar, 'ex', self.climatology.climmethod, f'{windowsize}D'])
+        
+        if inplace:
+            self.obs.array = count
+            self.obs.newvar = '-'.join(['ex', self.climatology.climmethod, f'{windowsize}D'])
+        else:
+            return(count)
+
 
 class Clustering(object):
     

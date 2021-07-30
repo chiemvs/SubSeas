@@ -8,7 +8,7 @@ import pandas as pd
 import xarray as xr
 import eccodes as ec
 from helper_functions import unitconversionfactors, agg_space, agg_time
-#from observations import Clustering, EventClassification
+from observations import Clustering, EventClassification
 
 # Extended range has 50 perturbed members. and 1 control forecast. Steps: "0/to/1104/by/6"
 # Reforecasts have 11 members (stream = "enfh", number "1/to/10"). Probably some duplicates will arise.
@@ -514,7 +514,7 @@ class ModelClimatology(object):
         
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
-    def local_clim(self, tmin = None, tmax = None, timemethod = '1D', spacemethod = '0.38-degrees', daysbefore = 5, daysafter = 5,  mean = True, quant = None, clusterarray = None, loadkwargs = {}, newvarkwargs = {}):
+    def local_clim(self, tmin = None, tmax = None, timemethod = '1D', spacemethod = '0.38-degrees', daysbefore = 5, daysafter = 5,  mean = True, quant = None, clusterarray = None, loadkwargs = {}, newvarkwargs = {}, basedirkwargs = {}):
         """
         Method to construct the climatology based on forecasts within a desired timewindow.
         Should I add a spacemethod and spatial aggregation option? spacemethod = '0.38-degrees'
@@ -563,7 +563,7 @@ class ModelClimatology(object):
                 eval_windows = np.split(eval_indices, np.nonzero(np.diff(eval_indices) > 1)[0] + 1)
                 
                 eval_time_windows = [ eval_time_axis[ind] for ind in eval_windows ]
-                total = self.load_forecasts(eval_time_windows, loadkwargs = loadkwargs, newvarkwargs = newvarkwargs)
+                total = self.load_forecasts(eval_time_windows, loadkwargs = loadkwargs, newvarkwargs = newvarkwargs, basedirkwargs = basedirkwargs)
                 
                 if total is not None:
                     spatialdims = tuple(total.drop(['time','leadtime','number']).coords._names)
@@ -587,7 +587,7 @@ class ModelClimatology(object):
             self.clim = xr.concat(climate, dim='doy') # Let it stretch/reindex itself to include the doys for which nothing was found
             self.clim = self.clim.reindex({'doy':range(1,self.maxdoy + 1)})
             
-    def load_forecasts(self, evaluation_windows, n_members = 11, loadkwargs = {}, newvarkwargs = {}):
+    def load_forecasts(self, evaluation_windows, n_members = 11, loadkwargs = {}, newvarkwargs = {}, basedirkwargs = {}):
         """
         Per initialization date either the hindcast or the forecast can exist.
         Teste for possibility of empty supplied windows.
@@ -608,7 +608,7 @@ class ModelClimatology(object):
                 
                 for indate in contain:
                     stringdate = indate.strftime('%Y-%m-%d')
-                    forecasts = [Forecast(stringdate, prefix = 'for_', cycle = self.cycle), Forecast(stringdate, prefix = 'hin_', cycle = self.cycle)]
+                    forecasts = [Forecast(stringdate, prefix = 'for_', cycle = self.cycle, **basedirkwargs), Forecast(stringdate, prefix = 'hin_', cycle = self.cycle, **basedirkwargs)]
                     forecasts = [ f for f in forecasts if os.path.isfile(f.basedir + f.processedfile) ]
                     # Load the overlapping parts for the forecast that exist
                     if forecasts:

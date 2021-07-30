@@ -149,6 +149,10 @@ def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_me
                             listofbinaries.append(force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False))
                         except NameError:
                             listofbinaries = [force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False)]
+                    #TODO introduce new elif for hot days.
+                    # first anomalies (with a highresclim). then only spatial aggregation
+                    # And then hotday exceedence (with a quantile model clim)
+
                 else:
                     forecast.array = forecast.array.reindex_like(obs.clusterarray, method = 'nearest')
                     force_resolution(forecast, time = matchtime, space = matchspace)
