@@ -4,6 +4,7 @@ import os
 import numpy as np
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
+import multiprocessing
 import pandas as pd
 import xarray as xr
 import eccodes as ec
@@ -110,7 +111,16 @@ def mars_dict_extra_pressure(date, hdate = None, contr = False, varres = False, 
         
     return(req)
 
-def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
+def one_date(indate):
+    cycle = model_cycles.loc[np.logical_and(model_cycles.firstday <= indate, indate <= model_cycles.lastday),'cycle'].values[0]
+    forecast = Forecast(indate.strftime('%Y-%m-%d'), prefix = 'for_', cycle = cycle)
+    forecast.create_processed()
+    forecast.cleanup()
+    hindcast = Hindcast(indate.strftime('%Y-%m-%d'), prefix = 'hin_', cycle = cycle)
+    hindcast.invoke_processed_creation()
+    hindcast.cleanup()
+
+def start_batch(tmin = '2015-05-14', tmax = '2015-05-14', parallel: bool = False, nprocs: int = 5):
     """
     Every monday and thursday an operational run is initialized, and associated hindcasts are saved for that date minus 20 years.
     For a batch of initialization days the operational members and the hindcast members are downloaded.
@@ -120,14 +130,12 @@ def start_batch(tmin = '2015-05-14', tmax = '2015-05-14'):
     thursdays = pd.date_range(tmin,tmax, freq='W-THU')
     dr = mondays.append(thursdays).sort_values()
     
-    for indate in dr:
-        cycle = model_cycles.loc[np.logical_and(model_cycles.firstday <= indate, indate <= model_cycles.lastday),'cycle'].values[0]
-        forecast = Forecast(indate.strftime('%Y-%m-%d'), prefix = 'for_', cycle = cycle)
-        forecast.create_processed()
-        forecast.cleanup()
-        hindcast = Hindcast(indate.strftime('%Y-%m-%d'), prefix = 'hin_', cycle = cycle)
-        hindcast.invoke_processed_creation()
-        hindcast.cleanup()
+    if parallel:
+        with multiprocessing.Pool(nprocs) as p: # Subprocess makes sure that memory is cleared
+            p.map(one_date, dr) 
+    else:
+        for indate in dr:
+            one_date(indate)
 
 class CascadeError(Exception):
     pass
@@ -544,7 +552,7 @@ class ModelClimatology(object):
             self.clim = xr.open_dataarray(self.filepath)
             print('climatology directly loaded')
         except ValueError:
-            self.clim = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold') # Also load the clustidfield if present??
+            self.clim = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold', errors = 'ignore') # Also load the clustidfield if present??
             print('climatology directly loaded')
         except OSError:
             self.time_agg = int(pd.date_range('2000-01-01','2000-12-31', freq = timemethod.split('-')[0]).to_series().diff().dt.days.mode())
@@ -676,14 +684,13 @@ if __name__ == '__main__':
     #h = Hindcast('2018-07-05', cycle = '45r1')
     #h.invoke_processed_creation()
 
-    #start_batch(tmin = '2019-05-01', tmax = '2019-05-02') # SEGMENTATION FAULT for hindcast
-    #start_batch(tmin = '2018-08-14', tmax = '2018-08-16') # Also SEGMENTATION fault for hindcast.
-    #start_batch(tmin = '2019-03-23', tmax = '2019-03-30')
-    #start_batch(tmin = '2019-03-31', tmax = '2019-04-06')
-    #start_batch(tmin = '2019-04-07', tmax = '2019-04-13') 
-    #start_batch(tmin = '2019-05-02', tmax = '2019-05-02') # 05-02 because of failure. from 04-13 onwards done.
+    #start_batch(tmin = '2019-05-02', tmax = '2019-05-02') # SEGMENTATION FAULT for hindcast
+    #start_batch(tmin = '2018-08-16', tmax = '2018-08-16') # Also SEGMENTATION fault for hindcast.
+    start_batch(tmin = '2018-06-07', tmax = '2018-08-15', parallel = True)
+    start_batch(tmin = '2018-08-17', tmax = '2018-08-20', parallel = True)
+    start_batch(tmin = '2019-03-25', tmax = '2019-05-01', parallel = True)
+    start_batch(tmin = '2019-05-03', tmax = '2019-06-10', parallel = True)
 
-    #start_batch(tmin = '2018-06-07', tmax = '2018-06-07') 
     """
     Modelclims for EXT_extra. Daily anomalies. Not year round available.
     """

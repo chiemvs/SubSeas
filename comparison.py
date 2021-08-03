@@ -107,13 +107,14 @@ def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_me
         forecast.array = forecast.array * a + b
         forecast.array.attrs = {'units': obs.array.units}
                       
-    def force_new_variable(forecast, newvarkwargs, inplace = True):
+    def force_new_variable(forecast, newvarkwargs, inplace = True, newvariable: str = None):
         """
         Call upon event classification on the forecast object to get the on-the-grid conversion of the base variable.
         This is classification method is the same as applied to obs and is determined by the similar name.
         Possibly returns xarray object if inplace is False. If newvar is anom and model climatology is supplied through newvarkwargs, it should already have undergone the change in units.
         """
-        newvariable = obs.newvar
+        if newvariable is None:
+            newvariable = obs.newvar
         method = getattr(EventClassification(obs = forecast, **newvarkwargs), newvariable)
         return(method(inplace = inplace))
     
@@ -149,9 +150,13 @@ def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_me
                             listofbinaries.append(force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False))
                         except NameError:
                             listofbinaries = [force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = False)]
-                    #TODO introduce new elif for hot days.
-                    # first anomalies (with a highresclim). then only spatial aggregation
-                    # And then hotday exceedence (with a quantile model clim)
+                    elif obs.newvar.startswith('ex'): # hotdays newvariable
+                        assert not matchtime, 'hotdays requires unaggregated daily data, do not match time'
+                        force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = True, newvariable = 'anom') #First anomalies with highresclim (supplied via newvarkwargs)
+                        forecast.array = forecast.array.reindex_like(obs.clusterarray, method = 'nearest')
+                        force_resolution(forecast, time = matchtime, space = matchspace)
+                        force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = True, newvariable = 'hotdays') # Second hotdays newvariable step. With quantileclimatology (also supplied via newvarwkargs). Because it is a rolling temporal aggregation the hotdays event classification takes care of left-stamping time and leadtime
+                        forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
 
                 else:
                     forecast.array = forecast.array.reindex_like(obs.clusterarray, method = 'nearest')
@@ -202,23 +207,24 @@ def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_me
             aligned_basket_size += sys.getsizeof(temp)
         datesubset = datesubset.drop(date)
     
-    dataset = pd.concat(aligned_basket)
-    dataset.to_hdf(outfilepath, key = 'intermediate', format = 'table')
-    
-    books = pd.DataFrame({'file':[outfilepath],
-                          'tmax':[dataset.time.max().strftime('%Y-%m-%d')],
-                          'tmin':[dataset.time.min().strftime('%Y-%m-%d')],
-                          'unit':[obs.array.units],
-                          'write_date':[datetime.now().strftime('%Y-%m-%d_%H:%M:%S')]})
-    
-    # Create booksfile if it does not exist, otherwise append to it.
-    try:
-        with open(books_path, 'x') as f:
-            books.to_csv(f, header=True, index = False)
-    except FileExistsError:
-        with open(books_path, 'a') as f:
-            books.to_csv(f, header = False, index = False)
-    print('written out', outfilepath)
+    if aligned_basket:
+        dataset = pd.concat(aligned_basket)
+        dataset.to_hdf(outfilepath, key = 'intermediate', format = 'table')
+        
+        books = pd.DataFrame({'file':[outfilepath],
+                              'tmax':[dataset.time.max().strftime('%Y-%m-%d')],
+                              'tmin':[dataset.time.min().strftime('%Y-%m-%d')],
+                              'unit':[obs.array.units],
+                              'write_date':[datetime.now().strftime('%Y-%m-%d_%H:%M:%S')]})
+        
+        # Create booksfile if it does not exist, otherwise append to it.
+        try:
+            with open(books_path, 'x') as f:
+                books.to_csv(f, header=True, index = False)
+        except FileExistsError:
+            with open(books_path, 'a') as f:
+                books.to_csv(f, header = False, index = False)
+        print('written out', outfilepath)
     print('Exiting:', p.pid)
 
 
@@ -243,7 +249,7 @@ class ForecastToObsAlignment(object):
             self.obs.array = self.obs.array.sel(time = self.dates.values)
             # infer dominant time aggregation in days
             timefreq = self.obs.timemethod.split('-')[0]
-            self.time_agg = int(pd.date_range('2000-01-01','2000-12-31', freq = timefreq).to_series().diff().dt.days.mode())
+            self.time_agg = int(pd.date_range('2000-01-01','2000-12-31', freq = timefreq).to_series().diff().dt.days.mode()) # Determines the amount of forecast days loaded per initialized forecast.
             self.maxleadtime = 46
         
         for key in kwds.keys():

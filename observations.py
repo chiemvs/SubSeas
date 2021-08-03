@@ -454,18 +454,20 @@ class EventClassification(object):
         else:
             return(result)
 
-    def hotdays(self, inplace = True, windowsize: int = 14):
+    def hotdays(self, inplace = True):
         """
         Computes the number of hot day within a specified window (# days)
-        Needs daily data. Two step computation. First 
+        Needs daily data (anomalies). Two step computation. First 
         Outputs a positive discrete variable (min 0, max windowsize)
+        To distinguish the exceedence Climatology object from the mean climatology used for anomalies
+        the climatology is called quantclimatology
         """
         assert self.obs.timemethod == '1D', 'only daily data are allowed'
-        if not hasattr(self, 'climatology'):
-            raise AttributeError('provide climatology at initialization please')
+        assert hasattr(self, 'quantclimatology'), 'provide quantile climatology at initialization please'
+        assert hasattr(self, 'windowsize'), 'provide a windowsize in days (int) at initialization'
         
-        assert self.obs.array.units == self.climatology.clim.units, 'supplied object and climatology have the same units'
-        assert self.climatology.climmethod.startswith('q'), 'supplied climatology must contain a quantile threshold' 
+        assert self.obs.array.units == self.quantclimatology.clim.units, 'supplied object and climatology have the same units'
+        assert self.quantclimatology.climmethod.startswith('q'), 'supplied climatology must contain a quantile threshold' 
 
         if hasattr(self, 'obsd'):
             doygroups = self.obsd.array.groupby('time.dayofyear')
@@ -474,28 +476,31 @@ class EventClassification(object):
         
         def exceedence(inputarray):
             doy = int(np.unique(inputarray['time.dayofyear']))
-            if hasattr(inputarray, 'leadtime') and hasattr(self.climatology.clim, 'leadtime'):
-                climatology = self.climatology.clim.sel(doy = doy, leadtime = inputarray['leadtime'], drop = True)
+            if hasattr(inputarray, 'leadtime') and hasattr(self.quantclimatology.clim, 'leadtime'):
+                threshold = self.quantclimatology.clim.sel(doy = doy, leadtime = inputarray['leadtime'], drop = True)
             else:
                 warnings.warn('exceedence computation not leadtime dependent')
-                climatology = self.climatology.clim.sel(doy = doy, drop = True)
-            return(inputarray > climatology)
+                threshold = self.quantclimatology.clim.sel(doy = doy, drop = True)
+            return(inputarray > threshold)
         
         boolean = doygroups.apply(exceedence)
         # There can be discontinuity over the years.,,
         if len(np.unique(np.diff(boolean.time))) == 1: # Only one interval length between timestamps
-            count = boolean.rolling({'time':windowsize}, center = False).sum() 
+            count = boolean.rolling({'time':self.windowsize}, center = False).sum() 
         else:
             warnings.warn('time discontinuity spotted in obs. Assuming data are seasonal, split by year')
             count = boolean.groupby(boolean.time.dt.year).apply(lambda da: da.rolling({'time':7}).sum())
         # Produces right stamped window, make it left stamped
-        count = count.assign_coords(time = count.time - pd.Timedelta(str(windowsize - 1) + 'D')).isel(time = slice(windowsize - 1, None)) # Remove the first few nan days
-        count.attrs = {'long_name':'-'.join([self.obs.basevar, 'excount', self.climatology.climmethod, f'{windowsize}D']), 'units':self.old_units, 'new_units':'days'}
-        count.name = '-'.join([self.obs.basevar, 'ex', self.climatology.climmethod, f'{windowsize}D'])
+        count = count.assign_coords(time = count.time - pd.Timedelta(str(self.windowsize - 1) + 'D')).isel(time = slice(self.windowsize - 1, None)) # Remove the first few nan days
+        # Also right-stamp leadtime if present
+        if 'leadtime' in count.coords:
+            count = count.assign_coords(leadtime = boolean.leadtime[slice(0,-(self.windowsize - 1),None)]) # Inclusive slicing. For 7day aggregation and max leadtime 46 the last one will be 40.
+        count.attrs = {'long_name':'-'.join([self.obs.basevar, 'excount', self.quantclimatology.climmethod, f'{self.windowsize}D']), 'units':self.old_units, 'new_units':'days'}
+        count.name = '-'.join([self.obs.basevar, 'ex', self.quantclimatology.climmethod, f'{self.windowsize}D'])
         
         if inplace:
             self.obs.array = count
-            self.obs.newvar = '-'.join(['ex', self.climatology.climmethod, f'{windowsize}D'])
+            self.obs.newvar = '-'.join(['ex', self.quantclimatology.climmethod, f'{self.windowsize}D'])
         else:
             return(count)
 
