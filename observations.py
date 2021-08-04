@@ -119,7 +119,7 @@ class SurfaceObservations(object):
                 full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold', errors = 'ignore')
             else:
                 full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield', chunks= lazychunk).drop('dissim_threshold', errors = 'ignore')
-            self.clusterarray = xr.open_dataarray(self.filepath, drop_variables = full.name)
+            self.clusterarray = xr.open_dataarray(self.filepath, drop_variables = full.name).drop('dissim_threshold', errors = 'ignore')
             self.clusterarray.name = 'clustid'
             
         # Full range if no timelimits were given
@@ -200,7 +200,7 @@ class SurfaceObservations(object):
         else:
             dataset = self.array.to_dataset()
         # invoke the computation (if loading was lazy) and writing
-        particular_encoding = {key : obs_netcdf_encoding[key] for key in dataset.keys()}
+        particular_encoding = {key : obs_netcdf_encoding[key] for key in dataset.variables.keys() if (key in obs_netcdf_encoding.keys())} 
         dataset.to_netcdf(self.filepath, encoding = particular_encoding)
         #delattr(self, 'array')
     
@@ -339,7 +339,7 @@ class Climatology(object):
         else:
             dataset = self.clim.to_dataset()
         
-        particular_encoding = {key : obs_netcdf_encoding[key] for key in dataset.variables.keys()} 
+        particular_encoding = {key : obs_netcdf_encoding[key] for key in dataset.variables.keys() if (key in obs_netcdf_encoding.keys())} 
         dataset.to_netcdf(self.filepath, encoding = particular_encoding)
         
         

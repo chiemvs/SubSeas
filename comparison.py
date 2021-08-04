@@ -225,6 +225,8 @@ def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_me
             with open(books_path, 'a') as f:
                 books.to_csv(f, header = False, index = False)
         print('written out', outfilepath)
+    else:
+        raise ValueError('empty alignment, found no further initialization dates for remaining observed dates') 
     print('Exiting:', p.pid)
 
 
@@ -282,15 +284,19 @@ class ForecastToObsAlignment(object):
         except OSError:
             nextstartdate = self.dates[0]
         # Keep the sequential sub-process spwaning till all dates have been matched.
-        while nextstartdate <= self.dates.max():
+        terminate = False
+        while nextstartdate <= self.dates.max() and (not terminate):
             filepath = self.basedir + '_'.join(characteristics) + '_' + uuid.uuid4().hex + '.h5'
             kwargs['outfilepath'] = filepath
             kwargs['datesubset'] = self.dates.loc[slice(nextstartdate, None, None)].copy()
             p = multiprocessing.Process(name = 'subset', target = matchforecaststoobs, kwargs = kwargs)
             p.start()
             p.join() # This forces the wait till termination.
-            self.outfiles.append(filepath)
-            nextstartdate = pd.read_csv(books_path, usecols = ['tmax']).apply(pd.to_datetime).max().iloc[0] + pd.Timedelta('1D') # Read till where was matched and follow up.
+            if p.exitcode == 0: # Correct execution
+                self.outfiles.append(filepath)
+                nextstartdate = pd.read_csv(books_path, usecols = ['tmax']).apply(pd.to_datetime).max().iloc[0] + pd.Timedelta('1D') # Read till where was matched and follow up.
+            else:
+                terminate = True
         
     def recollect(self, booksname = None):
         """

@@ -5,7 +5,8 @@ import pandas as pd
 from pathlib import Path
 
 from forecasts import Forecast, ModelClimatology
-from observations import EventClassification
+from observations import SurfaceObservations, EventClassification
+from comparison import ForecastToObsAlignment
 
 import scipy.cluster.vq as vq
 from scipy.signal import detrend
@@ -113,42 +114,42 @@ if __name__ == '__main__':
     """
     Regime predictors
     """
-    ndays = 3
-    #arr = lead_time_1_z300(ndays = ndays)
-    #arr = arr.sortby('time') # Potentially, .drop_duplicates('time')
-    #arr.to_netcdf(f'/nobackup/users/straaten/predsets/z300-leadtime-dep-anom_{ndays}D_control.nc')
+    #ndays = 3
+    ##arr = lead_time_1_z300(ndays = ndays)
+    ##arr = arr.sortby('time') # Potentially, .drop_duplicates('time')
+    ##arr.to_netcdf(f'/nobackup/users/straaten/predsets/z300-leadtime-dep-anom_{ndays}D_control.nc')
 
-    arr = xr.open_dataarray(f'/nobackup/users/straaten/predsets/z300-leadtime-dep-anom_{ndays}D_control.nc')
-    
-    # Want to do the decomposition per month
-    months = [4,5,6,7,8] # March excluded only 42 starting points. Counts array([3, 4, 5, 6, 7, 8]), array([ 42, 189, 189, 210, 189, 106]))
-    months = [5]
-    all_months_patterns = []
-    all_months_clustered = []
-    for month in months:
-        #anom = arr[arr.time.dt.month == month,...]
-        anom = arr[arr.time.dt.month.isin([5,6,7,8]),...].copy()
-        # Anomalies are not detrended. Should they be? perhaps.
-        # Can perhaps be done by expanding the time dimension if that fits in memory. And then scipy detrend
-        # No true, because of Nana. Also it is not really reproducible when assigning a single forecasts based on its anoms.
-        # unless I encode something with coefficients
-        #anom.values = detrend(anom.values, axis = 0)
+    #arr = xr.open_dataarray(f'/nobackup/users/straaten/predsets/z300-leadtime-dep-anom_{ndays}D_control.nc')
+    #
+    ## Want to do the decomposition per month
+    #months = [4,5,6,7,8] # March excluded only 42 starting points. Counts array([3, 4, 5, 6, 7, 8]), array([ 42, 189, 189, 210, 189, 106]))
+    #months = [5]
+    #all_months_patterns = []
+    #all_months_clustered = []
+    #for month in months:
+    #    #anom = arr[arr.time.dt.month == month,...]
+    #    anom = arr[arr.time.dt.month.isin([5,6,7,8]),...].copy()
+    #    # Anomalies are not detrended. Should they be? perhaps.
+    #    # Can perhaps be done by expanding the time dimension if that fits in memory. And then scipy detrend
+    #    # No true, because of Nana. Also it is not really reproducible when assigning a single forecasts based on its anoms.
+    #    # unless I encode something with coefficients
+    #    #anom.values = detrend(anom.values, axis = 0)
 
-        eofs, clusters = extract_components(anom, ncomps = 10, nclusters = 4) # Following Ferranti 2015 in ncomps and nclusters
-        all_months_patterns.append(eofs)
-        all_months_clustered.append(clusters)
+    #    eofs, clusters = extract_components(anom, ncomps = 10, nclusters = 4) # Following Ferranti 2015 in ncomps and nclusters
+    #    all_months_patterns.append(eofs)
+    #    all_months_clustered.append(clusters)
 
-    
-    #basename = f'z300_{ndays}D_detrended'
-    #basename = f'z300_MJJA_detrended'
-    basename = f'z300_MJJA_trended_test'
-    #basename = f'z300_{ndays}D_trended'
-    all_months_patterns = xr.concat(all_months_patterns, pd.Int64Index(months, name = 'month'))
-    # actually the temporal projections can just be concatenated over time
-    all_months_patterns.to_netcdf(f'/nobackup/users/straaten/predsets/{basename}_patterns.nc')
-    
-    all_months_clustered = xr.concat(all_months_clustered, pd.Int64Index(months, name = 'month'))
-    all_months_clustered.to_netcdf(f'/nobackup/users/straaten/predsets/{basename}_clusters.nc')
+    #
+    ##basename = f'z300_{ndays}D_detrended'
+    ##basename = f'z300_MJJA_detrended'
+    #basename = f'z300_MJJA_trended_test'
+    ##basename = f'z300_{ndays}D_trended'
+    #all_months_patterns = xr.concat(all_months_patterns, pd.Int64Index(months, name = 'month'))
+    ## actually the temporal projections can just be concatenated over time
+    #all_months_patterns.to_netcdf(f'/nobackup/users/straaten/predsets/{basename}_patterns.nc')
+    #
+    #all_months_clustered = xr.concat(all_months_clustered, pd.Int64Index(months, name = 'month'))
+    #all_months_clustered.to_netcdf(f'/nobackup/users/straaten/predsets/{basename}_clusters.nc')
 
     """
     Spatiotemporal mean anomaly simplesets
@@ -156,7 +157,41 @@ if __name__ == '__main__':
     Writing out the clusterarray too, and then loading + matching with the modelclim for that variable.
     - downside = sampling and re-indexing. currently one season, and a mixture of leadtimes. No continuous availability of forecasts with a certain leadtime
     - upside = produces a set with 'observations' included. Could be helpful for investigating biases in simulated variables themselves
+    block-cluster made in swvl-simple.nc 
     """
+    combinations = pd.DataFrame({'obs':['swvl13-anom_1981-01-01_2019-09-30_1D_1.5-degrees','swvl4-anom_1981-01-01_2019-09-30_1D_1.5-degrees','z300-anom_1979-01-01_2019-12-31_1D_1.5-degrees','sst-anom_1979-01-01_2019-12-31_1D_1.5-degrees'],
+        'block':['swvl-simple','swvl-simple','swvl-simple','sst-simple'],
+        'modelclim':['swvl13_45r1_1998-06-07_2018-08-31_1D_1.5-degrees_5_5_mean','swvl4_45r1_1998-06-07_2018-08-31_1D_1.5-degrees_5_5_mean','z_45r1_1998-06-07_2018-08-31_1D_1.5-degrees_5_5_mean','sst_45r1_1998-06-07_2018-08-31_1D_1.5-degrees_5_5_mean'],
+        'expname':['paper3-3-simple','paper3-3-simple','paper3-3-simple','paper3-3-simple'],
+        }, index = pd.Index(['swvl13','swvl4', 'z','sst'], name = 'basevar'))
 
-    #e.g. clustid 0 for a certain square soilm region?
+    def create_blocks(basevar):
+        obs = SurfaceObservations(basevar = basevar, basedir = '/nobackup/users/straaten/ERA5/', name = combinations.loc[basevar,'obs']) # Override normal E-OBS directory
+        obs.load(tmin = '1998-06-07', tmax = '2019-08-31')
+        obs.aggregatespace(clustername = combinations.loc[basevar,'block'], level = 1)
+        obs.aggregatetime(freq = '7D', method = 'mean', rolling = True)
+        obs.newvar = 'anom' # was already an anomalie
+        obs.savechanges()
 
+        # loading of the constructed observations, streamlines the clusterarray for matching
+        obs = SurfaceObservations(basevar = basevar, basedir = '/nobackup/users/straaten/ERA5/', name = f'{basevar}-anom_1998-06-07_2019-08-31_7D-roll-mean_1-{combinations.loc[basevar,"block"]}-mean') # Override normal E-OBS directory
+        obs.load()
+        obs.newvar = 'anom' # As this happened at the VU already
+        
+        modelclim = ModelClimatology(cycle='45r1', variable = obs.basevar, **{'name':combinations.loc[basevar,'modelclim']}) # Name for loading
+        modelclim.local_clim()
+        newvarkwargs={'climatology':modelclim}
+        if basevar != 'sst':
+            loadkwargs = {'llcrnr':(30,None),'rucrnr':(None,42)} # Limiting the domain a bit.
+        else:
+            loadkwargs = {}
+
+        alignment = ForecastToObsAlignment(season = 'JJA', observations=obs, cycle='45r1', n_members = 11, **{'expname':combinations.loc[basevar,'expname']}) # Season subsets the obs
+        alignment.match_and_write(newvariable = True, 
+                                  newvarkwargs = newvarkwargs,
+                                  loadkwargs = loadkwargs,
+                                  matchtime = True, 
+                                  matchspace= True)
+
+    for var in combinations.index:
+        create_blocks(var)

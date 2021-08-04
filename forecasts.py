@@ -684,26 +684,24 @@ if __name__ == '__main__':
     #h = Hindcast('2018-07-05', cycle = '45r1')
     #h.invoke_processed_creation()
 
-    #start_batch(tmin = '2019-05-02', tmax = '2019-05-02') # SEGMENTATION FAULT for hindcast
+    #start_batch(tmin = '2019-05-02', tmax = '2019-05-02') # no SEGMENTATION FAULT anymore
     #start_batch(tmin = '2018-08-16', tmax = '2018-08-16') # Also SEGMENTATION fault for hindcast.
-    start_batch(tmin = '2018-06-07', tmax = '2018-08-15', parallel = True)
-    start_batch(tmin = '2018-08-17', tmax = '2018-08-20', parallel = True)
-    start_batch(tmin = '2019-03-25', tmax = '2019-05-01', parallel = True)
-    start_batch(tmin = '2019-05-03', tmax = '2019-06-10', parallel = True)
+    #start_batch(tmin = '2018-06-07', tmax = '2018-08-15', parallel = True)
+    #start_batch(tmin = '2018-08-17', tmax = '2018-08-20', parallel = True)
+    #start_batch(tmin = '2019-03-25', tmax = '2019-05-01', parallel = True)
+    #start_batch(tmin = '2019-05-03', tmax = '2019-06-10', parallel = True)
 
     """
     Modelclims for EXT_extra. Daily anomalies. Not year round available.
     """
     #f = Forecast('1998-06-07', prefix = 'hin_', cycle = '45r1')
     #f.load('swvl13')
-    #import multiprocessing
     #def make_and_save_clim(var: str):
     #    temp = ModelClimatology(cycle='45r1', variable = var)
-    #    #temp.local_clim(tmin = '1998-06-07', tmax = '2000-06-16', timemethod = '1D', spacemethod = '1.5-degrees', mean = True, loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40)))
     #    temp.local_clim(tmin = '1998-06-07', tmax = '2018-08-31', timemethod = '1D', spacemethod = '1.5-degrees', mean = True)
     #    temp.savelocalclim()
 
-    #with multiprocessing.Pool(2) as p: # Subprocess makes sure that memory is cleared
+    #with multiprocessing.Pool(3) as p: # Subprocess makes sure that memory is cleared
     #    p.map(make_and_save_clim, ['swvl13','sst', 'z', 'msl', 'swvl4', 'u','v'])
 
 
