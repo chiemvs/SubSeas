@@ -4,12 +4,38 @@ import pandas as pd
 
 from pathlib import Path
 
-from forecasts import Forecast, ModelClimatology
-from observations import SurfaceObservations, EventClassification
+from forecasts import Forecast, ModelClimatology, for_netcdf_encoding
+from observations import SurfaceObservations, EventClassification, Climatology
 from comparison import ForecastToObsAlignment
 
 import scipy.cluster.vq as vq
 from scipy.signal import detrend
+
+def merge_soilm(directory: Path, variables: list = ['swvl1','swvl2','swvl3'], weights: list = [7,21,72], newvar: str = 'swvl13'):
+    """
+    Iterates through for(hind)casts present in the directory
+    Computes a weighted average of the listed variables
+    Writes a new variables to the file
+    """
+    paths = directory.glob('*_processed.nc') # Both prefix for_ and hin_
+    weights = xr.DataArray(weights, dims = ('dummy',)) # Preparation of weighted mean outside loop
+    for path in paths: 
+        print(path)
+        ds = xr.open_dataset(path)
+        if newvar in ds.variables:
+            print(f'{newvar} already present')
+            ds.close()
+        else:
+            temp = xr.concat([ds[var] for var in variables], dim = 'dummy') # becomes zeroth axis
+            temp_weighted = temp.weighted(weights) 
+            new = ds.assign({newvar:temp_weighted.mean('dummy')})
+            new[newvar].attrs = new[variables[0]].attrs # Make sure that units are retained
+            new.load()
+            ds.close() # Close before rewriting (bit ugly, netCDF4 could do appending to file)
+            particular_encoding = {key : for_netcdf_encoding[key] for key in new.variables.keys()}
+            new.to_netcdf(path, encoding = particular_encoding)
+            print(f'{newvar} computed and file rewritten')
+
 """
 Get daily forecasts at a specific lead time. 
 
@@ -110,6 +136,10 @@ def extract_components(arr: xr.DataArray, ncomps: int = 10, nclusters: int = 4):
     return eof, clusters
 
 if __name__ == '__main__':
+    """
+    Creation of the weighted soil moisture 
+    """
+    #merge_soilm(directory = Path('/nobackup/users/straaten/EXT_extra/45r1')) 
     
     """
     Regime predictors
@@ -193,5 +223,16 @@ if __name__ == '__main__':
                                   matchtime = True, 
                                   matchspace= True)
 
-    for var in combinations.index:
-        create_blocks(var)
+    def create_clim(basevar):
+        """
+        Making climatologies of the newly created block-average observations
+        """
+        obs = SurfaceObservations(basevar = basevar, basedir = '/nobackup/users/straaten/ERA5/', name = f'{basevar}-anom_1998-06-07_2019-08-31_7D-roll-mean_1-{combinations.loc[basevar,"block"]}-mean') # Override normal E-OBS directory
+        obs.load()
+        clim = Climatology(f'{basevar}-anom')
+        clim.localclim(obs = obs, daysbefore = 5, daysafter = 5, mean = False, quant = 0.75)
+        clim.savelocalclim()
+
+    #for var in combinations.index:
+    #    create_blocks(var)
+    #    create_clim(var)

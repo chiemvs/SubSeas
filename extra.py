@@ -3,42 +3,12 @@ import xarray as xr
 
 from pathlib import Path
 
-from forecasts import for_netcdf_encoding, ModelClimatology, Forecast
-from observations import SurfaceObservations, Clustering, Climatology, EventClassification
+from forecasts import ModelClimatology, Forecast
+from observations import SurfaceObservations, Climatology, EventClassification
 from comparison import ForecastToObsAlignment
 
-def merge_soilm(directory: Path, variables: list = ['swvl1','swvl2','swvl3'], weights: list = [7,21,72], newvar: str = 'swvl13'):
-    """
-    Iterates through for(hind)casts present in the directory
-    Computes a weighted average of the listed variables
-    Writes a new variables to the file
-    """
-    paths = directory.glob('*_processed.nc') # Both prefix for_ and hin_
-    weights = xr.DataArray(weights, dims = ('dummy',)) # Preparation of weighted mean outside loop
-    for path in paths: 
-        print(path)
-        ds = xr.open_dataset(path)
-        if newvar in ds.variables:
-            print(f'{newvar} already present')
-            ds.close()
-        else:
-            temp = xr.concat([ds[var] for var in variables], dim = 'dummy') # becomes zeroth axis
-            temp_weighted = temp.weighted(weights) 
-            new = ds.assign({newvar:temp_weighted.mean('dummy')})
-            new[newvar].attrs = new[variables[0]].attrs # Make sure that units are retained
-            new.load()
-            ds.close() # Close before rewriting (bit ugly, netCDF4 could do appending to file)
-            particular_encoding = {key : for_netcdf_encoding[key] for key in new.variables.keys()}
-            new.to_netcdf(path, encoding = particular_encoding)
-            print(f'{newvar} computed and file rewritten')
-            #return path
 
 if __name__ == "__main__":
-    """
-    Creation of the weighted soil moisture 
-    """
-    #merge_soilm(directory = Path('/nobackup/users/straaten/EXT_extra/45r1')) 
-
     """
     Creation of matched set to ERA5 observations. First surface observation
     """

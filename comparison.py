@@ -525,16 +525,23 @@ class Comparison(object):
                 bools = frame['forecast'].values > frame[quant_col].values[:,np.newaxis]
                 return(bools.mean(axis=1).astype('float32')) # will probably fail when NA is present
             self.frame['pi'] = self.frame.map_partitions(boolwrap, **{'quant_col':'modelclimatology' if hasattr(self, 'modelclim') else 'threshold'}, meta = ('pi','float32')) # The threshold that potentially comes from modelclimatology, otherwise observed climatology
-            self.frame['observation'] = self.frame['observation'] > self.frame['threshold'] # The threshold from observed climatology
+            def obswrap(frame):
+                exceedence = frame['observation'].values.squeeze() > frame['threshold'].values.squeeze() # to make sure that comparison is 1D
+                return exceedence.astype('float32')
+            self.frame['observation'] = self.frame.map_partitions(obswrap)
+            #self.frame['observation'] = self.frame['observation'] > self.frame['threshold'] # The threshold from observed climatology
 
         # Merge the predictions if available. Only one column 'corrected', we don't want to get the 'observation' column into the merge
         if hasattr(self, 'preds'):
             self.frame = self.frame.merge(self.preds[['time','corrected'] + self.fitgroupers], on = ['time'] + self.fitgroupers, how = 'left')
 
+        def scorewrap(frame, forecasttype):
+            score = (frame[forecasttype].values.squeeze() - frame['observation'].values.squeeze())**2
+            return score.astype('float32')
         for forecasttype in ['pi','climatology','corrected']:
             if forecasttype in self.frame.columns:
                 scorename = forecasttype + '_bs'
-                self.frame[scorename] = (self.frame[forecasttype] - self.frame['observation'])**2
+                self.frame[scorename] = self.frame.map_partitions(scorewrap, **{'forecasttype':forecasttype})
             
     def crpsscore(self):
         """
