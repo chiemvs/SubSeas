@@ -376,7 +376,7 @@ class Comparison(object):
             self.modelclim.columns = pd.MultiIndex.from_product([self.modelclim.columns, ['']], names = [None,'number'])
             # Joining does not need resetting the columns I think:
             if 'clustid' in self.clim.columns:
-                self.clim = self.clim.merge(self.modelclim, how = 'outer', on = ['clustid','doy'], right_index = True)
+                self.clim = self.clim.merge(self.modelclim, how = 'outer', on = ['clustid','doy'])
             else:
                 self.clim = self.clim.merge(self.modelclim, how = 'outer', on = ['clustid','latitude','longitude'], right_index = True)
             
@@ -528,7 +528,7 @@ class Comparison(object):
             def obswrap(frame):
                 exceedence = frame['observation'].values.squeeze() > frame['threshold'].values.squeeze() # to make sure that comparison is 1D
                 return exceedence.astype('float32')
-            self.frame['observation'] = self.frame.map_partitions(obswrap)
+            self.frame['observation'] = self.frame.map_partitions(obswrap, meta = ('observation','float32'))
             #self.frame['observation'] = self.frame['observation'] > self.frame['threshold'] # The threshold from observed climatology
 
         # Merge the predictions if available. Only one column 'corrected', we don't want to get the 'observation' column into the merge
@@ -541,7 +541,7 @@ class Comparison(object):
         for forecasttype in ['pi','climatology','corrected']:
             if forecasttype in self.frame.columns:
                 scorename = forecasttype + '_bs'
-                self.frame[scorename] = self.frame.map_partitions(scorewrap, **{'forecasttype':forecasttype})
+                self.frame[scorename] = self.frame.map_partitions(scorewrap, **{'forecasttype':forecasttype}, meta = (scorename,'float32'))
             
     def crpsscore(self):
         """
