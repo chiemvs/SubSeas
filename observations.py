@@ -110,16 +110,13 @@ class SurfaceObservations(object):
         
         # Load as a dataarray. If not possible because two variables are present than we assume there is also a clustidfield present.
         try:
-            if lazychunk is None:
-                full = xr.open_dataarray(self.filepath)
-            else:
-                full = xr.open_dataarray(self.filepath,  chunks= lazychunk)
-        except ValueError:
-            if lazychunk is None:
-                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold', errors = 'ignore')
-            else:
-                full = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield', chunks= lazychunk).drop('dissim_threshold', errors = 'ignore')
-            self.clusterarray = xr.open_dataarray(self.filepath, drop_variables = full.name).drop('dissim_threshold', errors = 'ignore')
+            full = xr.open_dataarray(self.filepath, chunks= lazychunk)
+        except ValueError: # meaning more than one variable, should be two at max, namely the data plus clustidfield
+            ds = xr.open_dataset(self.filepath, chunks = lazychunk)
+            names = list(ds.data_vars.keys())
+            names.remove('clustidfield')
+            full = ds[names[0]].drop('dissim_threshold', errors = 'ignore')
+            self.clusterarray = ds['clustidfield'].drop('dissim_threshold', errors = 'ignore')
             self.clusterarray.name = 'clustid'
             
         # Full range if no timelimits were given

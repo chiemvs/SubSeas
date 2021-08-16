@@ -307,7 +307,10 @@ class Forecast(object):
             self.array.coords['number'] = np.arange(0,n_members, dtype = 'int16')
         # Standard methods of the processed files.
         self.timemethod = '1D'
-        self.spacemethod = '1.5-degrees'
+        if variable in ['tg','tx','rr']:
+            self.spacemethod = '0.38-degrees'
+        else:
+            self.spacemethod = '1.5-degrees'
         self.basevar = variable
         
     def aggregatetime(self, freq = '7D' , method = 'mean', ndayagg = None, rolling = False, keep_leadtime = False):
@@ -522,11 +525,11 @@ class ModelClimatology(object):
         
         self.filepath = ''.join([self.basedir, self.name, ".nc"])
     
-    def local_clim(self, tmin = None, tmax = None, timemethod = '1D', spacemethod = '0.38-degrees', daysbefore = 5, daysafter = 5,  mean = True, quant = None, clusterarray = None, loadkwargs = {}, newvarkwargs = {}, basedirkwargs = {}):
+    def local_clim(self, tmin = None, tmax = None, timemethod = '1D', spacemethod = '0.38-degrees', daysbefore = 5, daysafter = 5,  mean = True, quant = None, lead_time_dep = False, clusterarray = None, loadkwargs = {}, newvarkwargs = {}, basedirkwargs = {}):
         """
         Method to construct the climatology based on forecasts within a desired timewindow.
         Should I add a spacemethod and spatial aggregation option? spacemethod = '0.38-degrees'
-        Climatology dependend on doy and on leadtime. Takes the average over all ensemble members and times within a window.
+        Climatology dependend on doy and on leadtime (if desired). Takes the average over all ensemble members and times within a window.
         This window is determined by daysbefore and daysafter and the time aggregation of the desired variable.
         Newvarkwargs should contain a highresmodelclim for the conversion to anomalies. Observed clusterarray to do a spacemethod conversion is supplied seperately (also saved later)
         """
@@ -576,17 +579,31 @@ class ModelClimatology(object):
                 if total is not None:
                     spatialdims = tuple(total.drop(['time','leadtime','number']).coords._names)
                     spatialcoords = {key:total.coords[key].values for key in spatialdims}
-                    reduction_dims = ('number','time')
+                    reduction_dims = ('time','number') # leadtime is a parallel coordinate of time
+                    if lead_time_dep:
+                        grouped = total.groupby('leadtime')
+                    else:
+                        grouped = total
                     if mean:
-                        doy_climate = total.groupby('leadtime').mean(reduction_dims, keep_attrs = True)
-                        print('computed mean model climate of', doy, 'for', len(doy_climate['leadtime']), 'leadtimes.')
+                        doy_climate = grouped.mean(reduction_dims, keep_attrs = True)
+                        print(f'computed mean model climate of {doy}, lead time dependence = {lead_time_dep}.')
                     else: # In this case the quantile, meaning we don't do things by leadtime. Would be complicated
-                        total = total.stack({'reducethis':reduction_dims}) # Nanquantile takes the quantile over the first axis, so we need to merge the reduction dimensions. Stacked into the last dimension
-                        total = total.transpose(*(('reducethis',) + spatialdims))# Makes sure that the resulting 2D or 3D array has the reduces axis first.
-                        doy_climate = xr.DataArray(data = nanquantile(array = total.values, q = quant), coords = spatialcoords, dims = spatialdims, name = self.var)
+                        def one_lead_time_quantile(da: xr.DataArray) -> xr.DataArray:
+                            """
+                            Nanquantile takes the quantile over the first axis, so some reshaping
+                            nanquantile also returns np.dataarray, so restoring to xr object
+                            such that the function can be wrapped in .groupby.apply
+                            """
+                            temp = da.stack({'reducethis':reduction_dims}).transpose(*(('reducethis',) + spatialdims)) # reduction axis first, in this 2D or 3D array.
+                            quantile = nanquantile(temp.values, q = quant)
+                            return xr.DataArray(data = quantile, coords = spatialcoords, dims = spatialdims, name = self.var)
+                        if lead_time_dep:
+                            doy_climate = grouped.apply(one_lead_time_quantile) 
+                        else:
+                            doy_climate = one_lead_time_quantile(grouped) 
                         doy_climate.attrs = total.attrs
                         doy_climate.attrs['quantile'] = quant
-                        print('computed quantile model climate of', doy, 'pooling leadtime.')
+                        print(f'computed quantile model climate of {doy}, lead time dependence = {lead_time_dep}.')
                     doy_climate.coords['doy'] = doy
                     climate.append(doy_climate)
                 else:
