@@ -236,3 +236,29 @@ if __name__ == '__main__':
     #for var in combinations.index:
     #    create_blocks(var)
     #    create_clim(var)
+
+    """
+    Global Mean Surface temperature prediction (only trend)
+    Downloaded from the climate explorer
+    Can be used to filter other predictors (that are only associated because of trend in predictor and target)
+    """
+    import netCDF4 as nc
+    from sklearn.linear_model import LinearRegression
+    gmst_path = '/nobackup/users/straaten/predsets/tg_monthly_global_mean_surface.nc'
+    ds = nc.Dataset(gmst_path, mode = 'r') # automatic time decoding via xarray does not work.
+    timeunits = ds['time'].getncattr('units') # months since 1880-01
+    time = ds['time'][:] # first value is 0, so start in 
+    timeaxis = pd.date_range(start = '1880-01-15', freq = 'M', periods = len(time))
+    ts = pd.Series(ds['Ta'][:], index = timeaxis)
+    ts = ts.loc[slice('1970-01-01', None,None)].dropna(how = 'any') # Linear regime
+    regressor = LinearRegression()
+    regressor.fit(X = ts.index.to_julian_date().values.reshape((len(ts),1)), y = ts)
+    
+    # Highres 1D trend prediction (of the 31day global mean surface temp prediction)
+    timerange = pd.date_range(start = '1970-01-01',end = '2019-12-31')
+    continuous_trend = regressor.predict(X = timerange.to_julian_date().values.reshape((len(timerange),1)))
+    continuous_trend = xr.DataArray(continuous_trend, dims = ('time',), coords = {'time':timerange}, name = 'tg-anom')
+    continuous_trend.attrs.update({'units':ds['Ta'].getncattr('units'),'coef':regressor.coef_, 'intercept':regressor.intercept_,'description':'Trend (according linear regression against julian date) in monthly GMST, in quasi-linear domain from 1970-01-01 till 2021-06-15', 'title':ds.title})
+    out_path = '/nobackup/users/straaten/predsets/tg_monthly_global_mean_surface_only_trend.nc'
+    continuous_trend.to_netcdf(out_path)
+    
