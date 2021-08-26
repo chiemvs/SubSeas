@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import ecmwfapi 
 import os
 import numpy as np
 import warnings
@@ -7,7 +6,11 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 import multiprocessing
 import pandas as pd
 import xarray as xr
-import eccodes as ec
+try:
+    import ecmwfapi 
+    import eccodes as ec
+except ImportError:
+    pass
 from helper_functions import unitconversionfactors, agg_space, agg_time
 from observations import Clustering, EventClassification
 
@@ -18,7 +21,6 @@ from observations import Clustering, EventClassification
 # Grids at the ecmwf are stored with decreasing latitude but increasing longitude.
 
 # Global variables
-server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)
 for_netcdf_encoding = {'t2m': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
                    'mx2t6': {'dtype': 'int16', 'scale_factor': 0.002, 'add_offset': 273, '_FillValue': -32767},
                    'tp': {'dtype': 'int16', 'scale_factor': 0.00005, '_FillValue': -32767},
@@ -693,6 +695,7 @@ class ModelClimatology(object):
             raise TypeError('You cannot save this model climatology after changing the original model units')
 
 if __name__ == '__main__':
+    server = ecmwfapi.ECMWFService("mars") # Setup parallel requests by splitting the batches in multiple consoles. (total: max 3 active and 20 queued requests allowed)
     #f = Forecast('2019-06-10', cycle = '45r1')
     #f.create_processed()
     #f.join_members(pf_in = f.pffile_pl, cf_in = f.cffile_pl, comb_out = f.interfile_pl)
@@ -715,10 +718,10 @@ if __name__ == '__main__':
     #f.load('swvl13')
     #def make_and_save_clim(var: str):
     #    temp = ModelClimatology(cycle='45r1', variable = var)
-    #    temp.local_clim(tmin = '1998-06-07', tmax = '2018-08-31', timemethod = '1D', spacemethod = '1.5-degrees', mean = True)
+    #    temp.local_clim(tmin = '1998-06-07', tmax = '2019-08-31', timemethod = '1D', spacemethod = '1.5-degrees', mean = True, lead_time_dep = True)
     #    temp.savelocalclim()
 
-    #with multiprocessing.Pool(3) as p: # Subprocess makes sure that memory is cleared
+    #with multiprocessing.Pool(2) as p: # Subprocess makes sure that memory is cleared
     #    p.map(make_and_save_clim, ['swvl13','sst', 'z', 'msl', 'swvl4', 'u','v'])
 
 
@@ -726,6 +729,10 @@ if __name__ == '__main__':
     Some tests for tg-anom DJF, to see if we can get a quantile 
     Highresclim based on: dict(climtmin = '1998-06-07', climtmax = '2019-05-16', llcrnr= (36,-24), rucrnr = (None,40))
     """
+    #basedirkwargs = {'basedir':'/nobackup/users/straaten/EXT/'}
+    #m = ModelClimatology(cycle='45r1', variable = 'tg')
+    #m.local_clim(tmin = '1998-06-07', tmax = '2019-08-31', timemethod = '1D', spacemethod = '0.38-degrees', mean = True,lead_time_dep = True, basedirkwargs = basedirkwargs )
+    #m.savelocalclim()
 
 #    modelclimname = 'tg_45r1_1998-06-07_2019-05-16_1D_0.38-degrees_5_5_mean' #'tg_45r1_1998-06-07_2019-05-16_1D_5_5'
 #    highresmodelclim = ModelClimatology(cycle='45r1', variable = 'tg', **{'name':modelclimname}) # Name for loading
