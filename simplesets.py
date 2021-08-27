@@ -76,7 +76,7 @@ def lead_time_1_z300(ndays = 1) -> xr.DataArray:
     listofforecasts = [Forecast(indate = path.name.split('_')[1], prefix = path.name[:4], cycle = cycle, basedir = forbasedir) for path in forecast_paths]
 
     # Reference model climatology
-    modelclim = ModelClimatology(cycle='45r1', variable = variable, **{'name':f'{variable}_45r1_1998-06-07_2018-08-31_1D_1.5-degrees_5_5_mean'}) # Name for loading
+    modelclim = ModelClimatology(cycle='45r1', variable = variable, **{'name':f'{variable}_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean'}) # Name for loading
 
     # Pre-allocate an array for anomalies
     example = listofforecasts[0]
@@ -191,20 +191,20 @@ if __name__ == '__main__':
     """
     combinations = pd.DataFrame({'obs':['swvl13-anom_1981-01-01_2019-09-30_1D_1.5-degrees','swvl4-anom_1981-01-01_2019-09-30_1D_1.5-degrees','z300-anom_1979-01-01_2019-12-31_1D_1.5-degrees','sst-anom_1979-01-01_2019-12-31_1D_1.5-degrees'],
         'block':['swvl-simple','swvl-simple','swvl-simple','sst-simple'],
-        'modelclim':['swvl13_45r1_1998-06-07_2018-08-31_1D_1.5-degrees_5_5_mean','swvl4_45r1_1998-06-07_2018-08-31_1D_1.5-degrees_5_5_mean','z_45r1_1998-06-07_2018-08-31_1D_1.5-degrees_5_5_mean','sst_45r1_1998-06-07_2018-08-31_1D_1.5-degrees_5_5_mean'],
+        'modelclim':['swvl13_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean','swvl4_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean','z_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean','sst_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean'],
         'expname':['paper3-3-simple','paper3-3-simple','paper3-3-simple','paper3-3-simple'],
         }, index = pd.Index(['swvl13','swvl4', 'z','sst'], name = 'basevar'))
 
-    def create_blocks(basevar):
+    def create_blocks(basevar, timeagg: int):
         obs = SurfaceObservations(basevar = basevar, basedir = '/nobackup/users/straaten/ERA5/', name = combinations.loc[basevar,'obs']) # Override normal E-OBS directory
         obs.load(tmin = '1998-06-07', tmax = '2019-08-31')
         obs.aggregatespace(clustername = combinations.loc[basevar,'block'], level = 1)
-        obs.aggregatetime(freq = '7D', method = 'mean', rolling = True)
+        obs.aggregatetime(freq = f'{timeagg}D', method = 'mean', rolling = True)
         obs.newvar = 'anom' # was already an anomalie
         obs.savechanges()
 
         # loading of the constructed observations, streamlines the clusterarray for matching
-        obs = SurfaceObservations(basevar = basevar, basedir = '/nobackup/users/straaten/ERA5/', name = f'{basevar}-anom_1998-06-07_2019-08-31_7D-roll-mean_1-{combinations.loc[basevar,"block"]}-mean') # Override normal E-OBS directory
+        obs = SurfaceObservations(basevar = basevar, basedir = '/nobackup/users/straaten/ERA5/', name = f'{basevar}-anom_1998-06-07_2019-08-31_{timeagg}D-roll-mean_1-{combinations.loc[basevar,"block"]}-mean') # Override normal E-OBS directory
         obs.load()
         obs.newvar = 'anom' # As this happened at the VU already
         
@@ -223,42 +223,43 @@ if __name__ == '__main__':
                                   matchtime = True, 
                                   matchspace= True)
 
-    def create_clim(basevar):
+    def create_clim(basevar, timeagg: int):
         """
         Making climatologies of the newly created block-average observations
         """
-        obs = SurfaceObservations(basevar = basevar, basedir = '/nobackup/users/straaten/ERA5/', name = f'{basevar}-anom_1998-06-07_2019-08-31_7D-roll-mean_1-{combinations.loc[basevar,"block"]}-mean') # Override normal E-OBS directory
+        obs = SurfaceObservations(basevar = basevar, basedir = '/nobackup/users/straaten/ERA5/', name = f'{basevar}-anom_1998-06-07_2019-08-31_{timeagg}D-roll-mean_1-{combinations.loc[basevar,"block"]}-mean') # Override normal E-OBS directory
         obs.load()
         clim = Climatology(f'{basevar}-anom')
         clim.localclim(obs = obs, daysbefore = 5, daysafter = 5, mean = False, quant = 0.75)
         clim.savelocalclim()
 
-    #for var in combinations.index:
-    #    create_blocks(var)
-    #    create_clim(var)
+    #timeagg = 14
+    #for var in combinations.index[::-1]:
+    #    create_blocks(var, timeagg = timeagg)
+    #    create_clim(var, timeagg = timeagg)
 
     """
     Global Mean Surface temperature prediction (only trend)
     Downloaded from the climate explorer
     Can be used to filter other predictors (that are only associated because of trend in predictor and target)
     """
-    import netCDF4 as nc
-    from sklearn.linear_model import LinearRegression
-    gmst_path = '/nobackup/users/straaten/predsets/tg_monthly_global_mean_surface.nc'
-    ds = nc.Dataset(gmst_path, mode = 'r') # automatic time decoding via xarray does not work.
-    timeunits = ds['time'].getncattr('units') # months since 1880-01
-    time = ds['time'][:] # first value is 0, so start in 
-    timeaxis = pd.date_range(start = '1880-01-15', freq = 'M', periods = len(time))
-    ts = pd.Series(ds['Ta'][:], index = timeaxis)
-    ts = ts.loc[slice('1970-01-01', None,None)].dropna(how = 'any') # Linear regime
-    regressor = LinearRegression()
-    regressor.fit(X = ts.index.to_julian_date().values.reshape((len(ts),1)), y = ts)
-    
-    # Highres 1D trend prediction (of the 31day global mean surface temp prediction)
-    timerange = pd.date_range(start = '1970-01-01',end = '2019-12-31')
-    continuous_trend = regressor.predict(X = timerange.to_julian_date().values.reshape((len(timerange),1)))
-    continuous_trend = xr.DataArray(continuous_trend, dims = ('time',), coords = {'time':timerange}, name = 'tg-anom')
-    continuous_trend.attrs.update({'units':ds['Ta'].getncattr('units'),'coef':regressor.coef_, 'intercept':regressor.intercept_,'description':'Trend (according linear regression against julian date) in monthly GMST, in quasi-linear domain from 1970-01-01 till 2021-06-15', 'title':ds.title})
-    out_path = '/nobackup/users/straaten/predsets/tg_monthly_global_mean_surface_only_trend.nc'
-    continuous_trend.to_netcdf(out_path)
-    
+    #import netCDF4 as nc
+    #from sklearn.linear_model import LinearRegression
+    #gmst_path = '/nobackup/users/straaten/predsets/tg_monthly_global_mean_surface.nc'
+    #ds = nc.Dataset(gmst_path, mode = 'r') # automatic time decoding via xarray does not work.
+    #timeunits = ds['time'].getncattr('units') # months since 1880-01
+    #time = ds['time'][:] # first value is 0, so start in 
+    #timeaxis = pd.date_range(start = '1880-01-15', freq = 'M', periods = len(time))
+    #ts = pd.Series(ds['Ta'][:], index = timeaxis)
+    #ts = ts.loc[slice('1970-01-01', None,None)].dropna(how = 'any') # Linear regime
+    #regressor = LinearRegression()
+    #regressor.fit(X = ts.index.to_julian_date().values.reshape((len(ts),1)), y = ts)
+    #
+    ## Highres 1D trend prediction (of the 31day global mean surface temp prediction)
+    #timerange = pd.date_range(start = '1970-01-01',end = '2019-12-31')
+    #continuous_trend = regressor.predict(X = timerange.to_julian_date().values.reshape((len(timerange),1)))
+    #continuous_trend = xr.DataArray(continuous_trend, dims = ('time',), coords = {'time':timerange}, name = 'tg-anom')
+    #continuous_trend.attrs.update({'units':ds['Ta'].getncattr('units'),'coef':regressor.coef_, 'intercept':regressor.intercept_,'description':'Trend (according linear regression against julian date) in monthly GMST, in quasi-linear domain from 1970-01-01 till 2021-06-15', 'title':ds.title})
+    #out_path = '/nobackup/users/straaten/predsets/tg_monthly_global_mean_surface_only_trend.nc'
+    #continuous_trend.to_netcdf(out_path)
+    #
