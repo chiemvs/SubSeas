@@ -116,7 +116,35 @@ def era5_z300_resample() -> xr.DataArray:
     example = example.sortby('latitude') # Reversing the order, forecasts are stored with decreasing latitudes.
     return anoms.reindex_like(example, method = 'nearest')
 
-# Perhaps I want to add filtering. See e.g. https://github.com/fujiisoup/xr-scipy/blob/master/xrscipy/signal/filters.py 
+def subset_and_prepare(arr: xr.DataArray, months: int = None, detrend_method: str = None) -> xr.Dataset:
+    """
+    Selection of the temporal slice for which regimes are prepared. 
+    either a single month (integer), or multiple months jointly (list of integers)
+    If using hindcasts you probably want to exclude march:
+    Counts array([3, 4, 5, 6, 7, 8]), array([ 42, 189, 189, 210, 189, 106]))
+    possible to detrend the slice linearly (pooling data) with either scipy or sklearn
+    Perhaps I want to add filtering. See e.g. https://github.com/fujiisoup/xr-scipy/blob/master/xrscipy/signal/filters.py
+    """
+    assert detrend_method in [None,'scipy','sklearn'], 'Only scipy and sklearn or None are valid detrending options'
+    if isinstance(months, int):
+        months = list(months)
+    anom = arr[arr.time.dt.month.isin(months),...].copy()
+    if not detrend_method is None:
+        if detrend_method == 'scipy':
+            anom.values = detrend(anom.values, axis = 0)
+            final = anom.to_dataset()
+        elif detrend_method == 'sklearn':
+            time_axis = anom.time.to_pandas().index.to_julian_date().values[:,np.newaxis] # (samples, features)
+            stacked = anom.stack({'latlon':['latitude','longitude']})
+            lr = LinearRegression(n_jobs = 15)
+            lr.fit(X = time_axis, y = stacked.values)
+            trend = lr.predict(X = time_axis)
+            stacked.values = stacked.values - trend
+            final = xr.Dataset({'coef':('latlon',lr.coef_.squeeze()), 'intercept':('latlon',lr.intercept_.squeeze())}, coords = {'latlon':stacked.coords['latlon']})
+            final = final.assign({anom.name:stacked}).unstack('latlon')
+    else:
+        final = anom.to_dataset()
+    return final
         
 def extract_components(arr: xr.DataArray, ncomps: int = 10, nclusters: int = 4):
     """
@@ -147,12 +175,198 @@ def extract_components(arr: xr.DataArray, ncomps: int = 10, nclusters: int = 4):
     composites = [data[assignments == cluster,...].mean(axis = 0) for cluster in k_coords] # Composite of the anomalies
     composites = np.concatenate(composites, axis = 0).reshape((nclusters,) + arr.shape[1:]) # new zeroth axis is clusters
     clusters = arr.coords.to_dataset().drop_dims('time')
-    clusters.coords['cluster'] = k_coords
+    clusters.coords['clustid'] = k_coords
     clusters.coords['component'] = component_coords
-    clusters['z_comp'] = (('cluster','latitude','longitude'), composites)
-    clusters['centroid'] = (('cluster','component'), centroids)
+    clusters['z_comp'] = (('clustid','latitude','longitude'), composites)
+    clusters['centroid'] = (('clustid','component'), centroids)
 
     return eof, clusters
+
+class RegimeAssigner(object):
+    def __init__(self, at_KNMI: bool = True, max_distance: float = None):
+        """
+        Assignment itself needs access to multiple sources
+        needed for preparation of the model fields
+        - Forecasts 
+        - z model climatology (lead time dependent) for anomalies
+        - coefficients and intercepts for detrending
+        needed for the distance and classification:
+        - eigenvectors for projection (1 field to 10 timeseries)
+        - centroids for distance computation, (1 value per centroid / cluster)
+        """
+        self.max_distance = max_distance
+        if at_KNMI:
+            self.simplepredspath = Path('/nobackup/users/straaten/predsets')
+            self.for_basedir = Path('/nobackup/users/straaten/EXT_extra')
+            self.highresmodelclim = ModelClimatology(cycle = '45r1', variable = 'z', name = 'z_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean', basedir = '/nobackup/users/straaten/modelclimatology/')
+        else:
+            self.simplepredspath = Path('/scistor/ivm/jsn295/backup/predsets')
+            self.for_basedir = Path('/scistor/ivm/jsn295/backup/EXT_extra')
+            self.highresmodelclim = ModelClimatology(cycle = '45r1', variable = 'z', name = 'z_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean', basedir = '/scistor/ivm/jsn295/backup/modelclimatology/')
+        self.highresmodelclim.local_clim()
+        
+        try:
+            self.coefset = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended_coefs.nc') 
+        except OSError:
+            print('coefficient set not found, assuming detrending before assignment will no be needed later')
+        self.eigvectors = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended_patterns.nc')['eigvectors']
+        self.centroids = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended_clusters.nc')['centroid']
+
+
+    def anomalize(self, f: Forecast):
+        """
+        Preparation of z300 to make into anomalies
+        Remove seasonal cycle by using the modelclimatology (lead time dependent)
+        """
+        # f and highresmodelclim have to be loaded already
+        method = getattr(EventClassification(obs = f, **{'climatology':self.highresmodelclim}), 'anom')
+        method(inplace = True)
+
+    def detrend(self, f: Forecast):
+        """
+        Preparation of z300 to make into anomalies
+        Remove the linear (thermal expansion) trend with coefficients determined on ERA5
+        Do this inplace
+        """
+        assert not 'det' in f.array.name, f'variable {f.array.name} seems already detrended, can only happen once'
+        # just a manual a + bx?
+        timeaxis = f.array['time'].to_pandas().index.to_julian_date().values
+        trend = self.coefset['intercept'].values[:,:,np.newaxis] + self.coefset['coef'].values[:,:,np.newaxis] * timeaxis # (latitude,longitude,time)
+        trend_with_coords = f.array.coords.to_dataset().drop('number')
+        trend_with_coords = trend_with_coords.assign({f.array.name:xr.Variable(dims = ('latitude','longitude','time'), data = trend)})
+        # array (time, latitude, longitude, number)
+        oldattrs = f.array.attrs # procedure below does not keep units etc.
+        f.array = f.array - trend_with_coords[f.array.name] # xarray will handle the remaining coordinate, and ordering of the dims
+        f.array.attrs = oldattrs 
+        f.array.name = f'{f.array.name}-det'
+        f.array.attrs['long_name'] = f'{f.array.attrs["long_name"]}-detrended'
+
+    def project(self, f: Forecast, unstack: bool = False) -> xr.DataArray:
+        """
+        Needs eigenvectors (latitude, logitude) to project
+        (time, latitude, longitude, number) into either:
+        (n_comps,time,number) if unstack, else 
+        ([time,number],n_comps) for easy further computation
+        """
+        for_flattened = f.array.stack({'timenumber': ['time','number'],'latlon':['latitude','longitude']}) # flattening time/number into one because of ease of 2D*2D matrix multiplication
+        eig_flattened = self.eigvectors.stack({'latlon':['latitude','longitude']}) # stacks into last dimension but we need it first to be the inner dimension for the matrix multiplication, so transpose
+        projected = np.matmul(for_flattened.values, eig_flattened.values.T)
+        projected = xr.DataArray(projected, dims = ('timenumber','component'), coords = {'timenumber':for_flattened.coords['timenumber'],'component':eig_flattened.coords['component']})
+        if unstack:
+            return projected.unstack('timenumber')
+        else:
+            return projected
+
+    def assign(self, component_timeseries: xr.DataArray) -> tuple:
+        """
+        Component timeseries (n_samples, n_comps)
+        where n_samples is pontentially stacked (not a pure timeseries)
+        centroids (n_clusters, n_comps)
+        returns 1) distances to each centroid  (n_samples, n_clusters)
+        and 2) the assigned (integer) clusters (n_samples,)
+        Also possible to supply a maximum allowed distance to the nearest cluster
+        if no distance is below that, we assign NO cluster (id = -1) for that sample
+        """
+        # vq is an option but does not return all distances.
+        # Says it requires unit variance in the documentation. Obviously not the case.
+        # clusters, distance_to_nearest = vq.vq(obs = component_timeseries, code_book = centroids)
+
+        minus = component_timeseries - self.centroids.T # (N,n_comps,n_clusters)
+        squared = minus**2
+        distances = np.sqrt(squared.sum(axis = 1)) # Shows that vq also does euclidian distance, but returns only the nearest
+        clusters = distances.argmin(axis =1) # These are column indices, will only correspond to cluster id if cluster id coords are sorted [0,n_clusters - 1]
+        clusters.values = self.centroids.coords['clustid'].values[clusters.values] # Make use of array indexing of the small cluster id coordinate array
+        if not self.max_distance is None:
+            all_exceeding = (distances > self.max_distance).all(axis = 1)
+            clusters = clusters.where(~all_exceeding, other = -1) # assign a -1 when distances all are too large
+        distances.name = 'forecast'
+        clusters.name = 'forecast'
+        return distances.unstack(), clusters.unstack() # After this unstacking we may want to restore leadtime.
+
+    def find_forecasts(self, cycle = '45r1') -> list:
+        """
+        Find forecasts and prepare initialization arguments for each (returned as list)
+        No initialization here and attachment of forecasts to the self
+        because when loaded (lots of data) this is hard to parallelize
+        """
+        present_forecasts = (self.for_basedir / cycle ).glob('*processed.nc')
+        initkwargs = []
+        for path in present_forecasts:
+            fortype, date, _ = path.name.split('_')  # fortype is whether forecast or hindcast
+            initkwargs.append(dict(indate = date, prefix = f'{fortype}_', cycle = cycle, basedir = f'{self.for_basedir}/'))
+        return initkwargs
+
+    def process_forecast(self, forecast_init_kwargs: dict, detrend: bool = True, return_distances_too: bool = True):
+        """
+        called once per forecast
+        Returns dataframes: one for the regime ids
+        and optionally one for the distances
+        Should in the end be indexed similar to 'aligned data'
+        So [time, clustid, leadtime, forecast, observation] with the extra level 'number'
+        Clustid here can be location (or in this case the regime id)
+        """
+        f = Forecast(**forecast_init_kwargs)
+        f.load(variable = 'z', n_members = 11)
+        self.anomalize(f = f) # returns nothing
+        if detrend:
+            self.detrend(f = f) # returns nothing
+        eofs = self.project(f = f, unstack = False)
+        distances, regimeids = self.assign(component_timeseries = eofs)
+        # Add leadtimes again as index variable, needs to happen in a dataset
+        leadtimes = np.array(f.array.coords['leadtime'].values.astype('timedelta64[D]'), dtype = 'int8') # To integer (days)
+        regimeids = regimeids.to_dataset()
+        regimeids = regimeids.assign({'leadtime':('time', leadtimes)})
+        regimeids = regimeids.set_coords('leadtime').to_dataframe()
+        regimeids.set_index('leadtime', inplace = True, append = True) 
+        if return_distances_too:
+            distances = distances.to_dataset()
+            distances = distances.assign({'leadtime':('time', leadtimes)})
+            distances = distances.set_coords('leadtime').to_dataframe()
+            distances.set_index('leadtime', inplace = True, append = True) 
+            
+            return regimeids.unstack('number'), distances.unstack('number')
+        else:
+            return regimeids.unstack('number')
+
+    def add_observation(self, forecast_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Reads the projected observed fields and assigns them 
+        Then adds those as an extra column to the dataframe
+        Tries to infer whether to add the distances or the clusters
+        Handy get the forecast and corresponding observation in the same frame
+        """
+        projected_obs = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended_patterns.nc')['projection']
+
+        obs_distances, obs_regimes = self.assign(projected_obs) # Also obeys the self.maxdistance
+        if 'clustid' in forecast_df.index.names:
+            print('inferred through the clustid-index that a distance forecast_df is supplied, adding observed distance per cluster')
+            to_merge = obs_distances.to_dataframe() 
+
+        else:
+            print('inferred that a regimeid forecast_df is supplied, adding observed regimes')
+            to_merge = obs_regimes.to_dataframe()
+        
+        to_merge.columns = pd.MultiIndex.from_tuples([('observation',0)], names = [None,'number']) # Adding a fake number dimension
+        result = forecast_df.join(to_merge, how = 'left') # Joining on the index
+        return result
+
+    def associate_all(self):
+        """
+        Finds all forecasts and associates them sequentually
+        """
+        list_of_initkwargs = self.find_forecasts()
+        all_assigned, all_distances = [], []
+        for initkwargs in list_of_initkwargs:
+            regime, distance = self.process_forecast(initkwargs, detrend = True, return_distances_too = True)
+            print(f'processed {initkwargs["indate"]}')
+            all_assigned.append(regime)
+            all_distances.append(distance)
+        all_assigned = pd.concat(all_assigned, axis = 0)
+        all_assigned = self.add_observation(all_assigned)
+        all_distances = pd.concat(all_distances, axis = 0)
+        all_distances = self.add_observation(all_distances)
+        return all_assigned, all_distances
+
 
 if __name__ == '__main__':
     """
@@ -161,112 +375,50 @@ if __name__ == '__main__':
     #merge_soilm(directory = Path('/nobackup/users/straaten/EXT_extra/45r1')) 
     
     """
-    Regime predictors
+    Regime predictors I: Computation of the clusters in EOF-transformed observed Z300
     """
     #ndays = 3
-    ##arr = lead_time_1_z300(ndays = ndays)
-    ##arr = arr.sortby('time') # Potentially, .drop_duplicates('time')
-    ##arr.to_netcdf(f'/nobackup/users/straaten/predsets/z300-leadtime-dep-anom_{ndays}D_control.nc')
+    #arr = lead_time_1_z300(ndays = ndays)
+    #arr = arr.sortby('time') # Potentially, .drop_duplicates('time')
+    #arr.to_netcdf(f'/nobackup/users/straaten/predsets/z300-leadtime-dep-anom_{ndays}D_control.nc')
 
     #arr = xr.open_dataarray(f'/nobackup/users/straaten/predsets/z300-leadtime-dep-anom_{ndays}D_control.nc')
-    def subset_and_prepare(arr: xr.DataArray, months: int = None, detrend_method: str = None) -> xr.Dataset:
-        """
-        Selection of the temporal slice for which regimes are prepared. 
-        either a single month (integer), or multiple months jointly (list of integers)
-        If using hindcasts you probably want to exclude march:
-        Counts array([3, 4, 5, 6, 7, 8]), array([ 42, 189, 189, 210, 189, 106]))
-        possible to detrend the slice linearly (pooling data) with either scipy or sklearn
-        """
-        assert detrend_method in [None,'scipy','sklearn'], 'Only scipy and sklearn or None are valid detrending options'
-        if isinstance(months, int):
-            months = list(months)
-        anom = arr[arr.time.dt.month.isin(months),...].copy()
-        if not detrend_method is None:
-            if detrend_method == 'scipy':
-                anom.values = detrend(anom.values, axis = 0)
-                final = anom.to_dataset()
-            elif detrend_method == 'sklearn':
-                time_axis = anom.time.to_pandas().index.to_julian_date().values[:,np.newaxis] # (samples, features)
-                stacked = anom.stack({'latlon':['latitude','longitude']})
-                lr = LinearRegression(n_jobs = 15)
-                lr.fit(X = time_axis, y = stacked.values)
-                trend = lr.predict(X = time_axis)
-                stacked.values = stacked.values - trend
-                final = xr.Dataset({'coef':('latlon',lr.coef_.squeeze()), 'intercept':('latlon',lr.intercept_.squeeze())}, coords = {'latlon':stacked.coords['latlon']})
-                final = final.assign({anom.name:stacked}).unstack('latlon')
-        else:
-            final = anom.to_dataset()
-        return final
 
     #arr = era5_z300_resample()
     #monthsets = [list(range(5,9))]
     ##monthsets = [[i] for i in range(5,9)]
-    #detrend_method = None #'sklearn'
+    #detrend_method = 'sklearn' #None
     #basedir = Path('/scistor/ivm/jsn295/backup/predsets')
     #for months in monthsets:
     #    monthscoord = "".join([str(i) for i in months])
     #    basename = f'z300_1D_months_{monthscoord}_{detrend_method}_detrended'
     #    dataset = subset_and_prepare(arr, months, detrend_method)
-    #    eofs, clusters = extract_components(dataset[arr.name], ncomps = 10, nclusters = 4) # Following Ferranti 2015 in ncomps and nclusters
+    #    eofs, clusters = extract_components(dataset[arr.name], ncomps = 10, nclusters = 4) # Following Ferranti 2015 in ncomps and nclusters #export OPENBLAS_NUM_THREADS=25 put upfront.
     #    eofs.to_netcdf(basedir / f'{basename}_patterns.nc')
     #    clusters.to_netcdf(basedir / f'{basename}_clusters.nc')
     #    if 'coef' in dataset:
     #        dataset.drop(arr.name).to_netcdf(basedir / f'{basename}_coefs.nc')
 
     """
-    Assignment itself
-    needed for preparation of fields:
-    - Forecasts 
-    - z model climatology (lead time dependent) for anomalies
-    - coefficients and intercepts for detrending
-    needed for the distance and classification:
-    - eigenvectors for projection (1 field to 10 timeseries)
-    - centroids for distance computation, (1 value per centroid / cluster)
+    Regime predictors II: assignment of forecast Z300 (initializtion,leadtime,members) to found clusters
     """
     
-    f = Forecast(indate = '2005-07-09', prefix = 'hin_', cycle = '45r1', basedir = '/scistor/ivm/jsn295/backup/EXT_extra/')
-    f.load('z')
-    simplepredspath = Path('/scistor/ivm/jsn295/backup/predsets')
-    coefset = xr.open_dataset(simplepredspath / 'z300_1D_months_5678_sklearn_detrended_coefs.nc') 
-    eigvectors = xr.open_dataset(simplepredspath / 'z300_1D_months_5678_sklearn_detrended_patterns.nc')['eigvectors']
-    centroids = xr.open_dataset(simplepredspath / 'z300_1D_months_5678_sklearn_detrended_clusters.nc')['centroid']
+    self = RegimeAssigner(at_KNMI = False, max_distance = 60000) # close to the median distance to all
+    assigned_ids, dista = self.associate_all()
 
-    modelclim = ModelClimatology(cycle = '45r1', variable = 'z', name = 'z_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean', basedir = '/scistor/ivm/jsn295/backup/modelclimatology/')
-    modelclim.local_clim()
+    #f = Forecast(indate = '2005-07-09', prefix = 'hin_', cycle = '45r1', basedir = '/scistor/ivm/jsn295/backup/EXT_extra/')
+    #f.load('z')
+    #simplepredspath = Path('/scistor/ivm/jsn295/backup/predsets')
+    #coefset = xr.open_dataset(simplepredspath / 'z300_1D_months_5678_sklearn_detrended_coefs.nc') 
+    #eigvectors = xr.open_dataset(simplepredspath / 'z300_1D_months_5678_sklearn_detrended_patterns.nc')['eigvectors']
+    #centroids = xr.open_dataset(simplepredspath / 'z300_1D_months_5678_sklearn_detrended_clusters.nc')['centroid']
 
-    def anomalize_and_detrend(f: Forecast, modelclim: ModelClimatology, coefset: xr.Dataset) -> xr.DataArray:
-        """
-        Preparation of z300 to make into anomalies
-        Remove seasonal cycle by using the modelclimatology (lead time dependent)
-        Then remove the linear (thermal expansion) trend with coefficients determined on ERA5
-        """
-        # Call upon event-classification
-        # just a manual a + bx?
-        timeaxis = f.array['time'].to_pandas().index.to_julian_date().values
-        trend = coefset['intercept'].values[:,:,np.newaxis] + coefset['coef'].values[:,:,np.newaxis] * timeaxis # (latitude,longitude,time)
-        trend_with_coords = f.array.coords.to_dataset().drop('number')
-        trend_with_coords = trend_with_coords.assign({f.array.name:xr.Variable(dims = ('latitude','longitude','time'), data = trend)})
-        # array (time, latitude, longitude, number)
-        detrended = f.array - trend_with_coords[f.array.name] # xarray will handle the remaining coordinate, and ordering of the dims
-        return detrended
+    #modelclim = ModelClimatology(cycle = '45r1', variable = 'z', name = 'z_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean', basedir = '/scistor/ivm/jsn295/backup/modelclimatology/')
+    #modelclim.local_clim()
 
-    def project():
-        pass
-
-    def assign(component_timeseries, centroids):
-        """
-        Component timeseries (n_steps, n_comps)
-        centroids (n_clusters, n_comps)
-        """
-        # Says it requires unit variance in the documentation. Obviously not the case.
-        clusters, distance_to_nearest = vq.vq(obs = component_timeseries, code_book = centroids)
-        # perhaps, but not correct we want euclidian distance
-        distances = np.matmul(component_timeseries.values, centroids.values.T) #(N,n_comps) * (n_comps*n_clusters) = (N,n_clusters)
-        minus = component_timeseries.values[:,:,np.newaxis] - centroids.values.T # (N,n_comps,n_clusters)
-        squared = minus**2
-        distances = np.sqrt(squared.sum(axis = 1)) # Shows that vq also does euclidian distance, but returns only the nearest
-        clusters = distances.argmin(axis =1)
-        # Perhaps assign a -1 when distances are too large?
+    #anomalize_and_detrend(f = f, highresmodelclim = modelclim, coefset = coefset) # returns nothing
+    #eofs = project(f = f, eigvectors = eigvectors, unstack = False)
+    #distances, clustids = assign(component_timeseries = eofs, centroids = centroids, max_distance = 45000.)
 
     """
     Spatiotemporal mean anomaly simplesets
