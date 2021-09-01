@@ -403,8 +403,17 @@ if __name__ == '__main__':
     Regime predictors II: assignment of forecast Z300 (initializtion,leadtime,members) to found clusters
     """
     
-    self = RegimeAssigner(at_KNMI = False, max_distance = 60000) # close to the median distance to all
-    assigned_ids, dista = self.associate_all()
+    ra = RegimeAssigner(at_KNMI = True, max_distance = 60000) # close to the median distance to all
+    assigned_ids, distances = ra.associate_all()
+    savedir = '/nobackup_1/users/straaten/match'
+    assigned_ids = assigned_ids.loc[~assigned_ids['observation'].isnull().values,:].sort_index() # April was matched too but is without observations
+    assigned_ids.reset_index(inplace = True)
+    assigned_ids['clustid'] = -1 # Just a placeholder to match the formats
+    distances = distances.loc[~distances['observation'].isnull().values,:].sort_index() # April was matched too but is without observations
+    distances.reset_index(inplace = True)
+    assigned_ids.to_hdf(f'{savedir}/test_ids2.hdf', key = 'intermediate')
+    distances.to_hdf(f'{savedir}/test_distances2.hdf', key = 'intermediate')
+    
 
     #f = Forecast(indate = '2005-07-09', prefix = 'hin_', cycle = '45r1', basedir = '/scistor/ivm/jsn295/backup/EXT_extra/')
     #f.load('z')
