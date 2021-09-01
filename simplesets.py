@@ -187,11 +187,11 @@ class RegimeAssigner(object):
         """
         Assignment itself needs access to multiple sources
         needed for preparation of the model fields
-        - Forecasts 
-        - z model climatology (lead time dependent) for anomalies
-        - coefficients and intercepts for detrending
+        - Forecasts (indexed with decreasing lats) 
+        - z model climatology (lead time dependent) for anomalies (indexed with decreasing lats)
+        - coefficients and intercepts for detrending (indexed with increasing lats)
         needed for the distance and classification:
-        - eigenvectors for projection (1 field to 10 timeseries)
+        - eigenvectors for projection (1 field to 10 timeseries) (indexed with increasing lats)
         - centroids for distance computation, (1 value per centroid / cluster)
         """
         self.max_distance = max_distance
@@ -220,7 +220,8 @@ class RegimeAssigner(object):
         """
         # f and highresmodelclim have to be loaded already
         method = getattr(EventClassification(obs = f, **{'climatology':self.highresmodelclim}), 'anom')
-        method(inplace = True)
+        method(inplace = True) # still indexed with decreasing latitude
+        f.array = f.array.sortby('latitude') # Correct the sortorder to work well with eigvector and coefs
 
     def detrend(self, f: Forecast):
         """
@@ -231,7 +232,7 @@ class RegimeAssigner(object):
         assert not 'det' in f.array.name, f'variable {f.array.name} seems already detrended, can only happen once'
         # just a manual a + bx?
         timeaxis = f.array['time'].to_pandas().index.to_julian_date().values
-        trend = self.coefset['intercept'].values[:,:,np.newaxis] + self.coefset['coef'].values[:,:,np.newaxis] * timeaxis # (latitude,longitude,time)
+        trend = self.coefset['intercept'].values[:,:,np.newaxis] + self.coefset['coef'].values[:,:,np.newaxis] * timeaxis # (latitude,longitude,time) # with increasing latitude
         trend_with_coords = f.array.coords.to_dataset().drop('number')
         trend_with_coords = trend_with_coords.assign({f.array.name:xr.Variable(dims = ('latitude','longitude','time'), data = trend)})
         # array (time, latitude, longitude, number)
@@ -250,7 +251,7 @@ class RegimeAssigner(object):
         """
         for_flattened = f.array.stack({'timenumber': ['time','number'],'latlon':['latitude','longitude']}) # flattening time/number into one because of ease of 2D*2D matrix multiplication
         eig_flattened = self.eigvectors.stack({'latlon':['latitude','longitude']}) # stacks into last dimension but we need it first to be the inner dimension for the matrix multiplication, so transpose
-        projected = np.matmul(for_flattened.values, eig_flattened.values.T)
+        projected = np.matmul(for_flattened.values, eig_flattened.values.T) # very important here that the stacked sort-order is correct, as there is no formal coordinate handling.
         projected = xr.DataArray(projected, dims = ('timenumber','component'), coords = {'timenumber':for_flattened.coords['timenumber'],'component':eig_flattened.coords['component']})
         if unstack:
             return projected.unstack('timenumber')
@@ -402,7 +403,6 @@ if __name__ == '__main__':
     """
     Regime predictors II: assignment of forecast Z300 (initializtion,leadtime,members) to found clusters
     """
-    
     ra = RegimeAssigner(at_KNMI = True, max_distance = 60000) # close to the median distance to all
     assigned_ids, distances = ra.associate_all()
     savedir = '/nobackup_1/users/straaten/match'
@@ -414,21 +414,6 @@ if __name__ == '__main__':
     assigned_ids.to_hdf(f'{savedir}/test_ids2.hdf', key = 'intermediate')
     distances.to_hdf(f'{savedir}/test_distances2.hdf', key = 'intermediate')
     
-
-    #f = Forecast(indate = '2005-07-09', prefix = 'hin_', cycle = '45r1', basedir = '/scistor/ivm/jsn295/backup/EXT_extra/')
-    #f.load('z')
-    #simplepredspath = Path('/scistor/ivm/jsn295/backup/predsets')
-    #coefset = xr.open_dataset(simplepredspath / 'z300_1D_months_5678_sklearn_detrended_coefs.nc') 
-    #eigvectors = xr.open_dataset(simplepredspath / 'z300_1D_months_5678_sklearn_detrended_patterns.nc')['eigvectors']
-    #centroids = xr.open_dataset(simplepredspath / 'z300_1D_months_5678_sklearn_detrended_clusters.nc')['centroid']
-
-    #modelclim = ModelClimatology(cycle = '45r1', variable = 'z', name = 'z_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean', basedir = '/scistor/ivm/jsn295/backup/modelclimatology/')
-    #modelclim.local_clim()
-
-    #anomalize_and_detrend(f = f, highresmodelclim = modelclim, coefset = coefset) # returns nothing
-    #eofs = project(f = f, eigvectors = eigvectors, unstack = False)
-    #distances, clustids = assign(component_timeseries = eofs, centroids = centroids, max_distance = 45000.)
-
     """
     Spatiotemporal mean anomaly simplesets
     Should be doable by creating ERA5 anom observations with a certain clustering and timeagg
