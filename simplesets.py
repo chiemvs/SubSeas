@@ -3,6 +3,7 @@ import xarray as xr
 import pandas as pd
 
 from pathlib import Path
+from datetime import datetime
 
 from forecasts import Forecast, ModelClimatology, for_netcdf_encoding
 from observations import SurfaceObservations, EventClassification, Climatology
@@ -195,6 +196,7 @@ class RegimeAssigner(object):
         - centroids for distance computation, (1 value per centroid / cluster)
         """
         self.max_distance = max_distance
+        self.timeagg = 1 # initial, gets overwritten by frequency_in_window
         if at_KNMI:
             self.simplepredspath = Path('/nobackup/users/straaten/predsets')
             self.for_basedir = Path('/nobackup/users/straaten/EXT_extra')
@@ -290,6 +292,7 @@ class RegimeAssigner(object):
         No initialization here and attachment of forecasts to the self
         because when loaded (lots of data) this is hard to parallelize
         """
+        self.cycle = cycle
         present_forecasts = (self.for_basedir / cycle ).glob('*processed.nc')
         initkwargs = []
         for path in present_forecasts:
@@ -329,7 +332,7 @@ class RegimeAssigner(object):
         else:
             return regimeids.unstack('number')
 
-    def add_observation(self, forecast_df: pd.DataFrame) -> pd.DataFrame:
+    def add_observation(self, forecast_df: pd.DataFrame, how = 'left') -> pd.DataFrame:
         """
         Reads the projected observed fields and assigns them 
         Then adds those as an extra column to the dataframe
@@ -348,7 +351,7 @@ class RegimeAssigner(object):
             to_merge = obs_regimes.to_dataframe()
         
         to_merge.columns = pd.MultiIndex.from_tuples([('observation',0)], names = [None,'number']) # Adding a fake number dimension
-        result = forecast_df.join(to_merge, how = 'left') # Joining on the index
+        result = forecast_df.join(to_merge, how = how) # Joining on the index
         return result
 
     def associate_all(self):
@@ -363,10 +366,110 @@ class RegimeAssigner(object):
             all_assigned.append(regime)
             all_distances.append(distance)
         all_assigned = pd.concat(all_assigned, axis = 0)
-        all_assigned = self.add_observation(all_assigned)
+        all_assigned = self.add_observation(all_assigned, how = 'inner') # Stricter join, we don't want to add observed nans in april
         all_distances = pd.concat(all_distances, axis = 0)
-        all_distances = self.add_observation(all_distances)
-        return all_assigned, all_distances
+        all_distances = self.add_observation(all_distances, how = 'inner') # Stricter join, we don't want to add observed nans in april
+        return all_assigned.sort_index(), all_distances.sort_index()
+
+    def two_dimensional_rolling(self, init_dates: pd.DatetimeIndex, timeagg: int, array: xr.DataArray, pre_allocated_frame: pd.DataFrame):
+        """
+        For time aggregation, we need to start per forecast initialization date
+        and simultaneously move along the time and leadtime axes
+        This is easier in an array, which we can index (non-orthogonally) along both axes
+        Array is either (time, leadtime) for obs or (time, leadtime, number) for forecasts
+        The pre_allocated_frame is just np.nan indexed with all the present (time,leadtime) combinations
+        Writes entries with frequencies per clustid inplace (columns of the pre_allocated_frame)
+        """
+        for firstday in init_dates:
+            timeslice = slice(firstday, firstday + pd.Timedelta('45D'), None) # Might point into autumn, where some leadtimes are not available
+            subset = array.sel(time = timeslice) # Therefore slicing and check availability with shape:
+            print(f'value sequence starting {firstday} has len {subset.shape[0]} in MJJA')
+            leadtime_index_slice = xr.DataArray(np.arange(subset.shape[0]), dims = ('leadtime',)) # Coordinates for vectorized indexing of the available data.
+            start_to_end = subset[leadtime_index_slice, leadtime_index_slice,...] # Vectorized (non-orthogonal indexing) in 2D
+            temp = [] # We'll be creating a new clustid axis
+            for clustid in pre_allocated_frame.columns:
+                if 'number' in start_to_end.dims: # Dealing with forecasts
+                    count = (start_to_end == clustid).sum('number') # counting over the members
+                else: # Dealing with observations
+                    count = start_to_end == clustid
+                # Now the temporal aggregation by counting over the time window.
+                total_window_occurrence = count.rolling({'leadtime':timeagg}).sum() # leadtime indexed only
+                temp.append(total_window_occurrence)
+            comb = xr.concat(temp, dim = 'clustid')
+            # Left stamping
+            comb = comb.assign_coords({'time':comb.time - pd.Timedelta(str(timeagg - 1) + 'D')})
+            comb = comb.assign_coords({'leadtime':comb.leadtime - (timeagg - 1)})
+            comb = comb.isel(leadtime = slice(timeagg - 1, None))
+            pre_allocated_frame.loc[list(zip(comb.time.values, comb.leadtime.values)),:] = comb.values.T # Setting values
+
+    def frequency_in_window(self, assigned: pd.DataFrame, nday_window : int) -> pd.DataFrame:
+        """
+        Time aggregation, by means of frequency of regime occurrence in a window.
+        Takes in a dataframe with the daily assignments,
+        Will call the 2D rolling on the forecasts (and observations if present)
+        with windowsize in days. Results will be left stamped, meaning trailing leadtime/day combinations
+        with not enough values following them, will disappear. 
+        """
+        self.timeagg = nday_window
+        clustids = pd.Index(np.unique(assigned['forecast']), name = 'clustid')
+        assert ('time' in assigned.index.names) and ('leadtime' in assigned.index.names), 'needs to have an indexed dataframe'
+
+        forecasts = assigned['forecast'].stack('number')
+        firstdays = forecasts.loc[(slice(None),1,0)].index.get_level_values('time') # leadtime 1, and just the control member
+        forecasts = forecasts.to_xarray()
+        forecast_freq_in_window = pd.DataFrame(np.nan, index = assigned.index, columns = clustids) # Pre-allocation , ([time, leadtime],clustid)
+        self.two_dimensional_rolling(init_dates = firstdays , timeagg = nday_window, array = forecasts, pre_allocated_frame = forecast_freq_in_window) # Modifies the frame inplace
+        forecast_freq_in_window.columns = pd.MultiIndex.from_product([['forecast'],forecast_freq_in_window.columns])
+        # Normalize the counts to frequencies
+        forecast_freq_in_window = forecast_freq_in_window / (assigned['forecast'].shape[-1] * nday_window) # nmembers * ndays is total
+        forecast_freq_in_window = forecast_freq_in_window.dropna(axis = 0, how = 'all') # Slicing of the trailing NaN due to pre-allocation
+        assert np.allclose(forecast_freq_in_window.sum(axis = 1), 1.0), 'distribution should sum up to one, check missing forecast values'
+
+        if 'observation' in assigned.columns:
+            observations = assigned['observation'].iloc[:,0].to_xarray()
+            observed_freq_in_window = pd.DataFrame(np.nan, index = assigned.index, columns = clustids) # Pre-allocation , ([time, leadtime],clustid)
+            self.two_dimensional_rolling(init_dates = firstdays , timeagg = nday_window, array = observations, pre_allocated_frame = observed_freq_in_window) # Modifies the frame inplace
+            observed_freq_in_window.columns = pd.MultiIndex.from_product([['observation'],observed_freq_in_window.columns])
+            # Normalize the counts to frequencies
+            observed_freq_in_window = observed_freq_in_window / nday_window # nmembers * ndays is total
+            observed_freq_in_window = observed_freq_in_window.dropna(axis = 0, how = 'all') # Slicing of the trailing NaN due to pre-allocation
+            assert np.allclose(observed_freq_in_window.sum(axis = 1), 1.0), 'distribution should sum up to one, check missing observation values (e.g. april)'
+            joined = forecast_freq_in_window.join(observed_freq_in_window, how = 'left')
+        else:
+            joined = forecast_freq_in_window
+
+        return joined
+
+    def save(self, df: pd.DataFrame, expname: str = 'paper3-4-regimes', what: str = 'ids' ,basepath: Path = Path('/nobackup_1/users/straaten/match')):
+        """
+        Ready the dataframe to match previous formats
+        Also with a booksfile. We'll be always overwriting
+        """
+        if 'clustid' in df.columns.names:
+            df = df.stack('clustid')
+        if not 'clustid' in df.index.names:
+            df['clustid'] = -99 # Just a placeholder to match the formats
+        if not 'number' in df.columns.names:
+            df.columns = pd.MultiIndex.from_product([df.columns, ['']], names = list(df.columns.names) + ['number'])
+
+        name = f'{expname}_z-anom_JJA_{self.cycle}_{self.timeagg}D-frequency_{what}'
+        outfilepath = basepath / f'{name}.h5'
+        books_name = f'books_{name}.csv'
+        books_path = basepath / books_name
+
+        books = pd.DataFrame({'file':[outfilepath],
+                              'tmax':[df.index.get_level_values('time').max().strftime('%Y-%m-%d')],
+                              'tmin':[df.index.get_level_values('time').min().strftime('%Y-%m-%d')],
+                              'unit':[''],
+                              'write_date':[datetime.now().strftime('%Y-%m-%d_%H:%M:%S')]})
+
+        df = df.reset_index(inplace = False)
+        df.to_hdf(outfilepath, key = 'intermediate', mode = 'w', format = 'table')
+        
+        with open(books_path, 'w') as f:
+            books.to_csv(f, header=True, index = False)
+        print('written out', outfilepath)
+        return books_name
 
 
 if __name__ == '__main__':
@@ -405,14 +508,11 @@ if __name__ == '__main__':
     """
     ra = RegimeAssigner(at_KNMI = True, max_distance = 60000) # close to the median distance to all
     assigned_ids, distances = ra.associate_all()
-    savedir = '/nobackup_1/users/straaten/match'
-    assigned_ids = assigned_ids.loc[~assigned_ids['observation'].isnull().values,:].sort_index() # April was matched too but is without observations
-    assigned_ids.reset_index(inplace = True)
-    assigned_ids['clustid'] = -1 # Just a placeholder to match the formats
-    distances = distances.loc[~distances['observation'].isnull().values,:].sort_index() # April was matched too but is without observations
-    distances.reset_index(inplace = True)
-    assigned_ids.to_hdf(f'{savedir}/test_ids2.hdf', key = 'intermediate')
-    distances.to_hdf(f'{savedir}/test_distances2.hdf', key = 'intermediate')
+    bookfile1 = ra.save(assigned_ids, what = 'ids')
+    bookfile2 = ra.save(distances, what = 'distances')
+    timeagg = 21
+    assigned_ids_agg = ra.frequency_in_window(assigned_ids, nday_window = timeagg) # Time aggregation
+    bookfile3 = ra.save(assigned_ids_agg, what = 'ids')
     
     """
     Spatiotemporal mean anomaly simplesets
