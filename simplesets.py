@@ -117,7 +117,7 @@ def era5_z300_resample() -> xr.DataArray:
     example = example.sortby('latitude') # Reversing the order, forecasts are stored with decreasing latitudes.
     return anoms.reindex_like(example, method = 'nearest')
 
-def subset_and_prepare(arr: xr.DataArray, months: int = None, detrend_method: str = None) -> xr.Dataset:
+def subset_and_prepare(arr: xr.DataArray, months: int = None, buffermonths: int = None, detrend_method: str = None) -> xr.Dataset:
     """
     Selection of the temporal slice for which regimes are prepared. 
     either a single month (integer), or multiple months jointly (list of integers)
@@ -125,11 +125,14 @@ def subset_and_prepare(arr: xr.DataArray, months: int = None, detrend_method: st
     Counts array([3, 4, 5, 6, 7, 8]), array([ 42, 189, 189, 210, 189, 106]))
     possible to detrend the slice linearly (pooling data) with either scipy or sklearn
     Perhaps I want to add filtering. See e.g. https://github.com/fujiisoup/xr-scipy/blob/master/xrscipy/signal/filters.py
+    Also possible to supply buffermonths (this leads to the returning of a larger second set, whose extra months do not count for the detrending and component extraction but will be projected)
     """
     assert detrend_method in [None,'scipy','sklearn'], 'Only scipy and sklearn or None are valid detrending options'
+
     if isinstance(months, int):
-        months = list(months)
+        months = [months]
     anom = arr[arr.time.dt.month.isin(months),...].copy()
+
     if not detrend_method is None:
         if detrend_method == 'scipy':
             anom.values = detrend(anom.values, axis = 0)
@@ -145,14 +148,31 @@ def subset_and_prepare(arr: xr.DataArray, months: int = None, detrend_method: st
             final = final.assign({anom.name:stacked}).unstack('latlon')
     else:
         final = anom.to_dataset()
-    return final
+
+    if not buffermonths is None:
+        assert detrend_method != 'scipy', 'buffermonths is not compatible with scipy detrending as no coefficients are stored'
+        if isinstance(buffermonths, int):
+            buffermonths = [buffermonths]
+        extended_anom = arr[arr.time.dt.month.isin(months + buffermonths),...].copy()
+        if detrend_method == 'sklearn':
+            extended_time_axis = extended_anom.time.to_pandas().index.to_julian_date().values[:,np.newaxis] # (samples, features)
+            extended_stacked = extended_anom.stack({'latlon':['latitude','longitude']})
+            extended_trend = lr.predict(X = extended_time_axis)
+            extended_stacked.values = extended_stacked.values - extended_trend
+            extended_final = extended_stacked.unstack('latlon') 
+        else:
+            extended_final = anom
+        return final, extended_final
+    else:
+        return final
         
-def extract_components(arr: xr.DataArray, ncomps: int = 10, nclusters: int = 4):
+def extract_components(arr: xr.DataArray, extended_arr: xr.DataArray = None, ncomps: int = 10, nclusters: int = 4):
     """
     arr needs to be subset to the correct subset, also already detrended if desired
     returns 2 datasets
     - dataset with result of EOF (eigvectors, eigvalues, eof projections timeseries of arr into vectors) 
     - dataset with cluster results (EOF centroids, and composite mean arr fields of the clusters)
+    If an extended array is supplied (optional), it will only be used for projection
     """
     data = arr.values.reshape((arr.shape[0],-1)) # Raveling the spatial dimension, keeping only the values
     U, s, Vt = np.linalg.svd(data, full_matrices=False) # export OPENBLAS_NUM_THREADS=25 put upfront.
@@ -161,18 +181,25 @@ def extract_components(arr: xr.DataArray, ncomps: int = 10, nclusters: int = 4):
 
     eigvals = (s**2)[:ncomps]
     eigvectors = Vt[:ncomps,:].reshape((ncomps,) + arr.shape[1:])
-    eof = arr.coords.to_dataset()
+    if extended_arr is None:
+        eof = arr.coords.to_dataset()
+    else:
+        eof = extended_arr.coords.to_dataset()
     eof.coords['component'] = component_coords
     eof['eigvectors'] = (('component','latitude','longitude'),eigvectors)
     eof['eigvalues'] = (('component',),eigvals)
     # Projection of the 3D data into 10 component timeseries
     projection = data @ Vt.T[:,:ncomps]
-    eof['projection'] = (('time','component'),projection)
+    if not extended_arr is None:
+        extended_projection = extended_arr.values.reshape((extended_arr.shape[0],-1)) @ Vt.T[:,:ncomps]
+        eof['projection'] = (('time','component'),extended_projection)
+    else:
+        eof['projection'] = (('time','component'),projection)
     eof['projection'].attrs['units'] = ''
 
     #k-means clustering
     k_coords = pd.Index(list(range(nclusters)), dtype = np.int64)
-    centroids, assignments = vq.kmeans2(projection, k = nclusters) 
+    centroids, assignments = vq.kmeans2(projection, k = nclusters, seed = 4, minit = '++') 
     composites = [data[assignments == cluster,...].mean(axis = 0) for cluster in k_coords] # Composite of the anomalies
     composites = np.concatenate(composites, axis = 0).reshape((nclusters,) + arr.shape[1:]) # new zeroth axis is clusters
     clusters = arr.coords.to_dataset().drop_dims('time')
@@ -495,9 +522,9 @@ if __name__ == '__main__':
     #basedir = Path('/scistor/ivm/jsn295/backup/predsets')
     #for months in monthsets:
     #    monthscoord = "".join([str(i) for i in months])
-    #    basename = f'z300_1D_months_{monthscoord}_{detrend_method}_detrended'
-    #    dataset = subset_and_prepare(arr, months, detrend_method)
-    #    eofs, clusters = extract_components(dataset[arr.name], ncomps = 10, nclusters = 4) # Following Ferranti 2015 in ncomps and nclusters #export OPENBLAS_NUM_THREADS=25 put upfront.
+    #    basename = f'z300_1D_months_{monthscoord}_{detrend_method}_detrended4'
+    #    dataset, dataarray = subset_and_prepare(arr = arr, months = months, buffermonths = 9, detrend_method = detrend_method)
+    #    eofs, clusters = extract_components(arr = dataset[arr.name], extended_arr = dataarray, ncomps = 10, nclusters = 4) # Following Ferranti 2015 in ncomps and nclusters #export OPENBLAS_NUM_THREADS=25 put upfront.
     #    eofs.to_netcdf(basedir / f'{basename}_patterns.nc')
     #    clusters.to_netcdf(basedir / f'{basename}_clusters.nc')
     #    if 'coef' in dataset:
