@@ -235,11 +235,11 @@ class RegimeAssigner(object):
         self.highresmodelclim.local_clim()
         
         try:
-            self.coefset = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended_coefs.nc') 
+            self.coefset = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended4_coefs.nc') 
         except OSError:
             print('coefficient set not found, assuming detrending before assignment will no be needed later')
-        self.eigvectors = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended_patterns.nc')['eigvectors']
-        self.centroids = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended_clusters.nc')['centroid']
+        self.eigvectors = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended4_patterns.nc')['eigvectors']
+        self.centroids = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended4_clusters.nc')['centroid']
 
 
     def anomalize(self, f: Forecast):

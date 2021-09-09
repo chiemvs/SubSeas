@@ -33,13 +33,13 @@ if __name__ == "__main__":
     #c.savelocalclim()
 
     #t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 'tg-anom_1998-06-07_2019-10-31_14D-roll-mean_15-t2m-q095-adapted-mean') # Override normal E-OBS directory
-    #t2m.load()
+    #t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 'tg-anom_1998-06-07_2019-10-31_7D-roll-mean_15-t2m-q095-adapted-mean') # Override normal E-OBS directory
     #t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 'tg-anom_1998-06-07_2019-10-31_7D-roll-mean_0.58-t2m-q075-mean') # Hihger spatial resolution
     #t2m.load()
     #t2m.newvar = 'anom'
 
-    ## Matching. preparation with a highresmodelclim 
-    #highresmodelclim = ModelClimatology(cycle='45r1', variable = t2m.basevar, **{'name':'tg_45r1_1998-06-07_2019-05-16_1D_0.38-degrees_5_5_mean'}) # Name for loading
+    ### Matching. preparation with a highresmodelclim 
+    #highresmodelclim = ModelClimatology(cycle='45r1', variable = t2m.basevar, **{'name':'tg_45r1_1998-06-07_2019-08-31_1D_0.38-degrees_5_5_mean'}) # Name for loading
     #highresmodelclim.local_clim()
     #newvarkwargs={'climatology':highresmodelclim}
     #loadkwargs = {'llcrnr':(30,None),'rucrnr':(None,42)} # Limiting the domain a bit.
@@ -60,9 +60,9 @@ if __name__ == "__main__":
     windowsize = 21
     #t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 't2m-anom_1979-01-01_2019-12-31_1D_0.25-degrees') # Override normal E-OBS directory
     #t2m.load(tmin = '1998-06-07', tmax = '2019-10-31')
-    #t2m.aggregatespace(clustername = 't2m-q095-adapted', level = 15)
-    #t2m.array = t2m.array.drop(['nclusters','dissim_threshold'])
-    #t2m.clusterarray = t2m.clusterarray.drop(['nclusters','dissim_threshold'])
+    #t2m.aggregatespace(clustername = 't2m-grid', level = 0.01)
+    #t2m.array = t2m.array.drop(['nclusters','dissim_threshold'], errors = 'ignore')
+    #t2m.clusterarray = t2m.clusterarray.drop(['nclusters','dissim_threshold'], errors = 'ignore')
     ##c = Climatology('t2m-anom')
     ##c.localclim(obs = t2m, daysbefore = 5, daysafter = 5, mean = False, quant = 0.75)
     ##c.clim.to_netcdf(c.filepath)
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     #out = xr.Dataset({'clustidfield':t2m.clusterarray.drop('nclusters', errors = 'ignore'),t2m.array.name:t2m.array})
     #out.to_netcdf(t2m.filepath)
 
-    t2m = SurfaceObservations('tg',basedir = '/nobackup/users/straaten/ERA5/', name = 'tg-ex-q0.75-21D_1998-06-07_2019-10-31_1D_15-t2m-q095-adapted-mean')
+    t2m = SurfaceObservations('tg',basedir = '/nobackup/users/straaten/ERA5/', name = 'tg-ex-q0.75-21D_1998-06-07_2019-10-31_1D_0.01-t2m-grid-mean')
     t2m.load()
     t2m.newvar = 'ex-q0.75-21D'
 
@@ -95,16 +95,17 @@ if __name__ == "__main__":
     loadkwargs = dict(llcrnr= (36,-24), rucrnr = (None,40))
     basedirkwargs = {'basedir':'/nobackup/users/straaten/EXT/'} # Needed because they need to be searching in EXT and not EXT_extra. Actually EXT has not months like april etc.
     clusterarray = t2m.clusterarray
-    #    
-    #modelclim = ModelClimatology(cycle='45r1', variable = 'tg-anom')
-    #modelclim.local_clim(tmin = '1998-06-07', tmax = '2019-08-31', timemethod = '1D', spacemethod = t2m.spacemethod, mean = False, quant = 0.75, lead_time_dep = True, clusterarray = clusterarray, loadkwargs = loadkwargs, newvarkwargs = newvarkwargs, basedirkwargs = basedirkwargs)
-    #modelclim.savelocalclim()
-    modelclim = ModelClimatology(cycle='45r1', variable = 'tg-anom', name = 'tg-anom_45r1_1998-06-07_2019-08-31_1D_15-t2m-q095-adapted-mean_5_5_q0.75')
-    modelclim.local_clim()
 
-    ## Now comes the matching.
-    ## Make sure that the newvar is recognized, actually it is a double newvar. first anom, then hotdays
-    ## Also it needs to recognize that multiple days should be loaded. So over-ride the self.time_agg 
+    modelclim = ModelClimatology(cycle='45r1', variable = 'tg-anom')
+    modelclim.local_clim(tmin = '1998-06-07', tmax = '2019-08-31', timemethod = '1D', spacemethod = t2m.spacemethod, mean = False, quant = 0.75, lead_time_dep = True, clusterarray = clusterarray, loadkwargs = loadkwargs, newvarkwargs = newvarkwargs, basedirkwargs = basedirkwargs)
+    modelclim.savelocalclim()
+
+    #modelclim = ModelClimatology(cycle='45r1', variable = 'tg-anom', name = 'tg-anom_45r1_1998-06-07_2019-08-31_1D_15-t2m-q095-adapted-mean_5_5_q0.75')
+    #modelclim.local_clim()
+
+    # Now comes the matching.
+    # Make sure that the newvar is recognized, actually it is a double newvar. first anom, then hotdays
+    # Also it needs to recognize that multiple days should be loaded. So over-ride the self.time_agg 
 
     newvarkwargs={'climatology':highresmodelclim, 'quantclimatology':modelclim, 'windowsize':windowsize}
     loadkwargs = {'llcrnr':(30,None),'rucrnr':(None,42)} # Limiting the domain a bit.

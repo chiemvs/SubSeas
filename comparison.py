@@ -521,9 +521,14 @@ class Comparison(object):
         # And creation of the binary observation. Only invoked when there has not been an eventclassification previously, like pop. In that case 
         if not ('pi' in self.frame.columns):
             print('lazy pi and bool observation construction')
-            def boolwrap(frame, quant_col):
+            def boolwrap(frame, quant_col): # This is now the tukey plotting position estimator
+                alpha = 1/3 
+                n_positions = frame['forecast'].shape[-1] + 1
                 bools = frame['forecast'].values > frame[quant_col].values[:,np.newaxis]
-                return(bools.mean(axis=1).astype('float32')) # will probably fail when NA is present
+                n_exceeding = bools.sum(axis = 1) # the rank of the threshold is this number + 1 
+                rank = n_exceeding + 1
+                probability = (rank - alpha) / float(n_positions + 1 - 2*alpha)
+                return(probability.astype('float32')) # will probably fail when NA is present
             self.frame['pi'] = self.frame.map_partitions(boolwrap, **{'quant_col':'modelclimatology' if hasattr(self, 'modelclim') else 'threshold'}, meta = ('pi','float32')) # The threshold that potentially comes from modelclimatology, otherwise observed climatology
             def obswrap(frame):
                 exceedence = frame['observation'].values.squeeze() > frame['threshold'].values.squeeze() # to make sure that comparison is 1D
