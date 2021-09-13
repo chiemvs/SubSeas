@@ -444,13 +444,15 @@ class RegimeAssigner(object):
         forecasts = assigned['forecast'].stack('number')
         firstdays = forecasts.loc[(slice(None),1,0)].index.get_level_values('time') # leadtime 1, and just the control member
         forecasts = forecasts.to_xarray()
-        forecast_freq_in_window = pd.DataFrame(np.nan, index = assigned.index, columns = clustids) # Pre-allocation , ([time, leadtime],clustid)
-        self.two_dimensional_rolling(init_dates = firstdays , timeagg = nday_window, array = forecasts, pre_allocated_frame = forecast_freq_in_window) # Modifies the frame inplace
-        forecast_freq_in_window.columns = pd.MultiIndex.from_product([['forecast'],forecast_freq_in_window.columns])
-        # Normalize the counts to frequencies
-        forecast_freq_in_window = forecast_freq_in_window / (assigned['forecast'].shape[-1] * nday_window) # nmembers * ndays is total
-        forecast_freq_in_window = forecast_freq_in_window.dropna(axis = 0, how = 'all') # Slicing of the trailing NaN due to pre-allocation
-        assert np.allclose(forecast_freq_in_window.sum(axis = 1), 1.0), 'distribution should sum up to one, check missing forecast values'
+        forecast_count_in_window = pd.DataFrame(np.nan, index = assigned.index, columns = clustids) # Pre-allocation , ([time, leadtime],clustid)
+        self.two_dimensional_rolling(init_dates = firstdays , timeagg = nday_window, array = forecasts, pre_allocated_frame = forecast_count_in_window) # Modifies the frame inplace
+        forecast_count_in_window.columns = pd.MultiIndex.from_product([['forecast'],forecast_count_in_window.columns])
+        # Normalize the counts to frequencies, but adding 1 to all classes, so we don't get zero's
+        n_counts = (assigned['forecast'].shape[-1] * nday_window) + len(clustids) 
+        forecast_count_in_window = forecast_count_in_window + 1
+        probability_in_window = forecast_count_in_window / n_counts 
+        probability_in_window = probability_in_window.dropna(axis = 0, how = 'all') # Slicing of the trailing NaN due to pre-allocation
+        assert np.allclose(probability_in_window.sum(axis = 1), 1.0), 'distribution should sum up to one, check missing forecast values'
 
         if 'observation' in assigned.columns:
             observations = assigned['observation'].iloc[:,0].to_xarray()
@@ -461,9 +463,9 @@ class RegimeAssigner(object):
             observed_freq_in_window = observed_freq_in_window / nday_window # nmembers * ndays is total
             observed_freq_in_window = observed_freq_in_window.dropna(axis = 0, how = 'all') # Slicing of the trailing NaN due to pre-allocation
             assert np.allclose(observed_freq_in_window.sum(axis = 1), 1.0), 'distribution should sum up to one, check missing observation values (e.g. april)'
-            joined = forecast_freq_in_window.join(observed_freq_in_window, how = 'left')
+            joined = probability_in_window.join(observed_freq_in_window, how = 'left')
         else:
-            joined = forecast_freq_in_window
+            joined = probability_in_window
 
         return joined
 
@@ -535,8 +537,8 @@ if __name__ == '__main__':
     """
     ra = RegimeAssigner(at_KNMI = True, max_distance = 60000) # close to the median distance to all
     assigned_ids, distances = ra.associate_all()
-    bookfile1 = ra.save(assigned_ids, what = 'ids')
-    bookfile2 = ra.save(distances, what = 'distances')
+    #bookfile1 = ra.save(assigned_ids, what = 'ids')
+    #bookfile2 = ra.save(distances, what = 'distances')
     timeagg = 21
     assigned_ids_agg = ra.frequency_in_window(assigned_ids, nday_window = timeagg) # Time aggregation
     bookfile3 = ra.save(assigned_ids_agg, what = 'ids')
