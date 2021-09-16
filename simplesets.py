@@ -398,7 +398,7 @@ class RegimeAssigner(object):
         all_distances = self.add_observation(all_distances, how = 'inner') # Stricter join, we don't want to add observed nans in april
         return all_assigned.sort_index(), all_distances.sort_index()
 
-    def two_dimensional_rolling(self, init_dates: pd.DatetimeIndex, timeagg: int, array: xr.DataArray, pre_allocated_frame: pd.DataFrame):
+    def two_dimensional_rolling(self, init_dates: pd.DatetimeIndex, timeagg: int, array: xr.DataArray, pre_allocated_frame: pd.DataFrame, reduce_number_dim: bool):
         """
         For time aggregation, we need to start per forecast initialization date
         and simultaneously move along the time and leadtime axes
@@ -414,22 +414,26 @@ class RegimeAssigner(object):
             leadtime_index_slice = xr.DataArray(np.arange(subset.shape[0]), dims = ('leadtime',)) # Coordinates for vectorized indexing of the available data.
             start_to_end = subset[leadtime_index_slice, leadtime_index_slice,...] # Vectorized (non-orthogonal indexing) in 2D
             temp = [] # We'll be creating a new clustid axis
-            for clustid in pre_allocated_frame.columns:
-                if 'number' in start_to_end.dims: # Dealing with forecasts
+            for clustid in pre_allocated_frame.columns.get_level_values('clustid').unique():
+                if ('number' in start_to_end.dims) and reduce_number_dim: # Dealing with forecasts and aggregating over the members
                     count = (start_to_end == clustid).sum('number') # counting over the members
-                else: # Dealing with observations
+                else: # Dealing with observations, or wanting the forecast count per member
                     count = start_to_end == clustid
                 # Now the temporal aggregation by counting over the time window.
-                total_window_occurrence = count.rolling({'leadtime':timeagg}).sum() # leadtime indexed only
+                total_window_occurrence = count.rolling({'leadtime':timeagg}).sum() # leadtime indexed or leadtime and number indexed
                 temp.append(total_window_occurrence)
-            comb = xr.concat(temp, dim = 'clustid')
+            comb = xr.concat(temp, dim = pre_allocated_frame.columns.get_level_values('clustid').unique()) # Added as axis = 0
             # Left stamping
             comb = comb.assign_coords({'time':comb.time - pd.Timedelta(str(timeagg - 1) + 'D')})
             comb = comb.assign_coords({'leadtime':comb.leadtime - (timeagg - 1)})
             comb = comb.isel(leadtime = slice(timeagg - 1, None))
-            pre_allocated_frame.loc[list(zip(comb.time.values, comb.leadtime.values)),:] = comb.values.T # Setting values
+            if 'number' in comb.dims:
+                stacked = comb.stack({'stackdim':['clustid','number']}) # Makes a multiindex (as last axis) just like the columns of the dataframe
+                pre_allocated_frame.loc[list(zip(comb.time.values, comb.leadtime.values)),:] = stacked.values # Setting values
+            else:
+                pre_allocated_frame.loc[list(zip(comb.time.values, comb.leadtime.values)),:] = comb.values.T # Setting values, while getting clustid from zeroth axis to the first (i.e. columns)
 
-    def frequency_in_window(self, assigned: pd.DataFrame, nday_window : int) -> pd.DataFrame:
+    def frequency_in_window(self, assigned: pd.DataFrame, nday_window : int, per_member: bool = False) -> pd.DataFrame:
         """
         Time aggregation, by means of frequency of regime occurrence in a window.
         Takes in a dataframe with the daily assignments,
@@ -444,21 +448,33 @@ class RegimeAssigner(object):
         forecasts = assigned['forecast'].stack('number')
         firstdays = forecasts.loc[(slice(None),1,0)].index.get_level_values('time') # leadtime 1, and just the control member
         forecasts = forecasts.to_xarray()
-        forecast_count_in_window = pd.DataFrame(np.nan, index = assigned.index, columns = clustids) # Pre-allocation , ([time, leadtime],clustid)
-        self.two_dimensional_rolling(init_dates = firstdays , timeagg = nday_window, array = forecasts, pre_allocated_frame = forecast_count_in_window) # Modifies the frame inplace
-        forecast_count_in_window.columns = pd.MultiIndex.from_product([['forecast'],forecast_count_in_window.columns])
-        # Normalize the counts to frequencies, but adding 1 to all classes, so we don't get zero's
-        n_counts = (assigned['forecast'].shape[-1] * nday_window) + len(clustids) 
+        nmembers = len(forecasts.coords['number'])
+        if per_member:
+            forecast_count_in_window = pd.DataFrame(np.nan, index = assigned.index, columns = pd.MultiIndex.from_product([clustids,forecasts.number.values], names = ['clustid','number'])) # Pre-allocation , ([time, leadtime],[clustid, number])
+        else:
+            forecast_count_in_window = pd.DataFrame(np.nan, index = assigned.index, columns = clustids) # Pre-allocation , ([time, leadtime],clustid)
+        self.two_dimensional_rolling(init_dates = firstdays , timeagg = nday_window, array = forecasts, pre_allocated_frame = forecast_count_in_window, reduce_number_dim = not per_member) # Modifies the frame inplace
+        # Set extra index level and Normalize the counts to frequencies, but adding 1 to all classes, so we don't get zero's
+        if per_member:
+            forecast_count_in_window.columns = pd.MultiIndex.from_tuples([('forecast',) + key for key in forecast_count_in_window.columns], names = [None,'clustid','number']) # Already a two-layer index
+            n_counts = nday_window + len(clustids) 
+        else:
+            forecast_count_in_window.columns = pd.MultiIndex.from_product([['forecast'],forecast_count_in_window.columns])
+            n_counts = (nmembers * nday_window) + len(clustids) 
         forecast_count_in_window = forecast_count_in_window + 1
         probability_in_window = forecast_count_in_window / n_counts 
         probability_in_window = probability_in_window.dropna(axis = 0, how = 'all') # Slicing of the trailing NaN due to pre-allocation
-        assert np.allclose(probability_in_window.sum(axis = 1), 1.0), 'distribution should sum up to one, check missing forecast values'
+        assert np.allclose(probability_in_window.sum(axis = 1), 1.0) or np.allclose(probability_in_window.sum(axis = 1), 1.0 *nmembers) , 'distribution should sum up to one, check missing forecast values'
 
         if 'observation' in assigned.columns:
             observations = assigned['observation'].iloc[:,0].to_xarray()
             observed_freq_in_window = pd.DataFrame(np.nan, index = assigned.index, columns = clustids) # Pre-allocation , ([time, leadtime],clustid)
-            self.two_dimensional_rolling(init_dates = firstdays , timeagg = nday_window, array = observations, pre_allocated_frame = observed_freq_in_window) # Modifies the frame inplace
-            observed_freq_in_window.columns = pd.MultiIndex.from_product([['observation'],observed_freq_in_window.columns])
+            self.two_dimensional_rolling(init_dates = firstdays , timeagg = nday_window, array = observations, pre_allocated_frame = observed_freq_in_window, reduce_number_dim = not per_member) # Modifies the frame inplace
+            # Build the required multiindex
+            if per_member:
+                observed_freq_in_window.columns = pd.MultiIndex.from_product([['observation'],observed_freq_in_window.columns,[0]], names = [None,'clustid','number'])
+            else:
+                observed_freq_in_window.columns = pd.MultiIndex.from_product([['observation'],observed_freq_in_window.columns])
             # Normalize the counts to frequencies
             observed_freq_in_window = observed_freq_in_window / nday_window # nmembers * ndays is total
             observed_freq_in_window = observed_freq_in_window.dropna(axis = 0, how = 'all') # Slicing of the trailing NaN due to pre-allocation
@@ -536,12 +552,14 @@ if __name__ == '__main__':
     Regime predictors II: assignment of forecast Z300 (initializtion,leadtime,members) to found clusters
     """
     ra = RegimeAssigner(at_KNMI = True, max_distance = 60000) # close to the median distance to all
-    assigned_ids, distances = ra.associate_all()
+    #assigned_ids, distances = ra.associate_all()
     #bookfile1 = ra.save(assigned_ids, what = 'ids')
     #bookfile2 = ra.save(distances, what = 'distances')
-    timeagg = 21
-    assigned_ids_agg = ra.frequency_in_window(assigned_ids, nday_window = timeagg) # Time aggregation
-    bookfile3 = ra.save(assigned_ids_agg, what = 'ids')
+    #assigned_ids = pd.read_hdf('/nobackup_1/users/straaten/match/paper3-4-regimes_z-anom_JJA_45r1_1D-frequency_ids.h5').set_index(['time','leadtime'])
+    #nday_window = 21
+    ##assigned_ids_agg = ra.frequency_in_window(assigned_ids, nday_window = nday_window, per_member = False) # Time aggregation
+    #assigned_ids_agg = ra.frequency_in_window(assigned_ids, nday_window = nday_window, per_member = True) # Time aggregation per member
+    #bookfile3 = ra.save(assigned_ids_agg, what = 'ids_per_member')
     
     """
     Spatiotemporal mean anomaly simplesets
