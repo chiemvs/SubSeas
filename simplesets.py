@@ -127,7 +127,7 @@ def subset_and_prepare(arr: xr.DataArray, months: int = None, buffermonths: int 
     Perhaps I want to add filtering. See e.g. https://github.com/fujiisoup/xr-scipy/blob/master/xrscipy/signal/filters.py
     Also possible to supply buffermonths (this leads to the returning of a larger second set, whose extra months do not count for the detrending and component extraction but will be projected)
     """
-    assert detrend_method in [None,'scipy','sklearn'], 'Only scipy and sklearn or None are valid detrending options'
+    assert detrend_method in [None,'scipy','sklearn','sklearnpool'], 'Only scipy and sklearn or None are valid detrending options'
 
     if isinstance(months, int):
         months = [months]
@@ -146,6 +146,16 @@ def subset_and_prepare(arr: xr.DataArray, months: int = None, buffermonths: int 
             stacked.values = stacked.values - trend
             final = xr.Dataset({'coef':('latlon',lr.coef_.squeeze()), 'intercept':('latlon',lr.intercept_.squeeze())}, coords = {'latlon':stacked.coords['latlon']})
             final = final.assign({anom.name:stacked}).unstack('latlon')
+        elif detrend_method == 'sklearnpool':
+            fully_stacked = anom.to_series()  # (nsamples,)
+            time_axis = fully_stacked.index.get_level_values('time').to_julian_date().values[:,np.newaxis] # (samples, features)
+            lr = LinearRegression(n_jobs = 15)
+            lr.fit(X = time_axis, y = fully_stacked.values)
+            trend = lr.predict(time_axis)
+            detrended = (fully_stacked - trend).to_xarray() 
+            detrended.attrs.update(anom.attrs)
+            final = xr.Dataset({'coef':(('latitude','longitude'), np.full(anom.shape[1:], lr.coef_[0])), 'intercept':(('latitude','longitude'), np.full(anom.shape[1:], lr.intercept_))}, coords = {'latitude':anom.coords['latitude'],'longitude':anom.coords['longitude']})
+            final = final.assign({detrended.name:detrended})
     else:
         final = anom.to_dataset()
 
@@ -154,19 +164,15 @@ def subset_and_prepare(arr: xr.DataArray, months: int = None, buffermonths: int 
         if isinstance(buffermonths, int):
             buffermonths = [buffermonths]
         extended_anom = arr[arr.time.dt.month.isin(months + buffermonths),...].copy()
-        if detrend_method == 'sklearn':
-            extended_time_axis = extended_anom.time.to_pandas().index.to_julian_date().values[:,np.newaxis] # (samples, features)
-            extended_stacked = extended_anom.stack({'latlon':['latitude','longitude']})
-            extended_trend = lr.predict(X = extended_time_axis)
-            extended_stacked.values = extended_stacked.values - extended_trend
-            extended_final = extended_stacked.unstack('latlon') 
-        else:
-            extended_final = anom
-        return final, extended_final
+        if detrend_method.startswith('sklearn'):
+            extended_time_axis = extended_anom.time.to_pandas().index.to_julian_date().values[:,np.newaxis,np.newaxis] # (samples, features)
+            extended_trend = extended_time_axis * final['coef'].values[np.newaxis,...] + final['intercept'].values[np.newaxis,...]
+            extended_anom.values = extended_anom.values - extended_trend
+        return final, extended_anom
     else:
         return final
         
-def extract_components(arr: xr.DataArray, extended_arr: xr.DataArray = None, ncomps: int = 10, nclusters: int = 4):
+def extract_components(arr: xr.DataArray, extended_arr: xr.DataArray = None, ncomps: int = 10, nclusters: int = 4, seed = None):
     """
     arr needs to be subset to the correct subset, also already detrended if desired
     returns 2 datasets
@@ -199,7 +205,7 @@ def extract_components(arr: xr.DataArray, extended_arr: xr.DataArray = None, nco
 
     #k-means clustering
     k_coords = pd.Index(list(range(nclusters)), dtype = np.int64)
-    centroids, assignments = vq.kmeans2(projection, k = nclusters, seed = 4, minit = '++') 
+    centroids, assignments = vq.kmeans2(projection, k = nclusters, seed = seed, minit = '++') 
     composites = [data[assignments == cluster,...].mean(axis = 0) for cluster in k_coords] # Composite of the anomalies
     composites = np.concatenate(composites, axis = 0).reshape((nclusters,) + arr.shape[1:]) # new zeroth axis is clusters
     clusters = arr.coords.to_dataset().drop_dims('time')
@@ -535,14 +541,15 @@ if __name__ == '__main__':
 
     #arr = era5_z300_resample()
     #monthsets = [list(range(5,9))]
-    ##monthsets = [[i] for i in range(5,9)]
-    #detrend_method = 'sklearn' #None
+    ###monthsets = [[i] for i in range(5,9)]
+    #detrend_method = 'sklearnpool' #None
+    #seed = 3
     #basedir = Path('/scistor/ivm/jsn295/backup/predsets')
     #for months in monthsets:
     #    monthscoord = "".join([str(i) for i in months])
-    #    basename = f'z300_1D_months_{monthscoord}_{detrend_method}_detrended4'
+    #    basename = f'z300_1D_months_{monthscoord}_{detrend_method}_detrended{seed}'
     #    dataset, dataarray = subset_and_prepare(arr = arr, months = months, buffermonths = 9, detrend_method = detrend_method)
-    #    eofs, clusters = extract_components(arr = dataset[arr.name], extended_arr = dataarray, ncomps = 10, nclusters = 4) # Following Ferranti 2015 in ncomps and nclusters #export OPENBLAS_NUM_THREADS=25 put upfront.
+    #    eofs, clusters = extract_components(arr = dataset[arr.name], extended_arr = dataarray, ncomps = 10, nclusters = 4, seed = seed) # Following Ferranti 2015 in ncomps and nclusters #export OPENBLAS_NUM_THREADS=25 put upfront.
     #    eofs.to_netcdf(basedir / f'{basename}_patterns.nc')
     #    clusters.to_netcdf(basedir / f'{basename}_clusters.nc')
     #    if 'coef' in dataset:
@@ -551,7 +558,7 @@ if __name__ == '__main__':
     """
     Regime predictors II: assignment of forecast Z300 (initializtion,leadtime,members) to found clusters
     """
-    ra = RegimeAssigner(at_KNMI = True, max_distance = 60000) # close to the median distance to all
+    #ra = RegimeAssigner(at_KNMI = True, max_distance = 60000) # close to the median distance to all
     #assigned_ids, distances = ra.associate_all()
     #bookfile1 = ra.save(assigned_ids, what = 'ids')
     #bookfile2 = ra.save(distances, what = 'distances')
