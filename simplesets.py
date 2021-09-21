@@ -241,11 +241,11 @@ class RegimeAssigner(object):
         self.highresmodelclim.local_clim()
         
         try:
-            self.coefset = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended4_coefs.nc') 
+            self.coefset = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearnpool_detrended2_coefs.nc') 
         except OSError:
             print('coefficient set not found, assuming detrending before assignment will no be needed later')
-        self.eigvectors = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended4_patterns.nc')['eigvectors']
-        self.centroids = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended4_clusters.nc')['centroid']
+        self.eigvectors = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearnpool_detrended2_patterns.nc')['eigvectors']
+        self.centroids = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearnpool_detrended2_clusters.nc')['centroid']
 
 
     def anomalize(self, f: Forecast):
@@ -562,11 +562,12 @@ if __name__ == '__main__':
     #assigned_ids, distances = ra.associate_all()
     #bookfile1 = ra.save(assigned_ids, what = 'ids')
     #bookfile2 = ra.save(distances, what = 'distances')
-    #assigned_ids = pd.read_hdf('/nobackup_1/users/straaten/match/paper3-4-regimes_z-anom_JJA_45r1_1D-frequency_ids.h5').set_index(['time','leadtime'])
+    ##assigned_ids = pd.read_hdf('/nobackup_1/users/straaten/match/paper3-4-regimes_z-anom_JJA_45r1_1D-frequency_ids.h5').set_index(['time','leadtime'])
     #nday_window = 21
-    ##assigned_ids_agg = ra.frequency_in_window(assigned_ids, nday_window = nday_window, per_member = False) # Time aggregation
-    #assigned_ids_agg = ra.frequency_in_window(assigned_ids, nday_window = nday_window, per_member = True) # Time aggregation per member
-    #bookfile3 = ra.save(assigned_ids_agg, what = 'ids_per_member')
+    #assigned_ids_agg = ra.frequency_in_window(assigned_ids, nday_window = nday_window, per_member = False) # Time aggregation
+    #bookfile3 = ra.save(assigned_ids_agg, what = 'ids')
+    #assigned_ids_agg_pm = ra.frequency_in_window(assigned_ids, nday_window = nday_window, per_member = True) # Time aggregation per member
+    #bookfile4 = ra.save(assigned_ids_agg_pm, what = 'ids_per_member')
     
     """
     Spatiotemporal mean anomaly simplesets
