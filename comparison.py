@@ -375,10 +375,7 @@ class Comparison(object):
             self.modelclim = modelclimatology.clim.to_dataframe().dropna(axis = 0, how = 'any')
             self.modelclim.columns = pd.MultiIndex.from_product([self.modelclim.columns, ['']], names = [None,'number'])
             # Joining does not need resetting the columns I think:
-            if 'clustid' in self.clim.columns:
-                self.clim = self.clim.merge(self.modelclim, how = 'outer', on = ['clustid','doy'])
-            else:
-                self.clim = self.clim.merge(self.modelclim, how = 'outer', on = ['clustid','latitude','longitude'], right_index = True)
+            self.clim = self.clim.merge(self.modelclim.reset_index(), how = 'right', on = ['clustid','doy']) # Potentially will include leadtime as a column when modelclim is leadtime dependent
             
     def compute_predictors(self, pp_model):
         """
@@ -462,10 +459,14 @@ class Comparison(object):
         from climatology are added (either a numeric quantile, the climatological probability or the random draws)
         """
         self.frame['doy'] = self.frame['time'].dt.dayofyear.astype('int16')
+        mergekeys = ['doy']
         if 'clustid' in self.frame.columns:
-            return(self.frame.merge(self.clim, on = ['doy', 'clustid'], how = 'left'))
+            mergekeys += ['clustid']
         else:
-            return(self.frame.merge(self.clim, on = ['doy','latitude','longitude'], how = 'left'))
+            mergekeys += ['latitude','longitude']
+        if 'leadtime' in self.frame.columns:
+            mergekeys += ['leadtime'] 
+        return(self.frame.merge(self.clim, on = mergekeys, how = 'left'))
     
     def merge_to_fits(self):
         """
