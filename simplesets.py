@@ -651,3 +651,10 @@ if __name__ == '__main__':
     #out_path = '/nobackup/users/straaten/predsets/tg_monthly_global_mean_surface_only_trend.nc'
     #continuous_trend.to_netcdf(out_path)
     #
+
+    """
+    Processing raw MJO data of BOM
+    """
+    rawpath = '/nobackup/users/straaten/predsets/rmm_bom_raw.txt'
+    test = pd.read_fwf(rawpath, skiprows = 2, colspecs = [(8,13),(22,25),(34,37),(37,52),(53,70),(79,81),(82,96)] , names = ['year', 'month', 'day', 'RMM1', 'RMM2', 'phase', 'amplitude'], parse_dates = {'time':['year','month','day']})
+    test = test.iloc[(test['RMM1'] < 999).values,:] #Dropping the NANs (1e36 or 999)
