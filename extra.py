@@ -15,25 +15,26 @@ if __name__ == "__main__":
     #t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 't2m-anom_1979-01-01_2019-12-31_1D_0.25-degrees') # Override normal E-OBS directory
     #t2m.load(tmin = '1998-06-07', tmax = '2019-10-31')
     #t2m.aggregatespace(clustername = 't2m-q095-adapted', level = 15)
-    ##t2m.aggregatespace(clustername = 't2m-q075', level = 0.58)
-    #t2m.aggregatetime(freq = '31D', method = 'mean', rolling = True)
-    ## write output. Correct the name for later matching to forecasts?
-    ## Utins match, namely K
+    ###t2m.aggregatespace(clustername = 't2m-q075', level = 0.58)
+    #t2m.aggregatetime(freq = '21D', method = 'mean', rolling = True)
+    ### write output. Correct the name for later matching to forecasts?
+    ### Utins match, namely K
     #t2m.newvar = 'anom' # Actually already done
     #t2m.construct_name(force = True) # Adds new tim/spacemethod
     #print(t2m.name)
     #t2m.array = t2m.array.drop(['nclusters','dissim_threshold'], errors = 'ignore')
-    #out = xr.Dataset({'clustidfield':t2m.clusterarray.drop('nclusters', errors = 'ignore'),t2m.array.name:t2m.array})
-    #out.to_netcdf(t2m.filepath)
+    ##out = xr.Dataset({'clustidfield':t2m.clusterarray.drop('nclusters', errors = 'ignore'),t2m.array.name:t2m.array})
+    ##out.to_netcdf(t2m.filepath)
     #t2m.clusterarray = t2m.clusterarray.drop(['nclusters','dissim_threshold'], errors = 'ignore') # So that they are not carried into matching
 
-    # create a climatology
+    ## create a climatology
     #c = Climatology(f'{t2m.basevar}-{t2m.newvar}')
-    #c.localclim(obs = t2m, daysbefore = 5, daysafter = 5, mean = False, quant = 0.75)
+    #c.localclim(obs = t2m, daysbefore = 5, daysafter = 5, mean = False, quant = 0.5)
     #c.savelocalclim()
 
     #t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 'tg-anom_1998-06-07_2019-10-31_14D-roll-mean_15-t2m-q095-adapted-mean') # Override normal E-OBS directory
     #t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 'tg-anom_1998-06-07_2019-10-31_31D-roll-mean_15-t2m-q095-adapted-mean') # Override normal E-OBS directory
+    #t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 'tg-anom_1998-06-07_2019-10-31_21D-roll-mean_15-t2m-q095-adapted-mean') # Override normal E-OBS directory
     #t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 'tg-anom_1998-06-07_2019-10-31_7D-roll-mean_15-t2m-q095-adapted-mean') # Override normal E-OBS directory
     #t2m = SurfaceObservations(basevar = 'tg', basedir = '/nobackup/users/straaten/ERA5/', name = 'tg-anom_1998-06-07_2019-10-31_7D-roll-mean_0.58-t2m-q075-mean') # Hihger spatial resolution
     #t2m.load()
@@ -54,7 +55,7 @@ if __name__ == "__main__":
 
     #basedirkwargs = {'basedir':'/nobackup/users/straaten/EXT/'} # Needed because they need to be searching in EXT and not EXT_extra
     #modelclim = ModelClimatology(cycle='45r1', variable = 'tg-anom') # Quantclimatology
-    #modelclim.local_clim(tmin = '1998-06-07', tmax = '2019-08-31', timemethod = t2m.timemethod, spacemethod = t2m.spacemethod, mean = False, quant = 0.75, lead_time_dep = True, clusterarray = t2m.clusterarray, loadkwargs = loadkwargs, newvarkwargs = newvarkwargs, basedirkwargs = basedirkwargs)
+    #modelclim.local_clim(tmin = '1998-06-07', tmax = '2019-08-31', timemethod = t2m.timemethod, spacemethod = t2m.spacemethod, mean = False, quant = 0.5, lead_time_dep = True, clusterarray = t2m.clusterarray, loadkwargs = loadkwargs, newvarkwargs = newvarkwargs, basedirkwargs = basedirkwargs)
     #modelclim.savelocalclim()
 
     """

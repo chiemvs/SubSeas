@@ -268,10 +268,10 @@ class Climatology(object):
             self.clusterarray = getattr(obs, 'clusterarray')
                 
         try:
-            self.clim = xr.open_dataarray(self.filepath)
+            self.clim = xr.open_dataarray(self.filepath, decode_times = False)
             print('climatology directly loaded')
         except ValueError:
-            self.clim = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield').drop('dissim_threshold', errors = 'ignore') # Also load the clustidfield if present??
+            self.clim = xr.open_dataarray(self.filepath, drop_variables = 'clustidfield', decode_times = False).drop('dissim_threshold', errors = 'ignore') # Also load the clustidfield if present??
             print('climatology directly loaded')
         except OSError:
                     

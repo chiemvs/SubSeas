@@ -654,7 +654,45 @@ if __name__ == '__main__':
 
     """
     Processing raw MJO data of BOM
+    daily RMM mjo index, originally from http://www.bom.gov.au/climate/mjo/graphics/rmm.74toRealtime.txt
     """
-    rawpath = '/nobackup/users/straaten/predsets/rmm_bom_raw.txt'
-    test = pd.read_fwf(rawpath, skiprows = 2, colspecs = [(8,13),(22,25),(34,37),(37,52),(53,70),(79,81),(82,96)] , names = ['year', 'month', 'day', 'RMM1', 'RMM2', 'phase', 'amplitude'], parse_dates = {'time':['year','month','day']})
-    test = test.iloc[(test['RMM1'] < 999).values,:] #Dropping the NANs (1e36 or 999)
+    #def prelag(separations : list, frame: pd.DataFrame):
+    #    """
+    #    Create len(separations) versions of the same frame
+    #    But with values lagged by changing the index and reindexing
+    #    """
+    #    dfs_per_separation = []
+    #    for sep in separations: 
+    #       df = frame.copy()
+    #       df.index = df.index + pd.Timedelta(value = sep, unit = 'day')
+    #       dfs_per_separation.append(df.reindex_like(frame))
+
+    #    combined = pd.concat(dfs_per_separation, axis = 1, keys =pd.Index(separations, name = 'separation'))
+    #    return combined
+
+    #rawpath = '/nobackup/users/straaten/predsets/rmm_bom_raw.txt'
+    #test = pd.read_fwf(rawpath, skiprows = 2, colspecs = [(8,13),(22,25),(34,37),(37,52),(53,70),(79,81),(82,96)] , names = ['year', 'month', 'day', 'rmm1', 'rmm2', 'phase', 'amplitude'], parse_dates = {'time':['year','month','day']})
+    #test = test.iloc[(test['rmm1'] < 999).values,:].set_index('time') #Dropping the NANs (1e36 or 999)
+    #test = test.loc['1979-01-01':,:] # This leads to a 291 day gap around 1978, so select data afterwards (uninterrupted daily)
+    #test.columns.name = 'metric'
+    #separations = np.arange(0,32,1) # Separation in amount of days
+    #total = prelag(separations, frame = test)
+    #total.columns = pd.MultiIndex.from_frame(total.columns.to_frame().assign(clustid = 1).assign(timeagg = 1).assign(variable = 'mjo'))
+    #total.columns = total.columns.reorder_levels(['separation','variable','timeagg','clustid','metric'])
+    #total = total.stack('separation') 
+    #outpath = '/nobackup/users/straaten/predsets/mjo_daily.h5'
+    #total.to_hdf(outpath, key = 'index')
+
+    """
+    Processing of PDO daily
+    Send to me by Sem. He attached multiple types.
+    """
+    #rawpath = '/nobackup/users/straaten/predsets/df_PDOs_daily.h5'
+    #pdo = pd.read_hdf(rawpath)
+    #pdo = pdo[['PDO']]
+    #pdo.columns = pd.MultiIndex.from_tuples([('pdo',1,1,'eof')], names = ['variable','timeagg','clustid','metric'])
+    #pdo.index.name = 'time'
+    #separations = np.arange(0,32,1) # Separation in amount of days
+    #total = prelag(separations, frame = pdo).stack('separation')
+    #outpath = '/nobackup/users/straaten/predsets/pdo_daily.h5'
+    #total.to_hdf(outpath, key = 'index')

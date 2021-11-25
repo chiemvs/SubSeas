@@ -289,7 +289,7 @@ class Forecast(object):
         """
         if variable in ['tg','tx','rr']:
             self.basedir = '/nobackup/users/straaten/EXT/' + self.cycle + '/' # Comptible with loading old forecast from non EXT_extra variables
-        full = xr.open_dataset(self.basedir + self.processedfile)[variable]
+        full = xr.open_dataset(self.basedir + self.processedfile, decode_timedelta = False)[variable]
         
         # Full range if no timelimits were given
         if tmin is None:
