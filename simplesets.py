@@ -541,15 +541,16 @@ if __name__ == '__main__':
 
     #arr = era5_z300_resample()
     #monthsets = [list(range(5,9))]
-    ###monthsets = [[i] for i in range(5,9)]
+    ####monthsets = [[i] for i in range(5,9)]
     #detrend_method = 'sklearnpool' #None
-    #seed = 3
+    #seed = 2
+    #nclusters = 5
     #basedir = Path('/scistor/ivm/jsn295/backup/predsets')
     #for months in monthsets:
     #    monthscoord = "".join([str(i) for i in months])
-    #    basename = f'z300_1D_months_{monthscoord}_{detrend_method}_detrended{seed}'
+    #    basename = f'z300_1D_months_{monthscoord}_{detrend_method}_detrended_ncl{nclusters}_s{seed}'
     #    dataset, dataarray = subset_and_prepare(arr = arr, months = months, buffermonths = 9, detrend_method = detrend_method)
-    #    eofs, clusters = extract_components(arr = dataset[arr.name], extended_arr = dataarray, ncomps = 10, nclusters = 4, seed = seed) # Following Ferranti 2015 in ncomps and nclusters #export OPENBLAS_NUM_THREADS=25 put upfront.
+    #    eofs, clusters = extract_components(arr = dataset[arr.name], extended_arr = dataarray, ncomps = 10, nclusters = nclusters, seed = seed) # Following Ferranti 2015 in ncomps and nclusters (4, or 5 from zampieri 2017) #export OPENBLAS_NUM_THREADS=25 put upfront.
     #    eofs.to_netcdf(basedir / f'{basename}_patterns.nc')
     #    clusters.to_netcdf(basedir / f'{basename}_clusters.nc')
     #    if 'coef' in dataset:
