@@ -230,6 +230,8 @@ class RegimeAssigner(object):
         """
         self.max_distance = max_distance
         self.timeagg = 1 # initial, gets overwritten by frequency_in_window
+        #name ='z300_1D_months_5678_sklearnpool_detrended2'
+        self.name ='z300_1D_months_5678_sklearnpool_detrended_ncl5_s1'
         if at_KNMI:
             self.simplepredspath = Path('/nobackup/users/straaten/predsets')
             self.for_basedir = Path('/nobackup/users/straaten/EXT_extra')
@@ -241,11 +243,11 @@ class RegimeAssigner(object):
         self.highresmodelclim.local_clim()
         
         try:
-            self.coefset = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearnpool_detrended2_coefs.nc') 
+            self.coefset = xr.open_dataset(self.simplepredspath / f'{self.name}_coefs.nc') 
         except OSError:
             print('coefficient set not found, assuming detrending before assignment will no be needed later')
-        self.eigvectors = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearnpool_detrended2_patterns.nc')['eigvectors']
-        self.centroids = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearnpool_detrended2_clusters.nc')['centroid']
+        self.eigvectors = xr.open_dataset(self.simplepredspath / f'{self.name}_patterns.nc')['eigvectors']
+        self.centroids = xr.open_dataset(self.simplepredspath / f'{self.name}_clusters.nc')['centroid']
 
 
     def anomalize(self, f: Forecast):
@@ -372,7 +374,7 @@ class RegimeAssigner(object):
         Tries to infer whether to add the distances or the clusters
         Handy get the forecast and corresponding observation in the same frame
         """
-        projected_obs = xr.open_dataset(self.simplepredspath / 'z300_1D_months_5678_sklearn_detrended_patterns.nc')['projection']
+        projected_obs = xr.open_dataset(self.simplepredspath / f'{self.name}_patterns.nc')['projection']
 
         obs_distances, obs_regimes = self.assign(projected_obs) # Also obeys the self.maxdistance
         if 'clustid' in forecast_df.index.names:
@@ -561,14 +563,14 @@ if __name__ == '__main__':
     """
     #ra = RegimeAssigner(at_KNMI = True, max_distance = 60000) # close to the median distance to all
     #assigned_ids, distances = ra.associate_all()
-    #bookfile1 = ra.save(assigned_ids, what = 'ids')
-    #bookfile2 = ra.save(distances, what = 'distances')
-    ##assigned_ids = pd.read_hdf('/nobackup_1/users/straaten/match/paper3-4-regimes_z-anom_JJA_45r1_1D-frequency_ids.h5').set_index(['time','leadtime'])
+    #bookfile1 = ra.save(assigned_ids, what = 'ids', expname = 'paper3-4-5regimes')
+    #bookfile2 = ra.save(distances, what = 'distances', expname = 'paper3-4-5regimes')
+    #assigned_ids = pd.read_hdf('/nobackup_1/users/straaten/match/paper3-4-5regimes_z-anom_JJA_45r1_1D-frequency_ids.h5').set_index(['time','leadtime'])
     #nday_window = 21
     #assigned_ids_agg = ra.frequency_in_window(assigned_ids, nday_window = nday_window, per_member = False) # Time aggregation
-    #bookfile3 = ra.save(assigned_ids_agg, what = 'ids')
+    #bookfile3 = ra.save(assigned_ids_agg, what = 'ids', expname = 'paper3-4-5regimes')
     #assigned_ids_agg_pm = ra.frequency_in_window(assigned_ids, nday_window = nday_window, per_member = True) # Time aggregation per member
-    #bookfile4 = ra.save(assigned_ids_agg_pm, what = 'ids_per_member')
+    #bookfile4 = ra.save(assigned_ids_agg_pm, what = 'ids_per_member', expname = 'paper3-4-5regimes')
     
     """
     Spatiotemporal mean anomaly simplesets
