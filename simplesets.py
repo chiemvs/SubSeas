@@ -230,8 +230,8 @@ class RegimeAssigner(object):
         """
         self.max_distance = max_distance
         self.timeagg = 1 # initial, gets overwritten by frequency_in_window
-        #name ='z300_1D_months_5678_sklearnpool_detrended2'
-        self.name ='z300_1D_months_5678_sklearnpool_detrended_ncl5_s1'
+        self.name ='z300_1D_months_5678_sklearnpool_detrended2'
+        #self.name ='z300_1D_months_5678_sklearnpool_detrended_ncl5_s1'
         if at_KNMI:
             self.simplepredspath = Path('/nobackup/users/straaten/predsets')
             self.for_basedir = Path('/nobackup/users/straaten/EXT_extra')
@@ -563,14 +563,14 @@ if __name__ == '__main__':
     """
     #ra = RegimeAssigner(at_KNMI = True, max_distance = 60000) # close to the median distance to all
     #assigned_ids, distances = ra.associate_all()
-    #bookfile1 = ra.save(assigned_ids, what = 'ids', expname = 'paper3-4-5regimes')
-    #bookfile2 = ra.save(distances, what = 'distances', expname = 'paper3-4-5regimes')
-    #assigned_ids = pd.read_hdf('/nobackup_1/users/straaten/match/paper3-4-5regimes_z-anom_JJA_45r1_1D-frequency_ids.h5').set_index(['time','leadtime'])
+    #bookfile1 = ra.save(assigned_ids, what = 'ids', expname = 'paper3-4-4regimes')
+    #bookfile2 = ra.save(distances, what = 'distances', expname = 'paper3-4-4regimes')
+    #assigned_ids = pd.read_hdf('/nobackup_1/users/straaten/match/paper3-4-4regimes_z-anom_JJA_45r1_1D-frequency_ids.h5').set_index(['time','leadtime'])
     #nday_window = 21
     #assigned_ids_agg = ra.frequency_in_window(assigned_ids, nday_window = nday_window, per_member = False) # Time aggregation
-    #bookfile3 = ra.save(assigned_ids_agg, what = 'ids', expname = 'paper3-4-5regimes')
+    #bookfile3 = ra.save(assigned_ids_agg, what = 'ids', expname = 'paper3-4-4regimes')
     #assigned_ids_agg_pm = ra.frequency_in_window(assigned_ids, nday_window = nday_window, per_member = True) # Time aggregation per member
-    #bookfile4 = ra.save(assigned_ids_agg_pm, what = 'ids_per_member', expname = 'paper3-4-5regimes')
+    #bookfile4 = ra.save(assigned_ids_agg_pm, what = 'ids_per_member', expname = 'paper3-4-4regimes')
     
     """
     Spatiotemporal mean anomaly simplesets
