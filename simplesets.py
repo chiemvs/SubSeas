@@ -621,11 +621,11 @@ if __name__ == '__main__':
         obs = SurfaceObservations(basevar = basevar, basedir = '/nobackup/users/straaten/ERA5/', name = f'{basevar}-anom_1998-06-07_2019-08-31_{timeagg}D-roll-mean_1-{combinations.loc[basevar,"block"]}-mean') # Override normal E-OBS directory
         obs.load()
         clim = Climatology(f'{basevar}-anom')
-        clim.localclim(obs = obs, daysbefore = 5, daysafter = 5, mean = False, quant = 0.75)
+        clim.localclim(obs = obs, daysbefore = 15, daysafter = 15, mean = False, quant = 0.75)
         clim.savelocalclim()
 
-    #timeagg = 14
-    #for var in combinations.index[::-1]:
+    #timeagg = 31
+    #for var in ['swvl13','swvl4']: #combinations.index[::-1]:
     #    create_blocks(var, timeagg = timeagg)
     #    create_clim(var, timeagg = timeagg)
 
