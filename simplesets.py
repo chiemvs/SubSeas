@@ -581,7 +581,7 @@ if __name__ == '__main__':
     block-cluster made in swvl-simple.nc 
     """
     combinations = pd.DataFrame({'obs':['swvl13-anom_1981-01-01_2019-09-30_1D_1.5-degrees','swvl4-anom_1981-01-01_2019-09-30_1D_1.5-degrees','z300-anom_1979-01-01_2019-12-31_1D_1.5-degrees','sst-anom_1979-01-01_2019-12-31_1D_1.5-degrees'],
-        'block':['swvl-simple','swvl-simple','swvl-simple','sst-simple'],
+        'block':['swvl-local','swvl-local','swvl-local','sst-local'],
         'modelclim':['swvl13_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean','swvl4_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean','z_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean','sst_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean'],
         'expname':['paper3-3-simple','paper3-3-simple','paper3-3-simple','paper3-3-simple'],
         }, index = pd.Index(['swvl13','swvl4', 'z','sst'], name = 'basevar'))
@@ -624,8 +624,8 @@ if __name__ == '__main__':
         clim.localclim(obs = obs, daysbefore = 15, daysafter = 15, mean = False, quant = 0.75)
         clim.savelocalclim()
 
-    #timeagg = 31
-    #for var in ['swvl13','swvl4']: #combinations.index[::-1]:
+    #timeagg = 21
+    #for var in combinations.index[::-1]:
     #    create_blocks(var, timeagg = timeagg)
     #    create_clim(var, timeagg = timeagg)
 
