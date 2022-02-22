@@ -154,19 +154,37 @@ def select_highest_member(field: xr.DataArray, at_lat: float = 52.0, at_lon: flo
 
         
 if __name__ == '__main__':
-    dates = pd.date_range('2000-07-01','2000-07-03').to_series()
+
+    ordered_shaps = pd.read_hdf('/nobackup/users/straaten/interpretation/tg-anom_JJA_45r1_31D-roll-mean_q0.5_sep12-15_shap_sub.h5')
+    dates = ordered_shaps.index[1950:].get_level_values('time').unique().to_series()
+    #dates = pd.date_range('2000-07-01','2000-07-03').to_series()
 
     highresmodelclim = ModelClimatology(cycle = '45r1', variable = 'z', name = 'z_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean', basedir = '/nobackup/users/straaten/modelclimatology/')
     highresmodelclim.local_clim()
     newvarkwargs = {'climatology':highresmodelclim}
 
     test = matchforecaststoobs(datesubset = dates, variable = 'z', outfilepath = '', time_agg = 31, n_members = 11, leadtimerange = range(12,16), newvarkwargs = newvarkwargs)
-    #test = matchforecaststoobs(datesubset = dates, variable = 'z', outfilepath = '', time_agg = 31, n_members = 11, leadtimerange = None, newvarkwargs = newvarkwargs)
 
+    examplecoords = test[dates[-1]].drop(['number','leadtime','time']).coords
+
+    # highest member 
     highest = {}
-    for date in dates:
+    for date in test.keys():
         highest.update({date:select_highest_member(test[date])})
 
-    total = np.concatenate(list(highest.values()), axis = 0)
+    highest_comp = np.concatenate(list(highest.values()), axis = 0).mean(axis = 0)
+    highest_comp = xr.DataArray(highest_comp, dims = ('latitude','longitude'), coords = examplecoords) 
+
+    # ensemble mean 
+    ensmean = {}
+    for date in test.keys():
+        ensmean.update({date:test[date].mean('number')})
+
+    ensmean_comp = np.concatenate(list(ensmean.values()), axis = 0).mean(axis = 0)
+    ensmean_comp = xr.DataArray(ensmean_comp, dims = ('latitude','longitude'), coords = examplecoords) 
+
+    highest_comp.to_netcdf('/nobackup/users/straaten/interpretation/tg-anom_JJA_45r1_31D-roll-mean_q0.5_sep12-15_1950shap_highest.nc')
+    ensmean_comp.to_netcdf('/nobackup/users/straaten/interpretation/tg-anom_JJA_45r1_31D-roll-mean_q0.5_sep12-15_1950shap_ensmean.nc')
+
 
 
