@@ -16,10 +16,134 @@ import properscoring as ps
 import uuid
 import multiprocessing
 from datetime import datetime
+from typing import Tuple
 from observations import SurfaceObservations, Climatology, EventClassification, Clustering
 from forecasts import Forecast, ModelClimatology
 from helper_functions import monthtoseasonlookup, unitconversionfactors, lastconsecutiveabove, assignmidpointleadtime
 from fitting import NGR, Logistic, ExponentialQuantile
+
+def forecast_at_dates(datesubset, variable, time_agg = 31, n_members = 11, cycle = '45r1', maxleadtime = 46, newvarkwargs = {}, loadkwargs = {}, leadtimerange = None) -> dict:
+    """
+    Limited functionality version of matchforecasttoobs. The only goal is to extract the forecast fields at a certain date
+    No matching in space only in time
+    """
+    def find_forecasts(date):
+        """
+        Here the forecasts corresponding to the observations are determined, by testing their existence.
+        Hindcasts and forecasts might be mixed. But they are in the same class.
+        Leadtimes may differ.
+        Returns an empty list if non were found
+        """       
+        # Find forecast initialization times that fully contain the observation date (including its window for time aggregation)
+        containstart = date + pd.Timedelta(str(time_agg) + 'D') - pd.Timedelta(str(maxleadtime) + 'D')
+        containend = date
+        contain = pd.date_range(start = containstart, end = containend, freq = 'D').strftime('%Y-%m-%d')
+        if variable in ['tg','tx','rr']:
+            forbasedir = '/nobackup/users/straaten/EXT/'
+        else:
+            forbasedir = '/nobackup/users/straaten/EXT_extra/'
+        forecasts = [Forecast(indate, prefix = 'for_', cycle = cycle, basedir = forbasedir) for indate in contain]
+        hindcasts = [Forecast(indate, prefix = 'hin_', cycle = cycle, basedir = forbasedir) for indate in contain]
+        # select from potential forecasts only those that exist.
+        forecasts = [f for f in forecasts if os.path.isfile(f.basedir + f.processedfile)]
+        hindcasts = [h for h in hindcasts if os.path.isfile(h.basedir + h.processedfile)]
+        return(forecasts + hindcasts)
+    
+    def load_forecasts(date, listofforecasts):
+        """
+        Gets the daily processed forecasts into memory. Delimited by the left timestamp and the aggregation time.
+        This is done by using the load method of each Forecast class in the dictionary. They are stored in a list.
+        """ 
+        tmin = date
+        tmax = date + pd.Timedelta(str(time_agg - 1) + 'D') # -1 because date itself also counts for one day in the aggregation.
+       
+        for forecast in listofforecasts:
+            forecast.load(variable = variable, tmin = tmin, tmax = tmax, n_members = n_members, **loadkwargs)
+     
+    def force_resolution(forecast, time = True):
+        """
+        Force the observed resolution onto the supplied Forecast. Checks if the same resolution and force spatial/temporal aggregation if that is not the case. Checks will fail on the roll-norm difference, e.g. 2D-roll-mean observations and .
+        Makes use of the methods of each Forecast class. Checks can be switched on and off. Time-rolling is never applied to the forecasts as for each date already the precise window was loaded, but space-rolling is.
+        """                
+        if time:
+            # Check time aggregation
+            obstimemethod = '31D-roll-mean' 
+            try:
+                fortimemethod = getattr(forecast, 'timemethod')
+                if not fortimemethod == obstimemethod:
+                    raise AttributeError
+                else:
+                    print('Time already aligned')
+            except AttributeError:
+                freq, rolling, method = obstimemethod.split('-')
+                forecast.aggregatetime(freq = freq, method = method, keep_leadtime = True, ndayagg = time_agg, rolling = False)
+                      
+    def force_new_variable(forecast, newvarkwargs, inplace = True, newvariable: str = None):
+        """
+        Call upon event classification on the forecast object to get the on-the-grid conversion of the base variable.
+        This is classification method is the same as applied to obs and is determined by the similar name.
+        Possibly returns xarray object if inplace is False. If newvar is anom and model climatology is supplied through newvarkwargs, it should already have undergone the change in units.
+        """
+        if newvariable is None:
+            newvariable = obs.newvar
+        method = getattr(EventClassification(obs = forecast, **newvarkwargs), newvariable)
+        return(method(inplace = inplace))
+    
+    p = multiprocessing.current_process()
+    print('Starting:', p.pid)
+    
+    aligned_basket = {}
+    aligned_basket_size = 0 # Size of the content in the basket. Used to determine when to write
+    
+    while (aligned_basket_size < 5*10**8) and (not datesubset.empty):
+        
+        date = datesubset.iloc[0]
+        listofforecasts = find_forecasts(date) # Results in empty list if none were found
+        
+        if listofforecasts:
+            
+            load_forecasts(date = date, listofforecasts = listofforecasts) # Does this modify listofforecasts inplace?
+            
+            for forecast in listofforecasts:
+                newvar = 'anom'
+                force_new_variable(forecast, newvarkwargs = newvarkwargs, inplace = True, newvariable = newvar) # If newvar is anomaly then first new variable and then aggregation. If e.g. newvar is pop then first aggregation then transformation.
+                force_resolution(forecast, time = True)
+                forecast.array = forecast.array.swap_dims({'time':'leadtime'}) # So it happens inplace
+            
+            allleadtimes = xr.concat(objs = [f.array for f in listofforecasts], 
+                                             dim = 'leadtime') # concatenates over leadtime dimension.  
+            if not leadtimerange is None:
+                present = [l for l in list(leadtimerange) if l in allleadtimes.leadtime]
+                subleadtimes = allleadtimes.sel(leadtime = present)
+                print(f'{len(present)} of {leadtimerange} present in {date}')
+            else:
+                subleadtimes = allleadtimes
+            if subleadtimes.size != 0:
+                aligned_basket.update({date:subleadtimes})
+                print(date, 'added')
+                # If aligned takes too much system memory (> 500Mb) . Write it out
+                aligned_basket_size += sys.getsizeof(subleadtimes)
+
+        datesubset = datesubset.drop(date)
+    
+    return aligned_basket
+
+def select_highest_member(field: xr.DataArray, at_lat: float = 52.0, at_lon: float = 4.0):
+    """
+    From a field forecast by multiple members it selects the member
+    with the highest value in the nearest-neighbor gridcell at a location
+    field is indexed as (leadtime/time, latitude,longitude,n_member)
+    will return as (leadtime/time, latitude,longitude)
+    Possible that multiple leadtimes are supplied, therefore a loop
+    """
+    highest = []
+    for l in field.leadtime:
+        cell_values = field.sel(leadtime = l, latitude = at_lat, longitude = at_lon, method = 'nearest')
+        where_max = (cell_values == cell_values.max()).values
+        print(cell_values.number.values[where_max])
+        selection = field.sel(leadtime = [l]).isel(number = where_max).squeeze('number', drop = True)
+        highest.append(selection)
+    return xr.concat(highest, dim = 'leadtime')
 
 def matchforecaststoobs(obs, datesubset, outfilepath, books_path, time_agg, n_members, cycle, maxleadtime, loadkwargs, newvarkwargs, newvariable = False, matchtime = True, matchspace = True):
     """
@@ -845,59 +969,51 @@ class ScoreAnalysis(object):
                     result = result.mean(axis = 0)
             return(result)
 
+def create_composite(dates: pd.DatetimeIndex, variable: str = 'z', time_agg: int = 31, leadtimerange = range(12,16)) -> Tuple[dict,xr.DataArray]:
+    """
+    High level functionality pick variable and dates
+    standard loading of the modelclimatology (for transformation into anomalies)  
+    Also returns the raw dictionary of fields
+    Leadtimerange includes the first day. (max = 46) so not equal to separation
+    """
+    highresmodelclim = ModelClimatology(cycle = '45r1', variable = variable, name = f'{variable}_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean', basedir = '/nobackup/users/straaten/modelclimatology/')
+    highresmodelclim.local_clim()
+    newvarkwargs = {'climatology':highresmodelclim}
+
+    dict_of_fields = forecast_at_dates(datesubset = dates.to_series(), variable = variable, time_agg = time_agg, n_members = 11, leadtimerange = leadtimerange, newvarkwargs = newvarkwargs)
+
+    example = dict_of_fields[list(dict_of_fields.keys())[0]].drop(['number','leadtime','time'])
+
+    # ensemble mean 
+    ensmean = {}
+    for date in dict_of_fields.keys(): # Not all requested dates need to be present
+        ensmean.update({date:dict_of_fields[date].mean('number')})
+
+    ensmean_comp = np.concatenate(list(ensmean.values()), axis = 0).mean(axis = 0)
+    ensmean_comp = xr.DataArray(ensmean_comp, dims = ('latitude','longitude'), coords = example.coords) 
+    ensmean_comp.name = example.name
+    ensmean_comp.attrs = example.attrs
+
+    return dict_of_fields, ensmean_comp
+
 if __name__ == '__main__':
-    mc = ModelClimatology('45r1','tg-anom', **{'name':'tg-anom_45r1_1998-06-07_1999-05-16_1D_0.3-tg-DJF-mean_5_5_q0.15'}) #
-    mc.local_clim()
-    al = ForecastToObsAlignment('DJF','45r1')
-    al.recollect(booksname = 'books_clustga25_tg-anom_DJF_45r1_1D_0.3-tg-DJF-mean.csv')
-    cl = Climatology('tg-anom', **{'name':'tg-anom_clim_1998-01-01_2018-12-31_1D_0.3-tg-DJF-mean_5_5_q0.15'})
-    cl.localclim()
-    self = Comparison(alignment=al, climatology=cl, modelclimatology=mc) # Add possibility for a model_climatology that is processed upon initialization?
-#    self.basedir = '/nobackup/users/straaten/'
-#    self.fit_pp_models(NGR(), groupers = ['clustid','leadtime'])
-#    self.export(fits = True, frame=False)
-#    self.make_pp_forecast(NGR())
-#    self.brierscore()
-#    filename = self.export(fits = False, frame = True, store_minimum = False)
-#    
-#    sc = ScoreAnalysis(scorefile = filename, timeagg = '1D', rolling=True)
-#    sc.basedir = '/nobackup/users/straaten/'
-#    sc.load()
-#highresobs = SurfaceObservations('tg')
-#highresobs.load(tmin = '2000-01-01', tmax = '2005-12-31',  llcrnr= (64,40))
-#highresobs.minfilter(season = 'DJF', n_min_per_seas = 80)
-#highresobs.aggregatespace(level = 0.01, clustername = 'tg-JJA', method = 'mean') 
-#        
-#highresclim = Climatology(highresobs.basevar)
-#highresclim.localclim(obs = highresobs, mean = False, n_draws=11, daysbefore = 5, daysafter = 5)
-#       
-#align = ForecastToObsAlignment('JJA', '45r1')
-#align.recollect(booksname = 'books_tg-anom_JJA_45r1_1D_0.01-tg-JJA-mean.csv')
-#
-#comp = Comparison(align, climatology=highresclim)
-#comp.fit_pp_models(NGR(), groupers = ['clustid'])
-#comp.make_pp_forecast(NGR(), n_members=11)
-#comp.crpsscore()
-#comp.export(fits = False, frame = True)
-#clustga25_tg-anom_DJF_45r1_7D-roll-mean_0.2-tg-DJF-mean_tg-anom_clim_1998-01-01_2018-12-31_7D-roll-mean_0.2-tg-DJF-mean_5_5_q0.75.h5            
-#clim = Climatology('tg-anom',**{'name':'tg-anom_clim_1998-01-01_2018-12-31_7D-roll-mean_0.2-tg-DJF-mean_5_5_q0.75'})
-#clim.localclim()
 
-#align = ForecastToObsAlignment('DJF', '45r1')
-#align.recollect(booksname = 'books_clustga25_tg-anom_DJF_45r1_7D-roll-mean_0.2-tg-DJF-mean.csv')
+    #ordered_shaps = pd.read_hdf('/nobackup/users/straaten/interpretation/tg-anom_JJA_45r1_31D-roll-mean_q0.5_sep12-15_shap_sub.h5')
+    #dates = ordered_shaps.index[1950:].get_level_values('time').unique().to_series()
+    dates = pd.date_range('2000-07-01','2000-07-03')
 
-#comp = Comparison(align, climatology = clim)
-#comp.name = 'meanclimtest'
-#comp.fits = dd.read_hdf('/nobackup_1/users/straaten/scores/meanclimtest.h5', key = 'fits')
-#comp.fitgroupers = ['leadtime','clustid']
-#comp.fit_pp_models(NGR(), groupers = ['leadtime','clustid'])
-#comp.export(fits = True)
-#comp.make_pp_forecast(NGR())
-#comp.preds = dd.read_hdf('/nobackup_1/users/straaten/scores/meanclimtest.h5', key = 'preds')
-#dat = pd.read_hdf('/nobackup_1/users/straaten/scores/meanclimtest.h5', key = 'scores')
-#sc = ScoreAnalysis(scorefile = 'clustga33_tg-anom_DJF_45r1_11D-roll-mean_0.05-tg-DJF-mean_tg-anom_clim_1998-01-01_2018-12-31_11D-roll-mean_0.05-tg-DJF-mean_5_5_equi100', timeagg = '11D', rolling = True)
-#msc = sc.process_bootstrapped_skills(local = True, fitquantiles = False, forecast_horizon = True, skillthreshold= 0, average_afterwards=False)
-#
-#obs = SurfaceObservations('tg', **{'name':'tg-anom_1998-06-07_2018-12-31_11D-roll-mean_0.05-tg-DJF-mean'})
-#obs.load()
-#mscgeo = georeference(msc, obs.clusterarray)
+    test, ensmean = create_composite(variable = 'swvl13', dates = dates, time_agg = 21)
+
+    # highest member 
+    #highest = {}
+    #for date in test.keys():
+    #    highest.update({date:select_highest_member(test[date])})
+
+    #highest_comp = np.concatenate(list(highest.values()), axis = 0).mean(axis = 0)
+    #highest_comp = xr.DataArray(highest_comp, dims = ('latitude','longitude'), coords = ensmean.coords) 
+
+    #highest_comp.to_netcdf('/nobackup/users/straaten/interpretation/tg-anom_JJA_45r1_31D-roll-mean_q0.5_sep12-15_1950shap_highest.nc')
+    #ensmean_comp.to_netcdf('/nobackup/users/straaten/interpretation/tg-anom_JJA_45r1_31D-roll-mean_q0.5_sep12-15_1950shap_ensmean.nc')
+
+
+
