@@ -659,19 +659,19 @@ if __name__ == '__main__':
     Processing raw MJO data of BOM
     daily RMM mjo index, originally from http://www.bom.gov.au/climate/mjo/graphics/rmm.74toRealtime.txt
     """
-    #def prelag(separations : list, frame: pd.DataFrame):
-    #    """
-    #    Create len(separations) versions of the same frame
-    #    But with values lagged by changing the index and reindexing
-    #    """
-    #    dfs_per_separation = []
-    #    for sep in separations: 
-    #       df = frame.copy()
-    #       df.index = df.index + pd.Timedelta(value = sep, unit = 'day')
-    #       dfs_per_separation.append(df.reindex_like(frame))
+    def prelag(separations : list, frame: pd.DataFrame):
+        """
+        Create len(separations) versions of the same frame
+        But with values lagged by changing the index and reindexing
+        """
+        dfs_per_separation = []
+        for sep in separations: 
+           df = frame.copy()
+           df.index = df.index + pd.Timedelta(value = sep, unit = 'day')
+           dfs_per_separation.append(df.reindex_like(frame))
 
-    #    combined = pd.concat(dfs_per_separation, axis = 1, keys =pd.Index(separations, name = 'separation'))
-    #    return combined
+        combined = pd.concat(dfs_per_separation, axis = 1, keys =pd.Index(separations, name = 'separation'))
+        return combined
 
     #rawpath = '/nobackup/users/straaten/predsets/rmm_bom_raw.txt'
     #test = pd.read_fwf(rawpath, skiprows = 2, colspecs = [(8,13),(22,25),(34,37),(37,52),(53,70),(79,81),(82,96)] , names = ['year', 'month', 'day', 'rmm1', 'rmm2', 'phase', 'amplitude'], parse_dates = {'time':['year','month','day']})
@@ -699,3 +699,21 @@ if __name__ == '__main__':
     #total = prelag(separations, frame = pdo).stack('separation')
     #outpath = '/nobackup/users/straaten/predsets/pdo_daily.h5'
     #total.to_hdf(outpath, key = 'index')
+
+    """
+    Processing of ENSO daily 
+    daily Nino(3.)4 index from SST OI v2 1/4 degree, units = K
+    """
+    #basepath = Path('/nobackup/users/straaten/predsets/')
+    #versions = {'nino34':'nino34_daily.nc','nino4':'nino4_daily.nc'}
+    #both = []
+    #for name, file in versions.items():
+    #    nino = xr.open_dataarray(basepath / file).to_dataframe()
+    #    nino.columns = pd.MultiIndex.from_tuples([('nino',1,int(name[4:]),'mean')], names = ['variable','timeagg','clustid','metric'])
+    #    separations = np.arange(0,32,1) # Separation in amount of days
+    #    total = prelag(separations, frame = nino).stack('separation')
+    #    both.append(total)
+    #    
+    #both = pd.concat(both, axis = 1)
+    #outpath = basepath / 'nino_daily.h5'
+    #both.to_hdf(outpath, key = 'index')
