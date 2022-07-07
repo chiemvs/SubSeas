@@ -705,7 +705,7 @@ if __name__ == '__main__':
     daily Nino(3.)4 index from SST OI v2 1/4 degree, units = K
     """
     #basepath = Path('/nobackup/users/straaten/predsets/')
-    #versions = {'nino34':'nino34_daily.nc','nino4':'nino4_daily.nc'}
+    #versions = {'nino12':'nino12_daily.nc','nino3':'nino3_daily.nc','nino34':'nino34_daily.nc','nino4':'nino4_daily.nc'}
     #both = []
     #for name, file in versions.items():
     #    nino = xr.open_dataarray(basepath / file).to_dataframe()
