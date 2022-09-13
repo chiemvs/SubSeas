@@ -976,7 +976,10 @@ def create_composite(dates: pd.DatetimeIndex, variable: str = 'z', time_agg: int
     Also returns the raw dictionary of fields
     Leadtimerange includes the first day. (max = 46) so not equal to separation
     """
-    highresmodelclim = ModelClimatology(cycle = '45r1', variable = variable, name = f'{variable}_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean', basedir = '/nobackup/users/straaten/modelclimatology/')
+    if variable == 'tg':
+        highresmodelclim = ModelClimatology(cycle = '45r1', variable = variable, name = f'{variable}_45r1_1998-06-07_2019-08-31_1D_0.38-degrees_5_5_mean', basedir = '/nobackup/users/straaten/modelclimatology/')
+    else:
+        highresmodelclim = ModelClimatology(cycle = '45r1', variable = variable, name = f'{variable}_45r1_1998-06-07_2019-08-31_1D_1.5-degrees_5_5_mean', basedir = '/nobackup/users/straaten/modelclimatology/')
     highresmodelclim.local_clim()
     newvarkwargs = {'climatology':highresmodelclim}
 
